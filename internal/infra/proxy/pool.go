@@ -1,0 +1,76 @@
+package proxy
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"sync"
+
+	"flamerouter/internal/store"
+)
+
+// Pool manages a rotating pool of HTTP/SOCKS proxies.
+type Pool struct {
+	st      *store.Store
+	mu      sync.Mutex
+	current int
+}
+
+func New(st *store.Store) *Pool {
+	return &Pool{st: st}
+}
+
+// Next returns the next active proxy URL from the pool, or nil for direct.
+func (p *Pool) Next() *url.URL {
+	if p.st == nil {
+		return nil
+	}
+	pools, err := p.st.ListProxyPools()
+	if err != nil || len(pools) == 0 {
+		return nil
+	}
+	active := make([]store.ProxyPool, 0, len(pools))
+	for _, pl := range pools {
+		if pl.IsActive {
+			active = append(active, pl)
+		}
+	}
+	if len(active) == 0 {
+		// fall back to all if none marked active
+		active = pools
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pl := active[p.current%len(active)]
+	p.current++
+	return poolToURL(pl)
+}
+
+func poolToURL(pl store.ProxyPool) *url.URL {
+	scheme := pl.Type
+	if scheme == "" {
+		scheme = "http"
+	}
+	host := fmt.Sprintf("%s:%d", pl.Host, pl.Port)
+	u := &url.URL{Scheme: scheme, Host: host}
+	if pl.Username != "" {
+		if pl.Password != "" {
+			u.User = url.UserPassword(pl.Username, pl.Password)
+		} else {
+			u.User = url.User(pl.Username)
+		}
+	}
+	return u
+}
+
+// Transport returns an http.Transport using the pool's next proxy.
+func (p *Pool) Transport() *http.Transport {
+	proxy := p.Next()
+	if proxy == nil {
+		if t, ok := http.DefaultTransport.(*http.Transport); ok {
+			return t.Clone()
+		}
+		return &http.Transport{}
+	}
+	return &http.Transport{Proxy: http.ProxyURL(proxy)}
+}

@@ -1,0 +1,56 @@
+package config_test
+
+import (
+	"flamerouter/internal/opensse/config"
+	"testing"
+	"time"
+)
+
+func TestCheckFallbackError_429(t *testing.T) {
+	fb, cd, lvl := config.CheckFallbackError(429, "", 0)
+	if !fb {
+		t.Fatal("expected fallback")
+	}
+	if cd != config.GetQuotaCooldown(1) {
+		t.Fatalf("cooldown=%d expected %d", cd, config.GetQuotaCooldown(1))
+	}
+	if lvl != 1 {
+		t.Fatalf("level=%d", lvl)
+	}
+}
+
+func TestCheckFallbackError_ExponentialBackoff(t *testing.T) {
+	_, _, lvl1 := config.CheckFallbackError(429, "", 0)
+	_, cd2, lvl2 := config.CheckFallbackError(429, "", lvl1)
+	if cd2 <= config.GetQuotaCooldown(lvl1) {
+		t.Fatal("expected higher cooldown")
+	}
+	if lvl2 != 2 {
+		t.Fatalf("level=%d", lvl2)
+	}
+}
+
+func TestCheckFallbackError_TextMatch(t *testing.T) {
+	fb, cd, _ := config.CheckFallbackError(200, "insufficient_quota exceeded", 0)
+	if !fb || cd != config.GetQuotaCooldown(1) {
+		t.Fatalf("fb=%v cd=%d", fb, cd)
+	}
+}
+
+func TestCheckFallbackError_Transient(t *testing.T) {
+	fb, cd, _ := config.CheckFallbackError(500, "random error", 0)
+	if !fb || cd != config.TransientCooldownMs {
+		t.Fatalf("fb=%v cd=%d", fb, cd)
+	}
+}
+
+func TestGetUnavailableUntil(t *testing.T) {
+	until := config.GetUnavailableUntil(5000)
+	parsed, err := time.Parse(time.RFC3339, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Until(parsed) > 6*time.Second || time.Until(parsed) < 4*time.Second {
+		t.Fatalf("unexpected time: %v", time.Until(parsed))
+	}
+}
