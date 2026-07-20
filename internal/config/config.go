@@ -30,9 +30,6 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	// Load .env from cwd (and parent) without overriding existing env.
-	_ = LoadDotEnv(".env")
-
 	port := 20128
 	if v := strings.TrimSpace(os.Getenv("PORT")); v != "" {
 		p, err := strconv.Atoi(v)
@@ -82,51 +79,6 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
-}
-
-// LoadDotEnv reads KEY=VALUE lines into the process env if not already set.
-// Ignores blank lines and # comments. No new dependencies.
-func LoadDotEnv(paths ...string) error {
-	if len(paths) == 0 {
-		paths = []string{".env"}
-	}
-	var last error
-	for _, p := range paths {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			last = err
-			continue
-		}
-		for _, line := range strings.Split(string(b), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			if strings.HasPrefix(line, "export ") {
-				line = strings.TrimSpace(line[7:])
-			}
-			k, v, ok := strings.Cut(line, "=")
-			if !ok {
-				continue
-			}
-			k = strings.TrimSpace(k)
-			v = strings.TrimSpace(v)
-			if len(v) >= 2 {
-				if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
-					v = v[1 : len(v)-1]
-				}
-			}
-			if k == "" {
-				continue
-			}
-			if _, exists := os.LookupEnv(k); exists {
-				continue
-			}
-			_ = os.Setenv(k, v)
-		}
-		return nil
-	}
-	return last
 }
 
 // envMs: positive int ms from env, else def (parity 9router runtimeConfig.envMs).

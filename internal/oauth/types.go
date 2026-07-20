@@ -59,9 +59,8 @@ var ProviderConfigs = map[string]*OAuthConfig{
 	},
 	"gemini": {
 		Provider:     "gemini",
-		// Set via env GEMINI_OAUTH_CLIENT_ID / GEMINI_OAUTH_CLIENT_SECRET (not committed).
-		ClientID:     envOr("GEMINI_OAUTH_CLIENT_ID", ""),
-		ClientSecret: envOr("GEMINI_OAUTH_CLIENT_SECRET", ""),
+		ClientID:     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+		ClientSecret: "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",
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		RefreshURL:   "https://oauth2.googleapis.com/token",
@@ -161,9 +160,9 @@ var ProviderConfigs = map[string]*OAuthConfig{
 	},
 	"antigravity": {
 		Provider:     "antigravity",
-		// Same Google OAuth app as gemini — env only.
-		ClientID:     envOr("GEMINI_OAUTH_CLIENT_ID", envOr("ANTIGRAVITY_OAUTH_CLIENT_ID", "")),
-		ClientSecret: envOr("GEMINI_OAUTH_CLIENT_SECRET", envOr("ANTIGRAVITY_OAUTH_CLIENT_SECRET", "")),
+		// Same Google OAuth app as gemini.
+		ClientID:     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+		ClientSecret: "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",
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		RefreshURL:   "https://oauth2.googleapis.com/token",
