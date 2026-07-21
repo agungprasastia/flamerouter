@@ -1,4 +1,41 @@
+# Binaries
 bin/
+dist/
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+flamerouter
+!cmd/flamerouter/
+
+# Test / coverage
+*.test
+*.out
+coverage.out
+coverage.html
+*.prof
+
+# Env & secrets
 .env
+.env.*
+!.env.example
+
+# Local agent / IDE scratch (not product)
+.superpowers/
 docs/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Frontend (source of truth: web/; embed lives under internal/gateway/ui/dist)
+web/node_modules/
+web/dist/
+web/dist-ssr/
+web/*.local
+web/logs/
+web/*.log

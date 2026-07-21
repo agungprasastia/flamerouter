@@ -1,86 +1,82 @@
 # FlameRouter — Agent Instructions
 
-Go rewrite of 9router. **100% feature parity with 9router — no behavior differences allowed.**
+Go rewrite of **9router**. Backend parity is the bar: match 9router behavior, not invent better defaults.
+
+Sibling reference (same parent folder): `../9router` — especially `open-sse/AGENTS.md` and `CLAUDE.md`.
 
 ## What this is
 
-FlameRouter is a local AI routing gateway. One OpenAI-compatible endpoint (`/v1/*`) routes traffic across 40+ providers with format translation, model combo fallback, multi-account fallback, and usage tracking.
+Local AI routing gateway: one OpenAI-compatible surface (`/v1/*`) + management APIs (`/api/*`) + optional dashboard SPA.
 
-- Default port: `20128`
-- Data dir: `~/.flamerouter` (override via `DATA_DIR`)
-- API key format: `sk-{machineId}-{keyId}-{crc8}` (HMAC-SHA256 CRC)
+| | |
+|--|--|
+| Port | `20128` (`PORT`) |
+| Data | `~/.flamerouter` (`DATA_DIR`) |
+| Module | `flamerouter` — **never** `github.com/...` |
+| CLI | `flamerouter serve` \| `flamerouter version` (not bare `go run` without subcommand) |
+| Login default | `INITIAL_PASSWORD` default **`123456`** (see `.env.example`) |
+| API keys | `sk-{machineId}-{keyId}-{crc8}` |
 
 ## Commands
 
-```bash
-# run
-go run ./cmd/flamerouter
+```powershell
+# server (required subcommand)
+go run ./cmd/flamerouter serve
+go run ./cmd/flamerouter version
 
-# vet + test (MUST pass before any commit)
-rtk go vet ./...
-rtk go test ./...
+# before commit
+go vet ./...
+go test ./...
 
-# single test
-rtk go test ./internal/translator/...
+# focused
+go test ./internal/gateway/ -run TestSPA -count=1
+go test ./internal/translator/...
+
+# dashboard SPA
+cd web
+npm run dev          # :5173, proxies /api /v1 /v1beta /codex → :20128
+npm run build        # vite build + copies → internal/gateway/ui/dist (embed)
 ```
 
-## Architecture
+Run tests from **repo root** (where `go.mod` lives). `go test ./...` outside the module fails with “does not contain main module”.
 
-Request flow: `gateway` → `handlers/chat.go` → detect source format → translate request → `executor.Execute` → translate response → SSE back.
+## Layout (where to edit)
 
-Two authoritative references:
-- `9router/open-sse/AGENTS.md` — routing/translation engine conventions
-- `9router/CLAUDE.md` — full system lifecycle
+| Path | Role |
+|------|------|
+| `cmd/flamerouter/` | Entrypoint only |
+| `internal/gateway/` | HTTP routes, SPA fallback (`spa.go`), most `/api/*` handlers |
+| `internal/gateway/ui/dist/` | **Embedded** UI (`//go:embed`). Change UI via `web/` then `npm run build` |
+| `web/` | Vite React SPA source (not served until built into `ui/dist`) |
+| `internal/opensse/` | Executors, chat/media handlers, fallback |
+| `internal/translator/` | Format translate; **`schema/`** for roles/blocks/finish — never hardcode strings |
+| `internal/provider/` | Registry (provider defs) |
+| `internal/oauth/` | OAuth configs + proxy (codex:1455, xai:56121) + imports |
+| `internal/store/` | SQLite (`modernc.org/sqlite`), migrations |
+| `internal/auth/` | API keys, JWT session cookie `auth_token`, `DashboardGuard` |
+| `docs/` | **gitignored** — local plans/specs only; not on remote |
 
-### Directory map
+## Request flow
 
-- `cmd/flamerouter/` — entrypoint
-- `internal/config/` — env + config loading
-- `internal/store/` — SQLite (modernc.org/sqlite), migrations, repos
-- `internal/auth/` — API key HMAC, JWT
-- `internal/gateway/` — HTTP server, route wiring
-- `internal/opensse/` — provider-agnostic engine (executors, handlers, fallback, streaming)
-- `internal/translator/` — format translation (request + response, concerns, schema)
-- `internal/translator/schema/` — role/block/finish enums (NEVER hardcode strings — use these)
+`gateway` → `opensse` handlers → detect format → **translate** (pivot OpenAI; direct route only if registered) → `executor.Execute` → translate response → SSE/JSON.
 
-## Rules
+## Rules agents miss
 
-1. **Parity with 9router is non-negotiable.** Every translator concern, fallback behavior, and schema constant must match 9router exactly. If 9router uses `MODEL_FALLBACK = "unknown"`, use `"unknown"`, not a model name.
-2. **Config-driven, not hardcoded.** Use `internal/translator/schema/` constants for roles, blocks, finish reasons. Use `internal/config/` for magic values.
-3. **Translator pipeline pivots through OpenAI.** Source → OpenAI → target. Direct route only when registered explicitly.
-4. **Fail-open on RTK/hooks.** Errors return null, body untouched. Never throw.
-5. **No `github.com/` prefix in module path.** Module is just `flamerouter`.
+1. **Parity with 9router** — same magic strings/constants as upstream (e.g. fallback `"unknown"` if 9router uses it).
+2. **Fail-open RTK/hooks** — on error leave body; never throw/fail the request from compress hooks.
+3. **`GET /api/providers` = connections**, shape `{connections:[...]}` (secrets stripped). Not the full registry catalog. Registry lives in `internal/provider`; SPA empty-state uses known provider ids / detail routes.
+4. **Dashboard auth** — cookie JWT. Public: `/api/health`, `GET /api/settings/require-login`, `/api/auth/login|logout|status|oidc/*`, `/v1/*`, non-`/api` (SPA). Most other `/api/*` need session. SPA `fetch` must use `credentials: "include"`.
+5. **SPA routing** — `handleSPA` is registered last (`/`). Must not steal `/api/`, `/v1/`, `/v1beta/`, `/codex/`. After UI changes: `cd web && npm run build` so embed updates.
+6. **OAuth** — configs in `internal/oauth/types.go`. Codex/xAI fixed-port proxies; device flows use `DeviceURL` + `AuthStyle: "device"`.
+7. **No CGO** — sqlite is pure Go (`modernc.org/sqlite`).
 
-## Parity Checklist
+## Dashboard status
 
-This is a rewrite — every feature, every UI page, every provider must exist in Go.
+- **MVP done:** login, shell, providers, usage, keys, settings (embedded).
+- **Phase 2 open:** combos, translator UI, MITM, tunnel, pxpipe, cli-tools, chat playground, media-providers, quota, full OAuth UX, etc.
 
-### Backend (Tasks 1–15) — done
+## Testing notes
 
-- [x] All `/v1/*` endpoints (chat, messages, responses, embeddings, TTS, STT, images, video, search, fetch)
-- [x] 100+ provider registry with capabilities
-- [x] 20+ executors (Github, GeminiCLI, Codex, Kiro, Cursor, Vertex, Antigravity, Azure, etc.)
-- [x] OAuth (20+ providers) + token refresh (+ device flow github/copilot/qwen/kiro)
-- [x] RTK token compression (12 filters, caveman, ponytail, headroom, pxpipe hooks)
-- [x] Proxy pools, tunnels, MITM API
-- [x] Usage charts, pricing, per-provider quota APIs
-- [x] Media providers (TTS, STT multipart, image, embedding, video routes)
-- [x] Search + fetch (searxng + provider + direct fetch SSRF-safe)
-- [x] CLI tools + MCP bridge APIs
-- [x] Env parity + account strategy from settings (`fallbackStrategy`)
-- [x] Backend route table audit (`route_table_test.go`)
-
-### Deferred
-
-- [x] Dashboard SPA MVP (login, shell, providers, usage, keys, settings) — phase 2 open (combos, quota, chat playground, etc.)
-- [ ] Docker packaging (optional)
-
-Minor API gaps: translator load/save/stream, proxy-pool test — see `docs/superpowers/plans/parity-backend-routes.md`.
-
-Full plan: `docs/superpowers/plans/2026-07-20-flamerouter-full-parity.md`
-
-## Testing
-
-- `rtk go test ./...` — must be all green
-- `rtk go vet ./...` — must be clean
-- No external services required for unit tests
+- Unit tests need **no** external services.
+- Gateway has route-table + SPA tests; keep them green when touching routes or embed.
+- Frontend: no required unit suite yet; gate is `npm run build` + manual smoke when changing `web/`.
