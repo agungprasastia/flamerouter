@@ -9,6 +9,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { stats as fetchStats, chart as fetchChart } from "../api/usage";
+import { Card } from "../components/Card";
 
 function mapChartPoints(payload) {
   const raw = payload?.data ?? payload?.points ?? (Array.isArray(payload) ? payload : []);
@@ -19,15 +20,6 @@ function mapChartPoints(payload) {
     promptTokens: Number(row.promptTokens ?? row.PromptTokens ?? 0),
     completionTokens: Number(row.completionTokens ?? row.CompletionTokens ?? 0),
   }));
-}
-
-function Card({ label, value }) {
-  return (
-    <div className="rounded border border-slate-800 bg-[#0d1219] px-4 py-3">
-      <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="mt-1 text-xl font-semibold tabular-nums text-slate-100">{value}</p>
-    </div>
-  );
 }
 
 export default function UsagePage() {
@@ -63,37 +55,46 @@ export default function UsagePage() {
   const totalTokens = Number(prompt) + Number(completion);
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold text-slate-100">Usage</h1>
-      {loading ? <p className="text-sm text-slate-400">Loading…</p> : null}
-      {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
+    <div className="space-y-6">
+      <h1 className="text-lg font-semibold text-[var(--text)]">Usage</h1>
+      {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p> : null}
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
 
       {!loading && !error ? (
         <>
-          <div className="mb-6 grid gap-3 sm:grid-cols-3">
-            <Card label="Requests" value={requests} />
-            <Card label="Prompt tokens" value={prompt} />
-            <Card label="Completion tokens" value={completion} />
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Card className="p-4">
+              <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Requests</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums text-[var(--text)]">{requests}</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Prompt tokens</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums text-[var(--text)]">{prompt}</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Completion tokens</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums text-[var(--text)]">{completion}</p>
+            </Card>
           </div>
 
-          <div className="rounded border border-slate-800 bg-[#0d1219] p-4">
-            <p className="mb-3 text-xs uppercase tracking-wide text-slate-400">
+          <Card className="p-4">
+            <p className="mb-3 text-xs uppercase tracking-wide text-[var(--muted)]">
               Daily requests
               {totalTokens ? ` · ${totalTokens} tokens total` : ""}
             </p>
             {points.length === 0 ? (
-              <p className="py-12 text-center text-sm text-slate-400">No usage data yet.</p>
+              <p className="py-12 text-center text-sm text-[var(--muted)]">No usage data yet.</p>
             ) : (
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={points}>
-                    <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
-                    <XAxis dataKey="date" stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                    <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <CartesianGrid stroke="#423d3a" strokeDasharray="3 3" />
+                    <XAxis dataKey="date" stroke="#756861" tick={{ fontSize: 11 }} />
+                    <YAxis stroke="#756861" tick={{ fontSize: 11 }} allowDecimals={false} />
                     <Tooltip
                       contentStyle={{
-                        background: "#0d1219",
-                        border: "1px solid #1e293b",
+                        background: "#262626",
+                        border: "1px solid rgba(255,245,235,0.10)",
                         borderRadius: 6,
                         fontSize: 12,
                       }}
@@ -101,7 +102,7 @@ export default function UsagePage() {
                     <Line
                       type="monotone"
                       dataKey="requests"
-                      stroke="#38bdf8"
+                      stroke="#E56A4A"
                       strokeWidth={2}
                       dot={false}
                     />
@@ -109,7 +110,7 @@ export default function UsagePage() {
                 </ResponsiveContainer>
               </div>
             )}
-          </div>
+          </Card>
         </>
       ) : null}
     </div>

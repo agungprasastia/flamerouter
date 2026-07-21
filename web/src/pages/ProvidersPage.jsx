@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { listProviders } from "../api/providers";
+import { Card } from "../components/Card";
+import { Input } from "../components/Input";
+import { Button } from "../components/Button";
 
 const COMMON_IDS = [
   "openai",
@@ -54,32 +57,29 @@ export default function ProvidersPage() {
   }
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold text-slate-100">Providers</h1>
+    <div className="space-y-6">
+      <h1 className="text-lg font-semibold text-[var(--text)]">Providers</h1>
 
-      <form onSubmit={onConnect} className="mb-6 rounded border border-slate-800 bg-[#0d1219] p-4">
-        <p className="mb-2 text-sm text-slate-300">Connect a provider</p>
+      <Card as="form" onSubmit={onConnect} className="p-4">
+        <p className="mb-2 text-sm text-[var(--text)]">Connect a provider</p>
         <div className="flex flex-wrap gap-2">
-          <input
-            type="text"
-            value={providerId}
-            onChange={(e) => setProviderId(e.target.value)}
-            placeholder="provider id (e.g. openai)"
-            className="min-w-[12rem] flex-1 rounded border border-slate-700 bg-[#0b0f14] px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
-            list="common-provider-ids"
-          />
+          <div className="min-w-[12rem] flex-1">
+            <Input
+              type="text"
+              value={providerId}
+              onChange={(e) => setProviderId(e.target.value)}
+              placeholder="provider id (e.g. openai)"
+              list="common-provider-ids"
+            />
+          </div>
           <datalist id="common-provider-ids">
             {COMMON_IDS.map((id) => (
               <option key={id} value={id} />
             ))}
           </datalist>
-          <button
-            type="submit"
-            disabled={!providerId.trim()}
-            className="rounded bg-sky-500 px-3 py-2 text-sm font-medium text-slate-950 hover:bg-sky-400 disabled:opacity-50"
-          >
+          <Button type="submit" variant="primary" disabled={!providerId.trim()}>
             Open
-          </button>
+          </Button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {COMMON_IDS.map((id) => (
@@ -87,25 +87,25 @@ export default function ProvidersPage() {
               key={id}
               type="button"
               onClick={() => openProvider(id)}
-              className="rounded border border-slate-700 px-2 py-1 font-mono text-xs text-slate-300 hover:border-sky-500 hover:text-sky-300"
+              className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1 font-mono text-xs text-[var(--muted)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
             >
               {id}
             </button>
           ))}
         </div>
-      </form>
+      </Card>
 
-      {loading ? <p className="text-sm text-slate-400">Loading…</p> : null}
-      {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
+      {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p> : null}
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
       {!loading && !error && rows.length === 0 ? (
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-[var(--muted)]">
           No connections yet — open a provider id to connect.
         </p>
       ) : null}
       {rows.length > 0 ? (
-        <div className="overflow-x-auto rounded border border-slate-800">
+        <div className="rounded border border-[var(--border)] overflow-x-auto">
           <table className="w-full min-w-[28rem] text-left text-sm">
-            <thead className="border-b border-slate-800 bg-[#0d1219] text-xs uppercase text-slate-400">
+            <thead className="border-b border-[var(--border)] text-xs uppercase text-[var(--muted)] bg-[var(--surface)]">
               <tr>
                 <th className="px-3 py-2 font-medium">Name</th>
                 <th className="px-3 py-2 font-medium">ID</th>
@@ -117,17 +117,17 @@ export default function ProvidersPage() {
                 const id = row.id || row.provider;
                 const hrefId = row.provider || row.id;
                 return (
-                  <tr key={id} className="border-b border-slate-800/80 last:border-0 hover:bg-slate-900/40">
+                  <tr key={id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--surface-2)]/40">
                     <td className="px-3 py-2">
                       <Link
                         to={`/dashboard/providers/${encodeURIComponent(hrefId)}`}
-                        className="text-sky-400 hover:underline"
+                        className="text-[var(--primary)] hover:underline"
                       >
                         {row.name || row.provider || id}
                       </Link>
                     </td>
-                    <td className="px-3 py-2 font-mono text-xs text-slate-400">{id}</td>
-                    <td className="px-3 py-2 text-slate-300">
+                    <td className="px-3 py-2 font-mono text-xs text-[var(--muted)]">{id}</td>
+                    <td className="px-3 py-2 text-[var(--text)]">
                       {row.category || row.authType || row.provider || "—"}
                     </td>
                   </tr>

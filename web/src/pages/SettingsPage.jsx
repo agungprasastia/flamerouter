@@ -6,6 +6,9 @@ import {
   patchSettings,
 } from "../api/settings";
 import { useAuth } from "../store/auth";
+import { Card } from "../components/Card";
+import { Button } from "../components/Button";
+import { Input } from "../components/Input";
 
 export default function SettingsPage() {
   const bootstrap = useAuth((s) => s.bootstrap);
@@ -82,78 +85,60 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold text-slate-100">Settings</h1>
-      {loading ? <p className="text-sm text-slate-400">Loading…</p> : null}
-      {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
-      {msg ? <p className="mb-3 text-sm text-emerald-400">{msg}</p> : null}
+    <div className="space-y-6">
+      <h1 className="text-lg font-semibold text-[var(--text)]">Settings</h1>
+      {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p> : null}
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
+      {msg ? <p className="text-sm text-[var(--success)]">{msg}</p> : null}
 
       {!loading ? (
         <div className="max-w-lg space-y-6">
-          <div className="rounded border border-slate-800 bg-[#0d1219] px-4 py-3">
+          <Card className="px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-slate-100">Require login</p>
-                <p className="text-xs text-slate-400">Gate dashboard behind password</p>
+                <p className="text-sm font-medium text-[var(--text)]">Require login</p>
+                <p className="text-xs text-[var(--muted)]">Gate dashboard behind password</p>
               </div>
-              <button
+              <Button
                 type="button"
                 onClick={onToggleRequireLogin}
-                className={`rounded px-3 py-1 text-xs font-medium ${
-                  requireLogin
-                    ? "bg-sky-600 text-white"
-                    : "border border-slate-700 text-slate-300"
-                }`}
+                variant={requireLogin ? "primary" : "secondary"}
+                size="sm"
               >
                 {requireLogin ? "On" : "Off"}
-              </button>
+              </Button>
             </div>
-          </div>
+          </Card>
 
-          <form
-            onSubmit={onSaveStrings}
-            className="space-y-3 rounded border border-slate-800 bg-[#0d1219] px-4 py-3"
-          >
-            <p className="text-sm font-medium text-slate-100">General</p>
-            <div>
-              <label className="mb-1 block text-xs text-slate-400" htmlFor="locale">
-                Locale
-              </label>
-              <input
+          <Card className="px-4 py-3">
+            <form onSubmit={onSaveStrings} className="space-y-3">
+              <p className="text-sm font-medium text-[var(--text)]">General</p>
+              <Input
                 id="locale"
+                label="Locale"
                 value={locale}
                 onChange={(e) => setLocale(e.target.value)}
-                className="w-full rounded border border-slate-700 bg-[#0b0f14] px-3 py-1.5 text-sm text-slate-100 outline-none focus:border-sky-600"
               />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-slate-400" htmlFor="fallback">
-                Fallback strategy
-              </label>
-              <input
+              <Input
                 id="fallback"
+                label="Fallback strategy"
                 value={fallbackStrategy}
                 onChange={(e) => setFallbackStrategy(e.target.value)}
-                className="w-full rounded border border-slate-700 bg-[#0b0f14] px-3 py-1.5 text-sm text-slate-100 outline-none focus:border-sky-600"
                 placeholder="e.g. round-robin"
               />
-            </div>
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </form>
+              <Button type="submit" variant="primary" disabled={saving}>
+                {saving ? "Saving…" : "Save"}
+              </Button>
+            </form>
+          </Card>
 
           {settings ? (
-            <div className="rounded border border-slate-800 bg-[#0d1219] px-4 py-3 text-xs text-slate-400">
+            <Card className="px-4 py-3 text-xs text-[var(--muted)]">
               <p>
                 hasPassword: {settings.hasPassword ? "yes" : "no"} · oidcConfigured:{" "}
                 {settings.oidcConfigured ? "yes" : "no"}
               </p>
-            </div>
+            </Card>
           ) : null}
         </div>
       ) : null}

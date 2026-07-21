@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiJSON } from "../api/client";
 import { useAuth } from "../store/auth";
+import { Card } from "../components/Card";
+import { Button } from "../components/Button";
 
 const links = [
   { to: "/dashboard/providers", label: "Providers" },
@@ -41,38 +43,34 @@ export default function HomePage() {
   const ver = version?.version ?? version?.current ?? "—";
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold text-slate-100">Dashboard</h1>
-      {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
+    <div className="space-y-6">
+      <h1 className="text-lg font-semibold text-[var(--text)]">Dashboard</h1>
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-3">
-        <div className="rounded border border-slate-800 bg-[#0d1219] px-4 py-3">
-          <p className="text-xs uppercase tracking-wide text-slate-400">Health</p>
-          <p className={`mt-1 text-xl font-semibold ${ok ? "text-emerald-400" : "text-slate-300"}`}>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card className="p-4">
+          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Health</p>
+          <p className={`mt-1 text-xl font-semibold ${ok ? "text-[var(--success)]" : "text-[var(--text)]"}`}>
             {health == null ? "…" : ok ? "OK" : "Down"}
           </p>
-        </div>
-        <div className="rounded border border-slate-800 bg-[#0d1219] px-4 py-3">
-          <p className="text-xs uppercase tracking-wide text-slate-400">Version</p>
-          <p className="mt-1 text-xl font-semibold tabular-nums text-slate-100">{ver}</p>
-        </div>
-        <div className="rounded border border-slate-800 bg-[#0d1219] px-4 py-3">
-          <p className="text-xs uppercase tracking-wide text-slate-400">Auth</p>
-          <p className="mt-1 text-sm text-slate-100">
+        </Card>
+        <Card className="p-4">
+          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Version</p>
+          <p className="mt-1 text-xl font-semibold tabular-nums text-[var(--text)]">{ver}</p>
+        </Card>
+        <Card className="p-4">
+          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Auth</p>
+          <p className="mt-1 text-sm text-[var(--text)]">
             {requireLogin ? (authenticated ? "Signed in" : "Required") : "Open (login off)"}
           </p>
-        </div>
+        </Card>
       </div>
 
       <div className="flex flex-wrap gap-2">
         {links.map((l) => (
-          <Link
-            key={l.to}
-            to={l.to}
-            className="rounded border border-slate-700 px-3 py-1.5 text-sm text-sky-400 hover:bg-slate-800"
-          >
+          <Button key={l.to} variant="secondary" as={Link} to={l.to}>
             {l.label}
-          </Link>
+          </Button>
         ))}
       </div>
     </div>

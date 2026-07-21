@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { createKey, deleteKey, listKeys, updateKey } from "../api/keys";
+import { Card } from "../components/Card";
+import { Input } from "../components/Input";
+import { Button } from "../components/Button";
+import { Badge } from "../components/Badge";
 
 export default function KeysPage() {
   const [rows, setRows] = useState([]);
@@ -78,68 +82,53 @@ export default function KeysPage() {
   }
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold text-slate-100">API Keys</h1>
+    <div className="space-y-6">
+      <h1 className="text-lg font-semibold text-[var(--text)]">API Keys</h1>
 
       {newKey ? (
-        <div className="mb-4 rounded border border-amber-700/50 bg-amber-950/40 px-4 py-3">
-          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-amber-200">
+        <div className="rounded border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-3">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--warning)]">
             Copy now — shown once
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <code className="break-all font-mono text-sm text-amber-100">{newKey}</code>
-            <button
-              type="button"
-              onClick={copyKey}
-              className="rounded border border-amber-700 px-2 py-1 text-xs text-amber-100 hover:bg-amber-900/50"
-            >
+            <code className="break-all font-mono text-sm text-[var(--text)]">{newKey}</code>
+            <Button type="button" variant="secondary" size="sm" onClick={copyKey}>
               {copied ? "Copied" : "Copy"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setNewKey("")}
-              className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-400 hover:bg-slate-800"
-            >
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => setNewKey("")}>
               Dismiss
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
 
-      <form onSubmit={onCreate} className="mb-6 flex flex-wrap items-end gap-2">
-        <div>
-          <label className="mb-1 block text-xs text-slate-400" htmlFor="key-name">
-            Name
-          </label>
-          <input
+      <form onSubmit={onCreate} className="flex flex-wrap items-end gap-2">
+        <div className="min-w-[12rem] flex-1">
+          <Input
             id="key-name"
+            label="Name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="rounded border border-slate-700 bg-[#0d1219] px-3 py-1.5 text-sm text-slate-100 outline-none focus:border-sky-600"
             placeholder="my-client"
             required
           />
         </div>
-        <button
-          type="submit"
-          disabled={creating || !name.trim()}
-          className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
-        >
+        <Button type="submit" variant="primary" disabled={creating || !name.trim()}>
           {creating ? "Creating…" : "Create key"}
-        </button>
+        </Button>
       </form>
 
-      {loading ? <p className="text-sm text-slate-400">Loading…</p> : null}
-      {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
+      {loading ? <p className="text-sm text-[var(--muted)]">Loading…</p> : null}
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
 
       {!loading && rows.length === 0 && !error ? (
-        <p className="text-sm text-slate-400">No API keys yet.</p>
+        <p className="text-sm text-[var(--muted)]">No API keys yet.</p>
       ) : null}
 
       {rows.length > 0 ? (
-        <div className="overflow-x-auto rounded border border-slate-800">
+        <div className="rounded border border-[var(--border)] overflow-x-auto">
           <table className="w-full min-w-[32rem] text-left text-sm">
-            <thead className="border-b border-slate-800 bg-[#0d1219] text-xs uppercase text-slate-400">
+            <thead className="border-b border-[var(--border)] bg-[var(--surface)] text-xs uppercase text-[var(--muted)]">
               <tr>
                 <th className="px-3 py-2 font-medium">Name</th>
                 <th className="px-3 py-2 font-medium">Key ID</th>
@@ -150,30 +139,30 @@ export default function KeysPage() {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.id} className="border-b border-slate-800/80 last:border-0">
-                  <td className="px-3 py-2 text-slate-100">{row.name || "—"}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-slate-400">
+                <tr key={row.id} className="border-b border-[var(--border)] last:border-0">
+                  <td className="px-3 py-2 text-[var(--text)]">{row.name || "—"}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-[var(--muted)]">
                     {row.keyId || row.id}
                   </td>
                   <td className="px-3 py-2">
                     <button
                       type="button"
                       onClick={() => onToggle(row.id, !!row.isActive)}
-                      className={`rounded px-2 py-0.5 text-xs ${
+                      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium border-0 cursor-pointer transition ${
                         row.isActive
-                          ? "bg-emerald-900/40 text-emerald-300"
-                          : "bg-slate-800 text-slate-400"
+                          ? "bg-green-500/10 text-[var(--success)]"
+                          : "bg-[var(--surface-2)] text-[var(--muted)]"
                       }`}
                     >
                       {row.isActive ? "Active" : "Inactive"}
                     </button>
                   </td>
-                  <td className="px-3 py-2 text-xs text-slate-400">{row.createdAt || "—"}</td>
+                  <td className="px-3 py-2 text-xs text-[var(--muted)]">{row.createdAt || "—"}</td>
                   <td className="px-3 py-2">
                     <button
                       type="button"
                       onClick={() => onDelete(row.id)}
-                      className="text-xs text-red-400 hover:underline"
+                      className="text-xs text-[var(--danger)] hover:underline"
                     >
                       Delete
                     </button>

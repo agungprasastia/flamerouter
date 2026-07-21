@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./store/auth";
+import { useTheme } from "./store/theme";
 import DashboardShell from "./layout/DashboardShell";
 import LoginPage from "./pages/LoginPage";
 import HomePage from "./pages/HomePage";
@@ -13,7 +14,7 @@ import SettingsPage from "./pages/SettingsPage";
 function Protected({ children }) {
   const { authenticated, loading, requireLogin } = useAuth();
   const loc = useLocation();
-  if (loading) return <div className="p-8 text-slate-400">Loading…</div>;
+  if (loading) return <div className="bg-[var(--bg)] p-8 text-[var(--muted)]">Loading…</div>;
   if (requireLogin && !authenticated) {
     return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
   }
@@ -22,9 +23,16 @@ function Protected({ children }) {
 
 export default function App() {
   const bootstrap = useAuth((s) => s.bootstrap);
+  const syncTheme = useTheme((s) => s.syncTheme);
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
+  useEffect(() => {
+    syncTheme();
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    media.addEventListener("change", syncTheme);
+    return () => media.removeEventListener("change", syncTheme);
+  }, [syncTheme]);
 
   return (
     <Routes>
