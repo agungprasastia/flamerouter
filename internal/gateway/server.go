@@ -254,6 +254,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1beta/", s.handleGeminiV1Beta)
 	s.mux.HandleFunc("/codex/", s.handleCodexRewrite)
 	s.mux.HandleFunc("/v1/", s.handleCORS)
+
+	// SPA last — more-specific routes win over /
+	s.mux.HandleFunc("/", s.handleSPA)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
