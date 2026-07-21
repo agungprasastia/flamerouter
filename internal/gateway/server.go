@@ -281,27 +281,51 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		keys, err := s.st.ListAPIKeys()
+		if err != nil {
+			http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
+			return
+		}
+		type out struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			KeyID     string `json:"keyId"`
+			MachineID string `json:"machineId"`
+			IsActive  bool   `json:"isActive"`
+			CreatedAt string `json:"createdAt"`
+		}
+		list := make([]out, 0, len(keys))
+		for _, k := range keys {
+			list = append(list, out{
+				ID: k.ID, Name: k.Name, KeyID: k.KeyID,
+				MachineID: k.MachineID, IsActive: k.IsActive, CreatedAt: k.CreatedAt,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(list)
+	case http.MethodPost:
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+			http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
+			return
+		}
+		mid := machineID(s.cfg.MachineIDSalt)
+		key, keyID := s.keys.Generate(mid)
+		hash := auth.HashKey(key)
+		_, err := s.st.CreateAPIKey(req.Name, keyID, hash, mid)
+		if err != nil {
+			http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key":"` + key + `"}`))
+	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
 	}
-	var req struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
-		return
-	}
-	mid := machineID(s.cfg.MachineIDSalt)
-	key, keyID := s.keys.Generate(mid)
-	hash := auth.HashKey(key)
-	_, err := s.st.CreateAPIKey(req.Name, keyID, hash, mid)
-	if err != nil {
-		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"key":"` + key + `"}`))
 }
 
 func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
