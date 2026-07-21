@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"flamerouter/internal/store"
 )
 
 type Handler struct {
@@ -92,7 +95,7 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request, provide
 	}
 	delete(h.states, state)
 
-	token, err := h.exchangeCode(r.Context(), config, code)
+	token, err := h.exchangeCode(r.Context(), config, code, oauthState.RedirectURI, "")
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"token exchange failed: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -107,14 +110,117 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request, provide
 	})
 }
 
-func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code string) (*Token, error) {
+// ExchangeAndSave exchanges auth code (or raw JWT access token) and stores connection.
+func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider, code, redirectURI, codeVerifier, state string, meta map[string]any) (map[string]any, error) {
+	if code == "" {
+		return nil, fmt.Errorf("missing code")
+	}
+	// Raw JWT access token (codex website paste)
+	if strings.HasPrefix(code, "eyJ") && strings.Contains(code, ".") {
+		psd := map[string]any{"authMethod": "access_token"}
+		if info := decodeJWTClaims(code); info != nil {
+			if v, ok := info["account_id"].(string); ok && v != "" {
+				psd["chatgptAccountId"] = v
+			}
+			if v, ok := info["plan_type"].(string); ok && v != "" {
+				psd["chatgptPlanType"] = v
+			}
+		}
+		email := ""
+		if info := decodeJWTClaims(code); info != nil {
+			if v, ok := info["email"].(string); ok {
+				email = v
+			}
+		}
+		name := email
+		if name == "" {
+			name = provider
+		}
+		id, err := st.CreateOAuthConnection(provider, "access_token", name, code, "", "", psd)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
+	}
+
+	noPKCE := provider == "cline" || provider == "clinepass" || provider == "kimchi"
+	if redirectURI == "" || (!noPKCE && codeVerifier == "") {
+		return nil, fmt.Errorf("missing required fields")
+	}
+	config, ok := ProviderConfigs[provider]
+	if !ok {
+		return nil, fmt.Errorf("unknown provider")
+	}
+	// meta may override client credentials (gitlab)
+	if meta != nil {
+		if cid, ok := meta["clientId"].(string); ok && cid != "" {
+			c2 := *config
+			c2.ClientID = cid
+			if sec, ok := meta["clientSecret"].(string); ok {
+				c2.ClientSecret = sec
+			}
+			config = &c2
+		}
+	}
+	token, err := h.exchangeCode(ctx, config, code, redirectURI, codeVerifier)
+	if err != nil {
+		return nil, err
+	}
+	expiresAt := ""
+	if !token.ExpiresAt.IsZero() {
+		expiresAt = token.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	id, err := st.CreateOAuthConnection(provider, "oauth", provider, token.AccessToken, token.RefreshToken, expiresAt, nil)
+	if err != nil {
+		return nil, err
+	}
+	_ = state
+	return map[string]any{"id": id, "provider": provider, "email": "", "displayName": provider}, nil
+}
+
+func decodeJWTClaims(tok string) map[string]any {
+	parts := strings.Split(tok, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+	b64 := parts[1]
+	// base64url → raw
+	switch len(b64) % 4 {
+	case 2:
+		b64 += "=="
+	case 3:
+		b64 += "="
+	}
+	b64 = strings.ReplaceAll(strings.ReplaceAll(b64, "-", "+"), "_", "/")
+	raw, err := decodeB64(b64)
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	return m
+}
+
+func decodeB64(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
+}
+
+func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, redirectURI, codeVerifier string) (*Token, error) {
+	if redirectURI == "" {
+		redirectURI = config.RedirectURL
+	}
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
-	data.Set("redirect_uri", config.RedirectURL)
+	data.Set("redirect_uri", redirectURI)
 	data.Set("client_id", config.ClientID)
 	if config.ClientSecret != "" {
 		data.Set("client_secret", config.ClientSecret)
+	}
+	if codeVerifier != "" {
+		data.Set("code_verifier", codeVerifier)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, strings.NewReader(data.Encode()))

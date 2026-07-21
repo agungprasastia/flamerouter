@@ -62,3 +62,38 @@ func (s *Server) handleSetPricing(w http.ResponseWriter, r *http.Request) {
 	}
 	s.handleGetPricing(w, r)
 }
+
+func (s *Server) handleDeletePricing(w http.ResponseWriter, r *http.Request) {
+	provider := r.URL.Query().Get("provider")
+	model := r.URL.Query().Get("model")
+	if provider != "" && model != "" {
+		raw, err := s.st.KVGet("pricing", provider)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "db")
+			return
+		}
+		if raw != "" {
+			existing := map[string]map[string]float64{}
+			_ = json.Unmarshal([]byte(raw), &existing)
+			delete(existing, model)
+			if len(existing) == 0 {
+				_ = s.st.KVDelete("pricing", provider)
+			} else {
+				b, _ := json.Marshal(existing)
+				_ = s.st.KVSet("pricing", provider, string(b))
+			}
+		}
+	} else if provider != "" {
+		_ = s.st.KVDelete("pricing", provider)
+	} else {
+		all, err := s.st.KVList("pricing")
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "db")
+			return
+		}
+		for k := range all {
+			_ = s.st.KVDelete("pricing", k)
+		}
+	}
+	s.handleGetPricing(w, r)
+}

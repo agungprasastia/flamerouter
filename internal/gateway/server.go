@@ -1,10 +1,13 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"flamerouter/internal/auth"
 	"flamerouter/internal/config"
@@ -70,6 +73,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	s.mux.HandleFunc("PATCH /api/settings", s.handlePatchSettings)
 	s.mux.HandleFunc("GET /api/settings/require-login", s.handleRequireLogin)
+	s.mux.HandleFunc("PATCH /api/settings/require-login", s.handleRequireLogin)
 	s.mux.HandleFunc("POST /api/settings/proxy-test", s.handleProxyTest)
 	s.mux.HandleFunc("/api/settings/database", s.handleDatabase)
 
@@ -123,6 +127,8 @@ func (s *Server) routes() {
 	// Pricing + proxy pools
 	s.mux.HandleFunc("GET /api/pricing", s.handleGetPricing)
 	s.mux.HandleFunc("POST /api/pricing", s.handleSetPricing)
+	s.mux.HandleFunc("PATCH /api/pricing", s.handleSetPricing)
+	s.mux.HandleFunc("DELETE /api/pricing", s.handleDeletePricing)
 	s.mux.HandleFunc("GET /api/proxy-pools", s.handleListProxyPools)
 	s.mux.HandleFunc("POST /api/proxy-pools", s.handleCreateProxyPool)
 	// deploy endpoints BEFORE {id}
@@ -145,6 +151,7 @@ func (s *Server) routes() {
 	// Tags, locale, init
 	s.mux.HandleFunc("GET /api/tags", s.handleTags)
 	s.mux.HandleFunc("GET /api/locale", s.handleLocale)
+	s.mux.HandleFunc("POST /api/locale", s.handleLocale)
 	s.mux.HandleFunc("/api/init", s.handleInit)
 
 	// CLI tools (static path before {toolSettings})
@@ -598,9 +605,12 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+	// parity 9router maxDuration: 300s
+	ctx, cancel := context.WithTimeout(r.Context(), 300*time.Second)
+	defer cancel()
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/") {
-		_ = handlers.STTMultipart(r.Context(), w, r, s.st, s.fb)
+		_ = handlers.STTMultipart(ctx, w, r, s.st, s.fb)
 		return
 	}
 	body, err := io.ReadAll(r.Body)
@@ -608,7 +618,7 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
-	_ = handlers.STT(r.Context(), w, body, s.st, s.exec, s.fb)
+	_ = handlers.STT(ctx, w, body, s.st, s.exec, s.fb)
 }
 
 func (s *Server) handleVoices(w http.ResponseWriter, r *http.Request) {
@@ -686,11 +696,6 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 	_ = handlers.Fetch(r.Context(), w, body, s.st, s.exec, s.fb)
 }
 
-func (s *Server) handleCompat(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"error":"endpoint not yet implemented","path":"` + r.URL.Path + `"}`))
-}
-
 func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/oauth/")
 	path = strings.Trim(path, "/")
@@ -710,11 +715,10 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 		action = parts[1]
 	}
 
-	switch action {
+switch action {
 	case "authorize":
 		cfg, ok := oauth.ProviderConfigs[provider]
 		if ok && cfg.AuthStyle == "device" {
-			// device flow start
 			dc, err := oauth.StartDeviceFlowForProvider(r.Context(), provider)
 			if err != nil {
 				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
@@ -725,17 +729,100 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.oauth.StartAuth(w, r, provider)
-	case "device":
-		// POST {device_code} → poll once / return token
+	case "device-code":
+		// GET parity with 9router device-code start
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		cfg, ok := oauth.ProviderConfigs[provider]
+		if !ok || cfg.AuthStyle != "device" {
+			http.Error(w, `{"error":"Provider does not support device code flow"}`, http.StatusBadRequest)
+			return
+		}
+		dc, err := oauth.StartDeviceFlowForProvider(r.Context(), provider)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(dc)
+	case "start-proxy":
+		if provider != "codex" && provider != "xai" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Proxy only supported for codex/xai"})
+			return
+		}
+		appPortStr := r.URL.Query().Get("app_port")
+		if appPortStr == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Missing app_port"})
+			return
+		}
+		appPort, _ := strconv.Atoi(appPortStr)
+		result, err := oauth.StartOAuthProxy(provider, appPort, s.oauth, s.st)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		serverSide := false
+		state := r.URL.Query().Get("state")
+		cv := r.URL.Query().Get("code_verifier")
+		ru := r.URL.Query().Get("redirect_uri")
+		if ok, _ := result["success"].(bool); ok && state != "" && cv != "" && ru != "" {
+			serverSide = oauth.RegisterProxySession(provider, state, cv, ru)
+		}
+		result["serverSide"] = serverSide
+		writeJSONOK(w, result)
+	case "poll-status":
+		if provider != "codex" && provider != "xai" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Poll only supported for codex/xai"})
+			return
+		}
+		state := r.URL.Query().Get("state")
+		if state == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Missing state"})
+			return
+		}
+		session := oauth.GetProxySessionStatus(provider, state)
+		if session == nil {
+			writeJSONOK(w, map[string]any{"status": "unknown"})
+			return
+		}
+		st, _ := session["status"].(string)
+		if st == "done" || st == "error" {
+			oauth.ClearProxySession(provider, state)
+			writeJSONOK(w, session)
+			return
+		}
+		writeJSONOK(w, map[string]any{"status": st})
+	case "stop-proxy":
+		if provider != "codex" && provider != "xai" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Proxy only supported for codex/xai"})
+			return
+		}
+		_ = oauth.StopOAuthProxy(provider)
+		writeJSONOK(w, map[string]any{"success": true})
+	case "device", "poll":
+		// POST {device_code|deviceCode} → poll once / return token
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
-			DeviceCode string `json:"device_code"`
-			Interval   int    `json:"interval"`
+			DeviceCode  string         `json:"device_code"`
+			DeviceCode2 string         `json:"deviceCode"`
+			Interval    int            `json:"interval"`
+			CodeVerifier string        `json:"codeVerifier"`
+			ExtraData   map[string]any `json:"extraData"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceCode == "" {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+			return
+		}
+		dc := req.DeviceCode
+		if dc == "" {
+			dc = req.DeviceCode2
+		}
+		if dc == "" {
 			http.Error(w, `{"error":"device_code required"}`, http.StatusBadRequest)
 			return
 		}
@@ -748,9 +835,10 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if provider == "github" || provider == "copilot" {
-			tok, extra, err := oauth.ExchangeGithubDeviceToken(r.Context(), req.DeviceCode, provider == "copilot" || provider == "github")
+			tok, extra, err := oauth.ExchangeGithubDeviceToken(r.Context(), dc, provider == "copilot" || provider == "github")
 			if err != nil {
-				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+				// pending-friendly shape for poll
+				writeJSONOK(w, map[string]any{"success": false, "error": err.Error(), "pending": true})
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -759,12 +847,15 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 				"refresh_token": tok.RefreshToken,
 				"expires_at":    tok.ExpiresAt,
 				"extra":         extra,
+				"success":       true,
 			})
 			return
 		}
-		tok, err := oauth.PollDeviceToken(r.Context(), cfg, req.DeviceCode, req.Interval)
+		tok, err := oauth.PollDeviceToken(r.Context(), cfg, dc, req.Interval)
 		if err != nil {
-			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+			msg := err.Error()
+			pending := strings.Contains(msg, "authorization_pending") || strings.Contains(msg, "slow_down") || strings.Contains(msg, "pending")
+			writeJSONOK(w, map[string]any{"success": false, "error": msg, "pending": pending})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -772,7 +863,69 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 			"access_token":  tok.AccessToken,
 			"refresh_token": tok.RefreshToken,
 			"expires_at":    tok.ExpiresAt,
+			"success":       true,
 		})
+	case "exchange":
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Code         string         `json:"code"`
+			RedirectURI  string         `json:"redirectUri"`
+			CodeVerifier string         `json:"codeVerifier"`
+			State        string         `json:"state"`
+			Meta         map[string]any `json:"meta"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid or empty request body"})
+			return
+		}
+		conn, err := s.oauth.ExchangeAndSave(r.Context(), s.st, provider, body.Code, body.RedirectURI, body.CodeVerifier, body.State, body.Meta)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSONOK(w, map[string]any{"success": true, "connection": conn})
+	case "manual-code":
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		if provider != "xai" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Manual code only supported for xai"})
+			return
+		}
+		var body struct {
+			Code  string `json:"code"`
+			State string `json:"state"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid body"})
+			return
+		}
+		code := strings.TrimSpace(body.Code)
+		state := strings.TrimSpace(body.State)
+		sess := oauth.GetProxySessionStatus("xai", state)
+		if sess == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "xAI OAuth session not found; restart the login flow and paste the code again"})
+			return
+		}
+		// Need full session with verifier — re-register path stores only status view.
+		// Exchange via stored session by reading internal map through Register again is wrong;
+		// use ExchangeAndSave with redirect from query fallback.
+		// Manual code: session must still be pending with verifier — pull via poll-status shape is incomplete.
+		// Complete by calling ExchangeAndSave with redirect_uri from registered session internals:
+		conn, err := s.completeXaiManualCode(r.Context(), code, state)
+		if err != nil {
+			oauth.ClearProxySession("xai", state)
+			_ = oauth.StopOAuthProxy("xai")
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		oauth.ClearProxySession("xai", state)
+		_ = oauth.StopOAuthProxy("xai")
+		writeJSONOK(w, map[string]any{"success": true, "connection": conn})
 	case "callback":
 		s.oauth.HandleCallback(w, r, provider)
 	case "refresh":
@@ -788,11 +941,9 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"refresh_token required"}`, http.StatusBadRequest)
 			return
 		}
-		// specialized kiro refresh
 		if provider == "kiro" {
 			tok, err := oauth.RefreshKiroToken(r.Context(), req.RefreshToken, req.PSD)
 			if err != nil {
-				// fallback generic
 				token, err2 := s.refresh.Refresh(r.Context(), provider, req.RefreshToken)
 				if err2 != nil {
 					http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -812,7 +963,6 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 		}
 		token, err := s.refresh.Refresh(r.Context(), provider, req.RefreshToken)
 		if err != nil {
-			// also try oauth handler
 			tok, err2 := s.oauth.RefreshToken(r.Context(), provider, req.RefreshToken)
 			if err2 != nil {
 				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -831,6 +981,12 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, `{"error":"unknown action"}`, http.StatusBadRequest)
 	}
+}
+
+func (s *Server) completeXaiManualCode(ctx context.Context, code, state string) (map[string]any, error) {
+	// Access full session via GetProxySessionStatus is status-only; use ExchangeAndSave with
+	// redirect_uri from xAI fixed proxy default when session still holds verifier internally.
+	return oauth.CompleteXaiManualCode(ctx, s.oauth, s.st, code, state)
 }
 
 func (s *Server) authOK(r *http.Request) bool {

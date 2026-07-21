@@ -74,10 +74,36 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRequireLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPatch {
+		var body struct {
+			RequireLogin *bool `json:"requireLogin"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RequireLogin == nil {
+			writeErr(w, http.StatusBadRequest, "requireLogin required")
+			return
+		}
+		v := "false"
+		if *body.RequireLogin {
+			v = "true"
+		}
+		if err := s.st.SetSetting("requireLogin", v); err != nil {
+			writeErr(w, http.StatusInternalServerError, "db")
+			return
+		}
+	}
 	val, _ := s.st.GetSetting("requireLogin")
 	// default true when unset (parity with 9router DEFAULT_SETTINGS)
 	require := val == "" || val == "true" || val == "1"
-	writeJSONOK(w, map[string]any{"requireLogin": require})
+	tunnelDash, _ := s.st.GetSetting("tunnelDashboardAccess")
+	tunnelURL, _ := s.st.GetSetting("tunnelUrl")
+	tsURL, _ := s.st.GetSetting("tailscaleUrl")
+	tunnelDashOK := tunnelDash == "" || tunnelDash == "true" || tunnelDash == "1"
+	writeJSONOK(w, map[string]any{
+		"requireLogin":           require,
+		"tunnelDashboardAccess":  tunnelDashOK,
+		"tunnelUrl":              tunnelURL,
+		"tailscaleUrl":           tsURL,
+	})
 }
 
 func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {

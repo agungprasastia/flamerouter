@@ -94,7 +94,40 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLocale(w http.ResponseWriter, r *http.Request) {
-	writeJSONOK(w, map[string]any{"locale": "en"})
+	if r.Method == http.MethodPost {
+		var body struct {
+			Locale string `json:"locale"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Locale == "" {
+			writeErr(w, http.StatusBadRequest, "Invalid locale")
+			return
+		}
+		// accept any short locale tag; store cookie for dashboard
+		loc := body.Locale
+		if len(loc) > 16 {
+			loc = loc[:16]
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     "locale",
+			Value:    loc,
+			Path:     "/",
+			MaxAge:   60 * 60 * 24 * 365,
+			HttpOnly: false,
+			SameSite: http.SameSiteLaxMode,
+		})
+		_ = s.st.SetSetting("locale", loc)
+		writeJSONOK(w, map[string]any{"success": true, "locale": loc})
+		return
+	}
+	loc, _ := s.st.GetSetting("locale")
+	if loc == "" {
+		if c, err := r.Cookie("locale"); err == nil && c.Value != "" {
+			loc = c.Value
+		} else {
+			loc = "en"
+		}
+	}
+	writeJSONOK(w, map[string]any{"locale": loc})
 }
 
 func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {

@@ -1251,6 +1251,34 @@ var Registry = []Provider{
 		},
 		ServiceKinds: []string{"llm"},
 	},
+	{
+		ID:       "alims-intl",
+		Priority: 11,
+		Alias:    "alims-intl",
+		Display:  Display{Name: "Alibaba Studio", Icon: "cloud", Color: "#FF6A00", TextIcon: "ALi", Website: "https://modelstudio.console.alibabacloud.com", Notice: &Notice{APIKeyURL: "https://modelstudio.console.alibabacloud.com/?apiKey=1"}},
+		Category: "apikey",
+		Transport: Transport{BaseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"},
+		Models: []Model{
+			{ID: "qwen3.5-plus", Name: "Qwen3.5 Plus"},
+			{ID: "kimi-k2.5", Name: "Kimi K2.5"},
+			{ID: "glm-5", Name: "GLM 5"},
+			{ID: "MiniMax-M2.5", Name: "MiniMax M2.5"},
+			{ID: "qwen3-coder-next", Name: "Qwen3 Coder Next"},
+			{ID: "qwen3-coder-plus", Name: "Qwen3 Coder Plus"},
+			{ID: "glm-4.7", Name: "GLM 4.7"},
+		},
+		ServiceKinds: []string{"llm"},
+	},
+	{
+		ID:       "local-device",
+		Priority: 173,
+		Alias:    "local-device",
+		Display:  Display{Name: "Local Device", Icon: "speaker", Color: "#64748B", TextIcon: "LD"},
+		Category: "freeTier",
+		Transport: Transport{BaseURL: "local-device", Format: "local-device"},
+		Models:       []Model{},
+		ServiceKinds: []string{"tts"},
+	},
 }
 
 var providerMap = map[string]*Provider{}
