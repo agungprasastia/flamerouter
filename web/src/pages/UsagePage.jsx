@@ -10,14 +10,8 @@ import {
 } from "recharts";
 import { stats as fetchStats, chart as fetchChart } from "../api/usage";
 
-let shapeLogged = false;
-
 function mapChartPoints(payload) {
   const raw = payload?.data ?? payload?.points ?? (Array.isArray(payload) ? payload : []);
-  if (!shapeLogged && payload != null) {
-    shapeLogged = true;
-    console.info("[usage/chart] shape keys:", Object.keys(payload), "sample:", raw?.[0]);
-  }
   if (!Array.isArray(raw)) return [];
   return raw.map((row) => ({
     date: row.date ?? row.Date ?? row.day ?? "",

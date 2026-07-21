@@ -8,12 +8,12 @@ import (
 )
 
 // DashboardGuard protects dashboard API routes with JWT auth.
-// Public: /api/health, /api/auth/login|logout|status|oidc/*, /v1/*, non-/api paths.
+// Public: /api/health, GET /api/settings/require-login, /api/auth/login|logout|status|oidc/*, /v1/*, non-/api paths.
 // Protected: remaining /api/*
 func DashboardGuard(jwt *JWTManager, _ *store.Store, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if isPublicPath(path) {
+		if isPublicPath(path, r.Method) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -36,8 +36,12 @@ func DashboardGuard(jwt *JWTManager, _ *store.Store, next http.Handler) http.Han
 	})
 }
 
-func isPublicPath(path string) bool {
+func isPublicPath(path, method string) bool {
 	if path == "/api/health" {
+		return true
+	}
+	// bootstrap: unauth SPA needs requireLogin without session; PATCH stays protected
+	if path == "/api/settings/require-login" && method == http.MethodGet {
 		return true
 	}
 	if strings.HasPrefix(path, "/v1/") || path == "/v1" {
