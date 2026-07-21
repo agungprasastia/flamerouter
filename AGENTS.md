@@ -72,7 +72,7 @@ This is a rewrite — every feature, every UI page, every provider must exist in
 
 ### Deferred
 
-- [ ] Dashboard SPA (30+ pages) — providers, usage, combos, quota, settings, chat playground, etc.
+- [x] Dashboard SPA MVP (login, shell, providers, usage, keys, settings) — phase 2 open (combos, quota, chat playground, etc.)
 - [ ] Docker packaging (optional)
 
 Minor API gaps: translator load/save/stream, proxy-pool test — see `docs/superpowers/plans/parity-backend-routes.md`.
