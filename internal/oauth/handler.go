@@ -43,16 +43,21 @@ func (h *Handler) StartAuth(w http.ResponseWriter, r *http.Request, provider str
 		return
 	}
 
+	redirectURI := config.RedirectURL
+	if rr := r.URL.Query().Get("redirect_uri"); rr != "" {
+		redirectURI = rr
+	}
+
 	h.states[state] = &OAuthState{
 		State:       state,
 		Provider:    provider,
-		RedirectURI: config.RedirectURL,
+		RedirectURI: redirectURI,
 		CreatedAt:   time.Now(),
 	}
 
 	params := url.Values{}
 	params.Set("client_id", config.ClientID)
-	params.Set("redirect_uri", config.RedirectURL)
+	params.Set("redirect_uri", redirectURI)
 	params.Set("response_type", "code")
 	params.Set("scope", strings.Join(config.Scopes, " "))
 	params.Set("state", state)

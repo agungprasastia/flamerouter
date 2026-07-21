@@ -82,6 +82,7 @@ var ProviderConfigs = map[string]*OAuthConfig{
 	},
 	"xai": {
 		Provider:     "xai",
+		ClientID:     "b1a00492-073a-47ea-816f-4c329264a828",
 		AuthURL:      "https://accounts.x.ai/oauth2/authorize",
 		TokenURL:     "https://accounts.x.ai/oauth2/token",
 		RefreshURL:   "https://accounts.x.ai/oauth2/token",
@@ -103,8 +104,9 @@ var ProviderConfigs = map[string]*OAuthConfig{
 	},
 	"codex": {
 		Provider:     "codex",
-		AuthURL:      "https://auth0.openai.com/authorize",
-		TokenURL:     "https://auth0.openai.com/oauth/token",
+		ClientID:     "app_EMoamEEZ73f0CkXaXp7hrann",
+		AuthURL:      "https://auth.openai.com/oauth/authorize",
+		TokenURL:     "https://auth.openai.com/oauth/token",
 		RedirectURL:  "http://localhost:20128/api/oauth/codex/callback",
 		Scopes:       []string{"openid", "offline_access"},
 		AuthStyle:    "pkce",
@@ -151,11 +153,14 @@ var ProviderConfigs = map[string]*OAuthConfig{
 	},
 	"grok-cli": {
 		Provider:     "grok-cli",
+		ClientID:     "b1a00492-073a-47ea-816f-4c329264a828",
 		AuthURL:      "https://accounts.x.ai/oauth2/authorize",
 		TokenURL:     "https://accounts.x.ai/oauth2/token",
+		DeviceURL:    "https://auth.x.ai/oauth2/device/code",
+		RefreshURL:   "https://accounts.x.ai/oauth2/token",
 		RedirectURL:  "http://localhost:20128/api/oauth/grok-cli/callback",
-		Scopes:       []string{"openid", "offline_access"},
-		AuthStyle:    "oidc",
+		Scopes:       []string{"openid", "offline_access", "grok-cli:access", "api:access", "conversations:read", "conversations:write"},
+		AuthStyle:    "device",
 		TokenExpiry:  time.Hour,
 	},
 	"antigravity": {
