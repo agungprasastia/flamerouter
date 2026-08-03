@@ -19,6 +19,11 @@ func (s *Store) ListAliases() (map[string]string, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) DeleteAlias(alias string) error {
+	_, err := s.db.Exec(`DELETE FROM model_aliases WHERE alias=?`, alias)
+	return err
+}
+
 func (s *Store) SetAlias(alias, targetModel string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO model_aliases(alias, target_model) VALUES(?,?)

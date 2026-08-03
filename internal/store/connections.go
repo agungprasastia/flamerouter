@@ -185,6 +185,26 @@ func (s *Store) InsertUsage(provider, model string, prompt, completion int, conn
 	return err
 }
 
+func (s *Store) UpdateConnection(id string, isActive bool, name string, priority int, baseURL string) error {
+	_, err := s.db.Exec(
+		`UPDATE provider_connections SET is_active=?, name=?, priority=?, base_url=? WHERE id=?`,
+		isActive, name, priority, baseURL, id,
+	)
+	return err
+}
+
+func (s *Store) DeleteConnection(id string) error {
+	res, err := s.db.Exec(`DELETE FROM provider_connections WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func GetUnavailableUntil(cooldownMs int64) string {
 	return time.Now().Add(time.Duration(cooldownMs) * time.Millisecond).UTC().Format(time.RFC3339)
 }

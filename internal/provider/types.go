@@ -25,8 +25,9 @@ type Display struct {
 }
 
 type Notice struct {
-	SignupURL   string `json:"signupUrl,omitempty"`
-	APIKeyURL   string `json:"apiKeyUrl,omitempty"`
+	Text       string `json:"text,omitempty"`
+	SignupURL  string `json:"signupUrl,omitempty"`
+	APIKeyURL  string `json:"apiKeyUrl,omitempty"`
 }
 
 type Transport struct {

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 
@@ -98,6 +99,75 @@ func (s *Server) handleGetProvider(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSONOK(w, map[string]any{"connections": list, "provider": id})
+}
+
+// PUT /api/providers/{id} — update connection (toggle active, rename, reprioritize)
+func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "id required")
+		return
+	}
+	conn, err := s.st.GetConnection(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	if conn == nil {
+		writeErr(w, http.StatusNotFound, "connection not found")
+		return
+	}
+	var req struct {
+		IsActive            *bool          `json:"isActive"`
+		Name                string         `json:"name"`
+		Priority            int            `json:"priority"`
+		BaseURL             string         `json:"baseUrl"`
+		ProviderSpecificData map[string]any `json:"providerSpecificData"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	isActive := conn.IsActive
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+	name := req.Name
+	if name == "" {
+		name = conn.Name
+	}
+	priority := req.Priority
+	baseURL := req.BaseURL
+	if baseURL == "" {
+		baseURL = conn.BaseURL
+	}
+	if err := s.st.UpdateConnection(id, isActive, name, priority, baseURL); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	if req.ProviderSpecificData != nil {
+		psdJSON, _ := json.Marshal(req.ProviderSpecificData)
+		_ = s.st.UpdateConnectionPSD(id, string(psdJSON))
+	}
+	writeJSONOK(w, map[string]any{"ok": true})
+}
+
+// DELETE /api/providers/{id} — delete connection
+func (s *Server) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "id required")
+		return
+	}
+	if err := s.st.DeleteConnection(id); err != nil {
+		if err == sql.ErrNoRows {
+			writeErr(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	writeJSONOK(w, map[string]any{"ok": true})
 }
 
 // POST /api/providers/{id} — create connection for provider

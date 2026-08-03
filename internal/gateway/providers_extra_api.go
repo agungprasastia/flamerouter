@@ -485,3 +485,82 @@ func (s *Server) handleKiloFreeModels(w http.ResponseWriter, r *http.Request) {
 	kiloCacheAt = now
 	writeJSONOK(w, map[string]any{"models": free, "cached": false})
 }
+
+// GET /api/providers/registry — expose full provider registry
+func (s *Server) handleProviderRegistry(w http.ResponseWriter, r *http.Request) {
+	all := provider.ListProviders()
+	out := make([]map[string]any, 0, len(all))
+	for _, p := range all {
+		models := make([]map[string]any, 0, len(p.Models))
+		for _, m := range p.Models {
+			models = append(models, map[string]any{
+				"id":   m.ID,
+				"name": m.Name,
+				"kind": m.Kind,
+			})
+		}
+		entry := map[string]any{
+			"id":       p.ID,
+			"name":     p.Display.Name,
+			"category": p.Category,
+			"hasFree":  p.HasFree,
+			"models":   models,
+			"color":    p.Display.Color,
+			"textIcon": p.Display.TextIcon,
+			"website":  p.Display.Website,
+		}
+		if p.Display.Deprecated {
+			entry["deprecated"] = true
+			entry["deprecationNotice"] = p.Display.DeprecNotice
+		}
+		if p.Display.Notice != nil {
+			n := map[string]any{}
+			if p.Display.Notice.Text != "" {
+				n["text"] = p.Display.Notice.Text
+			}
+			if p.Display.Notice.SignupURL != "" {
+				n["signupUrl"] = p.Display.Notice.SignupURL
+			}
+			if p.Display.Notice.APIKeyURL != "" {
+				n["apiKeyUrl"] = p.Display.Notice.APIKeyURL
+			}
+			if len(n) > 0 {
+				entry["notice"] = n
+			}
+		}
+		out = append(out, entry)
+	}
+	writeJSONOK(w, map[string]any{"registry": out})
+}
+
+// DELETE /api/models/alias — delete model alias
+func (s *Server) handleDeleteAlias(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Alias string `json:"alias"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Alias == "" {
+		writeErr(w, http.StatusBadRequest, "alias required")
+		return
+	}
+	if err := s.st.DeleteAlias(req.Alias); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	writeJSONOK(w, map[string]any{"ok": true})
+}
+
+// DELETE /api/models/custom — delete custom model
+func (s *Server) handleDeleteCustomModel(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+		writeErr(w, http.StatusBadRequest, "id required")
+		return
+	}
+	if err := s.st.DeleteCustomModel(req.ID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	writeJSONOK(w, map[string]any{"ok": true})
+}
