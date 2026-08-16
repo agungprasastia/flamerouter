@@ -11,12 +11,15 @@ func (s *Server) handleListCustomModels(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+
 	list := make([]map[string]any, 0, len(models))
+
 	for _, m := range models {
 		displayName := m.DisplayName
 		if displayName == "" {
 			displayName = m.ModelID
 		}
+
 		list = append(list, map[string]any{
 			"id":            m.ModelID,
 			"model_id":      m.ModelID,
@@ -30,6 +33,7 @@ func (s *Server) handleListCustomModels(w http.ResponseWriter, r *http.Request) 
 			"capabilities":  m.Capabilities,
 		})
 	}
+
 	writeJSONOK(w, map[string]any{"models": list})
 }
 
@@ -44,34 +48,42 @@ func (s *Server) handleCreateCustomModel(w http.ResponseWriter, r *http.Request)
 		Type          string `json:"type"`
 		Capabilities  string `json:"capabilities"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+
 	prov := req.Provider
 	if prov == "" {
 		prov = req.ProviderAlias
 	}
+
 	mid := req.ModelID
 	if mid == "" {
 		mid = req.ID
 	}
+
 	if prov == "" || mid == "" {
 		writeErr(w, http.StatusBadRequest, "provider and model id required")
 		return
 	}
+
 	name := req.DisplayName
 	if name == "" {
 		name = req.Name
 	}
+
 	if name == "" {
 		name = mid
 	}
+
 	id, err := s.st.CreateCustomModel(prov, mid, name, req.Capabilities)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"success": true,
 		"id":      id,

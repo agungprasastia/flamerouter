@@ -3,12 +3,11 @@ package combo
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"strconv"
-
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/store"
+	"net/http"
+	"strconv"
 )
 
 // Strategy defines how a combo group dispatches across models.
@@ -21,16 +20,15 @@ type Strategy interface {
 
 // Options carries per-request config for combo execution.
 type Options struct {
+	ClientHeaders  http.Header
+	SingleModel    func(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, stream bool) error
 	SourceFormat   string
 	TargetFormat   string
-	Stream         bool
-	ClientHeaders  http.Header
-	TokenSaverJSON string // raw JSON from settings
+	TokenSaverJSON string
 	ComboName      string
-	StickyLimit    int
 	JudgeModel     string
-	// SingleModel runs one provider/model and writes to w. Returns nil on success.
-	SingleModel func(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, stream bool) error
+	StickyLimit    int
+	Stream         bool
 }
 
 // Resolve picks the strategy for a combo based on settings.
@@ -39,11 +37,13 @@ type Options struct {
 // comboStrategies[name].fallbackStrategy into comboStrategy before chat calls Resolve).
 func Resolve(comboStrategy string, perCombo map[string]string, comboName string) Strategy {
 	s := comboStrategy
+
 	if perCombo != nil {
 		if override, ok := perCombo[comboName]; ok {
 			s = override
 		}
 	}
+
 	switch s {
 	case "round-robin":
 		return &RoundRobin{}
@@ -58,34 +58,43 @@ func Resolve(comboStrategy string, perCombo map[string]string, comboName string)
 func LoadStrategySettings(st *store.Store, comboName string) (strategy string, sticky int, judge string) {
 	strategy = "fallback"
 	sticky = 1
+
 	if st == nil {
 		return
 	}
+
 	if v, err := st.GetSetting("comboStrategy"); err == nil && v != "" {
 		strategy = v
 	}
+
 	if v, err := st.GetSetting("comboStickyRoundRobinLimit"); err == nil && v != "" {
 		if n, e := strconv.Atoi(v); e == nil && n > 0 {
 			sticky = n
 		}
 	}
+
 	raw, err := st.GetSetting("comboStrategies")
 	if err != nil || raw == "" {
 		return
 	}
+
 	var m map[string]map[string]any
 	if json.Unmarshal([]byte(raw), &m) != nil {
 		return
 	}
+
 	entry, ok := m[comboName]
 	if !ok {
 		return
 	}
+
 	if fs, ok := entry["fallbackStrategy"].(string); ok && fs != "" {
 		strategy = fs
 	}
+
 	if j, ok := entry["judgeModel"].(string); ok {
 		judge = j
 	}
+
 	return
 }

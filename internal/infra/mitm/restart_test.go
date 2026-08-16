@@ -11,25 +11,32 @@ func TestRestarter_GivesUpAtMax(t *testing.T) {
 	})
 	r.addr = ":0"
 	r.MarkStarted(":0")
+
 	old := restartDelays
 	restartDelays = []time.Duration{time.Millisecond}
+
 	t.Cleanup(func() { restartDelays = old })
 
 	// schedule once; failures re-schedule until max
 	r.ScheduleRestart()
+
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		r.mu.Lock()
 		c, restarting := r.count, r.restarting
 		r.mu.Unlock()
+
 		if c >= maxRestarts && !restarting {
 			return
 		}
+
 		time.Sleep(10 * time.Millisecond)
 	}
+
 	r.mu.Lock()
 	c := r.count
 	r.mu.Unlock()
+
 	if c < maxRestarts {
 		t.Fatalf("count=%d want >= %d", c, maxRestarts)
 	}
@@ -40,6 +47,7 @@ func TestDefaultToolHandlers(t *testing.T) {
 	if len(h) < 4 {
 		t.Fatalf("handlers=%d", len(h))
 	}
+
 	if _, ok := h["api2.cursor.sh"]; !ok {
 		t.Fatal("missing cursor host")
 	}

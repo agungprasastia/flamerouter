@@ -3,13 +3,12 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/opensse/fallback"
+	"flamerouter/internal/opensse/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"flamerouter/internal/opensse/fallback"
-	"flamerouter/internal/opensse/testutil"
 )
 
 func TestChatNonStreamTranslation(t *testing.T) {
@@ -32,6 +31,7 @@ func TestChatNonStreamTranslation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)
 	}
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -40,6 +40,7 @@ func TestChatNonStreamTranslation(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
 		t.Fatalf("json: %v", err)
 	}
+
 	choices, ok := res["choices"].([]any)
 	if !ok || len(choices) == 0 {
 		t.Fatalf("missing choices: %v", res)
@@ -67,16 +68,20 @@ func TestChatStreamingTranslationAndDoneMarker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)
 	}
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
+
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
 		t.Fatalf("content-type = %q, want text/event-stream", ct)
 	}
+
 	bodyStr := rec.Body.String()
 	if !strings.Contains(bodyStr, "part1") {
 		t.Fatalf("body missing part1: %s", bodyStr)
 	}
+
 	if !strings.Contains(bodyStr, "data: [DONE]") {
 		t.Fatalf("body missing [DONE]: %s", bodyStr)
 	}
@@ -102,9 +107,11 @@ func TestChatStreamingUpstreamErrorDoesNotWriteSSE(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
+
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
+
 	if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "text/event-stream") {
 		t.Fatalf("expected non-SSE headers on upstream error, got %q", ct)
 	}
@@ -133,6 +140,7 @@ func TestMessagesEndpointTranslationToOpenAIProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)
 	}
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}

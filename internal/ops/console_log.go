@@ -8,10 +8,10 @@ const defaultConsoleMaxLines = 500
 
 // ConsoleLog is a fixed-capacity ring buffer of log lines (9router consoleLogBuffer).
 type ConsoleLog struct {
-	mu   sync.Mutex
+	subs  map[chan string]struct{}
 	lines []string
-	max  int
-	subs map[chan string]struct{}
+	max   int
+	mu    sync.Mutex
 }
 
 // DefaultConsole is the process-wide translator/dashboard console buffer.
@@ -21,6 +21,7 @@ func NewConsoleLog(max int) *ConsoleLog {
 	if max <= 0 {
 		max = defaultConsoleMaxLines
 	}
+
 	return &ConsoleLog{max: max, lines: make([]string, 0, max), subs: make(map[chan string]struct{})}
 }
 
@@ -28,7 +29,9 @@ func (c *ConsoleLog) Append(line string) {
 	if c == nil {
 		return
 	}
+
 	c.mu.Lock()
+
 	c.lines = append(c.lines, line)
 	if len(c.lines) > c.max {
 		c.lines = append([]string(nil), c.lines[len(c.lines)-c.max:]...)
@@ -47,10 +50,12 @@ func (c *ConsoleLog) Get() []string {
 	if c == nil {
 		return nil
 	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]string, len(c.lines))
 	copy(out, c.lines)
+
 	return out
 }
 
@@ -58,7 +63,9 @@ func (c *ConsoleLog) Clear() {
 	if c == nil {
 		return
 	}
+
 	c.mu.Lock()
+
 	c.lines = c.lines[:0]
 	for ch := range c.subs {
 		select {
@@ -76,9 +83,11 @@ func (c *ConsoleLog) Subscribe() chan string {
 	if c == nil {
 		return ch
 	}
+
 	c.mu.Lock()
 	c.subs[ch] = struct{}{}
 	c.mu.Unlock()
+
 	return ch
 }
 
@@ -86,6 +95,7 @@ func (c *ConsoleLog) Unsubscribe(ch chan string) {
 	if c == nil || ch == nil {
 		return
 	}
+
 	c.mu.Lock()
 	delete(c.subs, ch)
 	c.mu.Unlock()
@@ -113,8 +123,10 @@ func (w Writer) Write(p []byte) (int, error) {
 	if n := len(s); n > 0 && s[n-1] == '\n' {
 		s = s[:n-1]
 	}
+
 	if s != "" {
 		w.Log.Append(s)
 	}
+
 	return len(p), nil
 }

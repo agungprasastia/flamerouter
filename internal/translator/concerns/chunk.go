@@ -1,55 +1,51 @@
 package concerns
 
 type ResponseState struct {
-	MessageID            string
-	Model                string
-	TextBlockStarted     bool
-	ThinkingBlockStarted bool
-	InThinkingBlock      bool
-	CurrentBlockIndex    int
+	FuncNames            map[int]string
+	ToolCallAccum        map[int]map[string]any
+	KiroToolCalls        map[int]map[string]any
+	RawUsage             map[string]any
+	ToolIndexById        map[string]int
+	FuncArgsBuf          map[int]string
 	ToolCalls            map[int]*ToolCallInfo
-	FinishReason         string
-	FinishReasonSent     bool
-	Usage                *UsageInfo
-	ContentBlockIndex    int
-	NextBlockIndex       int
-	ToolCallIndex        int
-	MessageStartSent     bool
-	TextBlockIndex       int
-	TextBlockClosed      bool
-	ThinkingBlockIndex   int
-	ServerToolBlockIndex int
-	ToolNameMap          map[string]string
 	ToolArgBuffers       map[int]string
-
-	ResponseId      string
-	ResponseCreated bool
-	Created         int64
-	ChunkIndex      int
-	HadToolUse      bool
-	HadToolCalls    bool
-
-	AccumulatedContent  string
-	AccumulatedThinking string
-
-	ToolCallAccum map[int]map[string]any
-
-	ResponsesStarted bool
-	OutputIndex      int
-	FuncOutputIndex  int
-	ReasoningStarted bool
-	ReasoningDone    bool
-	ReasoningId      string
-	MessageStarted   bool
-	MessageId        string
-	MessageTextBuf   string
-	FuncNames        map[int]string
-	FuncCallIds      map[int]string
-	FuncArgsBuf      map[int]string
-	ToolIndex        int
-	ToolIndexById    map[string]int
-	RawUsage         map[string]any
-	KiroToolCalls    map[int]map[string]any
+	Usage                *UsageInfo
+	FuncCallIds          map[int]string
+	ToolNameMap          map[string]string
+	Model                string
+	ResponseId           string
+	ReasoningId          string
+	MessageTextBuf       string
+	AccumulatedThinking  string
+	AccumulatedContent   string
+	MessageID            string
+	MessageId            string
+	FinishReason         string
+	Created              int64
+	ToolCallIndex        int
+	ServerToolBlockIndex int
+	ChunkIndex           int
+	ToolIndex            int
+	CurrentBlockIndex    int
+	ThinkingBlockIndex   int
+	ContentBlockIndex    int
+	TextBlockIndex       int
+	NextBlockIndex       int
+	OutputIndex          int
+	FuncOutputIndex      int
+	ReasoningDone        bool
+	ResponseCreated      bool
+	MessageStartSent     bool
+	MessageStarted       bool
+	ReasoningStarted     bool
+	ResponsesStarted     bool
+	TextBlockClosed      bool
+	FinishReasonSent     bool
+	HadToolCalls         bool
+	HadToolUse           bool
+	InThinkingBlock      bool
+	ThinkingBlockStarted bool
+	TextBlockStarted     bool
 }
 
 type ToolCallInfo struct {
@@ -59,40 +55,40 @@ type ToolCallInfo struct {
 }
 
 type UsageInfo struct {
-	PromptTokens              int
-	CompletionTokens          int
-	TotalTokens               int
-	InputTokens               int
-	OutputTokens              int
-	CacheReadTokens           int
-	CacheCreateTokens         int
-	CacheReadInputTokens      int
-	CacheCreationInputTokens  int
+	PromptTokens             int
+	CompletionTokens         int
+	TotalTokens              int
+	InputTokens              int
+	OutputTokens             int
+	CacheReadTokens          int
+	CacheCreateTokens        int
+	CacheReadInputTokens     int
+	CacheCreationInputTokens int
 }
 
 func NewResponseState() *ResponseState {
 	return &ResponseState{
-		ToolCalls:          make(map[int]*ToolCallInfo),
-		ToolArgBuffers:     make(map[int]string),
-		NextBlockIndex:     0,
-		ContentBlockIndex:  -1,
+		ToolCalls:            make(map[int]*ToolCallInfo),
+		ToolArgBuffers:       make(map[int]string),
+		NextBlockIndex:       0,
+		ContentBlockIndex:    -1,
 		ServerToolBlockIndex: -1,
 	}
 }
 
 type StreamChunk struct {
-	ID      string         `json:"id,omitempty"`
-	Object  string         `json:"object,omitempty"`
-	Created int64          `json:"created,omitempty"`
-	Model   string         `json:"model,omitempty"`
-	Choices []ChoiceChunk  `json:"choices,omitempty"`
-	Usage   *UsageInfo     `json:"usage,omitempty"`
+	Usage   *UsageInfo    `json:"usage,omitempty"`
+	ID      string        `json:"id,omitempty"`
+	Object  string        `json:"object,omitempty"`
+	Model   string        `json:"model,omitempty"`
+	Choices []ChoiceChunk `json:"choices,omitempty"`
+	Created int64         `json:"created,omitempty"`
 }
 
 type ChoiceChunk struct {
-	Index        int            `json:"index"`
 	Delta        map[string]any `json:"delta,omitempty"`
 	FinishReason *string        `json:"finish_reason,omitempty"`
+	Index        int            `json:"index"`
 }
 
 func BuildChunk(id string, created int64, model string, delta map[string]any, finishReason *string) StreamChunk {

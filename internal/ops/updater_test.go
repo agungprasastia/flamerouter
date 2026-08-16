@@ -12,15 +12,19 @@ func TestCheckVersion(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v1.2.3"})
 	}))
 	t.Cleanup(srv.Close)
+
 	old := ReleaseURL
 	ReleaseURL = srv.URL
+
 	t.Cleanup(func() { ReleaseURL = old })
 
 	Version = "1.0.0"
+
 	cur, latest, avail, err := CheckVersion()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if cur != "1.0.0" || latest != "1.2.3" || !avail {
 		t.Fatalf("got cur=%s latest=%s avail=%v", cur, latest, avail)
 	}

@@ -1,20 +1,25 @@
 package usage
 
 import (
-	"time"
-
 	"flamerouter/internal/store"
+	"time"
 )
 
 // Record captures a completed request's usage data.
 type Record struct {
-	Provider, Model, ConnectionID, Client string
-	SourceFormat, TargetFormat            string
-	StatusCode                            int
-	DurationMs                            int64
-	PromptTokens, CompletionTokens        int
-	RequestBody, ResponsePreview          string
-	ErrorText                             string
+	RequestBody      string
+	Model            string
+	ConnectionID     string
+	Client           string
+	SourceFormat     string
+	TargetFormat     string
+	Provider         string
+	ErrorText        string
+	ResponsePreview  string
+	StatusCode       int
+	CompletionTokens int
+	PromptTokens     int
+	DurationMs       int64
 }
 
 // Tracker records usage asynchronously via a buffered channel.
@@ -28,6 +33,7 @@ type Tracker struct {
 func NewTracker(st *store.Store, hub *StreamHub) *Tracker {
 	t := &Tracker{st: st, hub: hub, ch: make(chan Record, 256), done: make(chan struct{})}
 	go t.loop()
+
 	return t
 }
 
@@ -50,10 +56,12 @@ func (t *Tracker) loop() {
 		date := time.Now().UTC().Format("2006-01-02")
 		_ = t.st.InsertUsageDaily(date, r.Provider, r.Model, 1, r.PromptTokens, r.CompletionTokens)
 		_ = t.st.InsertUsage(r.Provider, r.Model, r.PromptTokens, r.CompletionTokens, r.ConnectionID)
+
 		if t.hub != nil {
 			t.hub.Broadcast(r)
 		}
 	}
+
 	close(t.done)
 }
 

@@ -24,10 +24,12 @@ func fetchGitHubUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	if opts.BaseURL != "" {
 		u = opts.BaseURL
 	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "token "+opts.AccessToken)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -63,12 +65,15 @@ func fetchGitHubUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 		if chat, ok := snaps["chat"].(map[string]any); ok {
 			quotas["chat"] = formatGitHubQuotaSnapshot(chat, resetAt)
 		}
+
 		if comp, ok := snaps["completions"].(map[string]any); ok {
 			quotas["completions"] = formatGitHubQuotaSnapshot(comp, resetAt)
 		}
+
 		if prem, ok := snaps["premium_interactions"].(map[string]any); ok {
 			quotas["premium_interactions"] = formatGitHubQuotaSnapshot(prem, resetAt)
 		}
+
 		return &QuotaResult{
 			Provider: "github",
 			Plan:     plan,
@@ -79,6 +84,7 @@ func fetchGitHubUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 
 	monthlyQuotas, _ := data["monthly_quotas"].(map[string]any)
 	usedQuotas, _ := data["limited_user_quotas"].(map[string]any)
+
 	if monthlyQuotas != nil || usedQuotas != nil {
 		resetAt := parseResetTime(data["limited_user_reset_date"])
 		chatTotal := toFiniteFloat(monthlyQuotas["chat"], 0)
@@ -109,6 +115,7 @@ func formatGitHubQuotaSnapshot(quota map[string]any, resetAt *string) QuotaItem 
 	rem := toFiniteFloat(quota["remaining"], 0)
 	unlimited, _ := quota["unlimited"].(bool)
 	used := mathMax(0, ent-rem)
+
 	return makeQuota(used, ent, resetAt, unlimited)
 }
 
@@ -116,5 +123,6 @@ func mathMax(a, b float64) float64 {
 	if a > b {
 		return a
 	}
+
 	return b
 }

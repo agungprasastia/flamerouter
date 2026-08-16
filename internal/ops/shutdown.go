@@ -11,7 +11,9 @@ func Shutdown(srv *http.Server) error {
 	if srv == nil {
 		return nil
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
 	return srv.Shutdown(ctx)
 }

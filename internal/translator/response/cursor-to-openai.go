@@ -13,6 +13,7 @@ func cursorToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState)
 	if chunk == nil {
 		return nil
 	}
+
 	if obj, ok := chunk["object"].(string); ok {
 		if obj == "chat.completion.chunk" || obj == "chat.completion" {
 			if _, ok := chunk["choices"].([]any); ok {
@@ -20,5 +21,6 @@ func cursorToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState)
 			}
 		}
 	}
+
 	return []map[string]any{chunk}
 }

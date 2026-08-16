@@ -24,6 +24,7 @@ func StartDeviceFlow(ctx context.Context, config *OAuthConfig) (*DeviceCodeRespo
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
@@ -67,6 +68,7 @@ func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string
 		if err != nil {
 			return nil, err
 		}
+
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "application/json")
 
@@ -74,6 +76,7 @@ func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string
 		if err != nil {
 			continue
 		}
+
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
@@ -82,12 +85,14 @@ func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string
 				AccessToken  string `json:"access_token"`
 				RefreshToken string `json:"refresh_token"`
 				TokenType    string `json:"token_type"`
-				ExpiresIn    int    `json:"expires_in"`
 				Scope        string `json:"scope"`
+				ExpiresIn    int    `json:"expires_in"`
 			}
+
 			if err := json.Unmarshal(body, &tokenResp); err != nil {
 				return nil, err
 			}
+
 			return &Token{
 				AccessToken:  tokenResp.AccessToken,
 				RefreshToken: tokenResp.RefreshToken,
@@ -101,14 +106,17 @@ func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string
 			Error            string `json:"error"`
 			ErrorDescription string `json:"error_description"`
 		}
+
 		if err := json.Unmarshal(body, &errResp); err == nil {
 			if errResp.Error == "authorization_pending" {
 				continue
 			}
+
 			if errResp.Error == "slow_down" {
 				interval += 5
 				continue
 			}
+
 			return nil, fmt.Errorf("device flow error: %s", errResp.Error)
 		}
 	}

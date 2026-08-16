@@ -3,13 +3,12 @@ package models
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/store"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
-
-	"flamerouter/internal/store"
 )
 
 const (
@@ -32,6 +31,7 @@ func (r *KimchiResolver) client() *http.Client {
 	if r.Client != nil {
 		return r.Client
 	}
+
 	return http.DefaultClient
 }
 
@@ -40,24 +40,25 @@ func normalizeKimchiEndpoint(ep string) string {
 	if raw == "" {
 		return kimchiDefaultAPI
 	}
+
 	return strings.TrimRight(raw, "/")
 }
 
 type kimchiRawItem struct {
+	Limits *struct {
+		ContextWindow   int `json:"context_window"`
+		MaxOutputTokens int `json:"max_output_tokens"`
+	} `json:"limits"`
 	ID              string   `json:"id"`
 	Slug            string   `json:"slug"`
 	Model           string   `json:"model"`
 	Name            string   `json:"name"`
 	DisplayName     string   `json:"display_name"`
 	Provider        string   `json:"provider"`
-	Reasoning       bool     `json:"reasoning"`
 	InputModalities []string `json:"input_modalities"`
-	Limits          *struct {
-		ContextWindow   int `json:"context_window"`
-		MaxOutputTokens int `json:"max_output_tokens"`
-	} `json:"limits"`
-	ContextLength   int `json:"contextLength"`
-	MaxOutputTokens int `json:"maxOutputTokens"`
+	ContextLength   int      `json:"contextLength"`
+	MaxOutputTokens int      `json:"maxOutputTokens"`
+	Reasoning       bool     `json:"reasoning"`
 }
 
 type kimchiResponse struct {
@@ -74,6 +75,7 @@ func (r *KimchiResolver) fetchRaw(ctx context.Context, token, endpoint string) (
 	if err != nil {
 		return nil, 0, err
 	}
+
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 	req.Header.Set("User-Agent", kimchiUserAgent)
 	req.Header.Set("Accept", "application/json")
@@ -93,6 +95,7 @@ func (r *KimchiResolver) fetchRaw(ctx context.Context, token, endpoint string) (
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("decode kimchi models response: %w", err)
 	}
+
 	return parsed.Models, resp.StatusCode, nil
 }
 
@@ -101,21 +104,25 @@ func (r *KimchiResolver) Resolve(ctx context.Context, conn *store.Connection) ([
 	if token == "" {
 		token = conn.APIKey
 	}
+
 	if token == "" && conn.ProviderSpecificData != nil {
 		if k, ok := conn.ProviderSpecificData["apiKey"].(string); ok && k != "" {
 			token = k
 		}
 	}
+
 	if token == "" {
 		return nil, nil
 	}
 
 	endpoint := kimchiDefaultAPI
+
 	if conn.ProviderSpecificData != nil {
 		if ep, ok := conn.ProviderSpecificData["kimchiEndpoint"].(string); ok && ep != "" {
 			endpoint = ep
 		}
 	}
+
 	if conn.BaseURL != "" {
 		endpoint = conn.BaseURL
 	}
@@ -126,45 +133,56 @@ func (r *KimchiResolver) Resolve(ctx context.Context, conn *store.Connection) ([
 	}
 
 	seen := make(map[string]bool)
+
 	var out []DynamicModel
+
 	for _, item := range raw {
 		id := strings.TrimSpace(item.Slug)
 		if id == "" {
 			id = strings.TrimSpace(item.ID)
 		}
+
 		if id == "" {
 			id = strings.TrimSpace(item.Model)
 		}
+
 		if id == "" {
 			id = strings.TrimSpace(item.Name)
 		}
+
 		if id == "" || seen[id] {
 			continue
 		}
+
 		seen[id] = true
 
 		name := strings.TrimSpace(item.DisplayName)
 		if name == "" {
 			name = strings.TrimSpace(item.Name)
 		}
+
 		if name == "" {
 			name = id
 		}
 
 		ctxLen := 0
 		maxOut := 0
+
 		if item.Limits != nil {
 			ctxLen = item.Limits.ContextWindow
 			maxOut = item.Limits.MaxOutputTokens
 		}
+
 		if ctxLen == 0 {
 			ctxLen = item.ContextLength
 		}
+
 		if maxOut == 0 {
 			maxOut = item.MaxOutputTokens
 		}
 
 		isVL := false
+
 		for _, m := range item.InputModalities {
 			if m == "image" {
 				isVL = true
@@ -179,9 +197,11 @@ func (r *KimchiResolver) Resolve(ctx context.Context, conn *store.Connection) ([
 		if ctxLen > 0 {
 			caps["contextWindow"] = ctxLen
 		}
+
 		if maxOut > 0 {
 			caps["maxOutput"] = maxOut
 		}
+
 		if item.Provider != "" {
 			caps["upstreamProvider"] = item.Provider
 		}
@@ -196,5 +216,6 @@ func (r *KimchiResolver) Resolve(ctx context.Context, conn *store.Connection) ([
 			Capabilities:    caps,
 		})
 	}
+
 	return out, nil
 }

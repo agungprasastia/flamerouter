@@ -12,18 +12,18 @@ import (
 
 // Server is an HTTPS MITM proxy that intercepts traffic to specific hosts.
 type Server struct {
+	ln        net.Listener
 	rootCA    *x509.Certificate
 	rootKey   *ecdsa.PrivateKey
 	hosts     map[string]Handler
-	mu        sync.RWMutex
-	ln        net.Listener
-	status    string
 	dns       *DNSOverride
 	certCache map[string]*tls.Certificate
+	restarter *Restarter
+	status    string
 	certPath  string
 	keyPath   string
 	addr      string
-	restarter *Restarter
+	mu        sync.RWMutex
 }
 
 func New(certPath, keyPath string) (*Server, error) {
@@ -31,6 +31,7 @@ func New(certPath, keyPath string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	s := &Server{
 		rootCA:    cert,
 		rootKey:   key,
@@ -44,6 +45,7 @@ func New(certPath, keyPath string) (*Server, error) {
 	s.restarter = NewRestarter(func(addr string) error {
 		return s.Start(addr)
 	})
+
 	return s, nil
 }
 
@@ -51,6 +53,7 @@ func (s *Server) CertPath() string { return s.certPath }
 func (s *Server) Addr() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	return s.addr
 }
 func (s *Server) Restarter() *Restarter { return s.restarter }
@@ -64,6 +67,7 @@ func (s *Server) Register(host string, h Handler) {
 func (s *Server) Status() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	return s.status
 }
 
@@ -76,18 +80,22 @@ func (s *Server) Start(addr string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("already running")
 	}
+
 	cfg := &tls.Config{
 		MinVersion:     tls.VersionTLS12,
 		GetCertificate: s.getCertificate,
 	}
+
 	ln, err := tls.Listen("tcp", addr, cfg)
 	if err != nil {
 		s.mu.Unlock()
 		return err
 	}
+
 	s.ln = ln
 	s.addr = addr
 	s.status = "running"
+
 	if s.restarter != nil {
 		s.restarter.SetEnabled(true)
 		s.restarter.MarkStarted(addr)
@@ -100,6 +108,7 @@ func (s *Server) Start(addr string) error {
 		s.ln = nil
 		s.status = "stopped"
 		s.mu.Unlock()
+
 		if err != nil {
 			// unexpected exit → schedule restart
 			if s.restarter != nil {
@@ -107,23 +116,28 @@ func (s *Server) Start(addr string) error {
 			}
 		}
 	}()
+
 	return nil
 }
 
 func (s *Server) Stop() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if s.restarter != nil {
 		s.restarter.SetEnabled(false)
 		s.restarter.Reset()
 	}
+
 	if s.ln == nil {
 		s.status = "stopped"
 		return nil
 	}
+
 	err := s.ln.Close()
 	s.ln = nil
 	s.status = "stopped"
+
 	return err
 }
 
@@ -139,6 +153,7 @@ func (s *Server) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 	if host == "" {
 		host = "localhost"
 	}
+
 	s.mu.RLock()
 	if c, ok := s.certCache[host]; ok {
 		s.mu.RUnlock()
@@ -150,9 +165,11 @@ func (s *Server) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 	if err != nil {
 		return nil, err
 	}
+
 	s.mu.Lock()
 	s.certCache[host] = c
 	s.mu.Unlock()
+
 	return c, nil
 }
 
@@ -161,15 +178,19 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
+
 	if host == "" {
 		host = r.TLS.ServerName
 	}
+
 	s.mu.RLock()
 	h, ok := s.hosts[host]
 	s.mu.RUnlock()
+
 	if !ok || h == nil {
 		PassthroughHandler{}.HandleRequest(w, r)
 		return
 	}
+
 	h.HandleRequest(w, r)
 }

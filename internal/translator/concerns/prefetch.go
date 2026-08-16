@@ -18,7 +18,7 @@ const (
 )
 
 var blockedHosts = map[string]bool{
-	"localhost":                 true,
+	"localhost":                true,
 	"127.0.0.1":                true,
 	"0.0.0.0":                  true,
 	"::1":                      true,
@@ -65,36 +65,44 @@ type imageRef struct {
 
 func collectImageRefs(body map[string]any, sourceFormat string) []imageRef {
 	var refs []imageRef
+
 	pushOpenAI := func(messages []any) {
 		for _, msgRaw := range messages {
 			msg, ok := msgRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			content, ok := msg["content"].([]any)
 			if !ok {
 				continue
 			}
+
 			for _, blockRaw := range content {
 				block, ok := blockRaw.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				if t, _ := block["type"].(string); t != "image_url" {
 					continue
 				}
+
 				var remote string
 				if s, ok := block["image_url"].(string); ok {
 					remote = s
 					if isRemoteURL(remote) {
 						b := block
+
 						refs = append(refs, imageRef{
 							get: func() string { return remote },
 							set: func(v string) { b["image_url"] = v },
 						})
 					}
+
 					continue
 				}
+
 				if iu, ok := block["image_url"].(map[string]any); ok {
 					u, _ := iu["url"].(string)
 					if isRemoteURL(u) {
@@ -123,16 +131,19 @@ func collectImageRefs(body map[string]any, sourceFormat string) []imageRef {
 			if !ok {
 				continue
 			}
+
 			parts, _ := c["parts"].([]any)
 			for _, pRaw := range parts {
 				p, ok := pRaw.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				fd, ok := p["fileData"].(map[string]any)
 				if !ok {
 					continue
 				}
+
 				uri, _ := fd["fileUri"].(string)
 				if isRemoteURL(uri) {
 					part := p
@@ -157,25 +168,31 @@ func collectImageRefs(body map[string]any, sourceFormat string) []imageRef {
 				if !ok {
 					continue
 				}
+
 				content, ok := msg["content"].([]any)
 				if !ok {
 					continue
 				}
+
 				for _, blockRaw := range content {
 					block, ok := blockRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					if t, _ := block["type"].(string); t != "image" {
 						continue
 					}
+
 					source, ok := block["source"].(map[string]any)
 					if !ok {
 						continue
 					}
+
 					if st, _ := source["type"].(string); st != "url" {
 						continue
 					}
+
 					u, _ := source["url"].(string)
 					if isRemoteURL(u) {
 						b := block
@@ -202,6 +219,7 @@ func collectImageRefs(body map[string]any, sourceFormat string) []imageRef {
 			pushOpenAI(messages)
 		}
 	}
+
 	return refs
 }
 
@@ -211,20 +229,25 @@ func PrefetchRemoteImages(body map[string]any, sourceFormat, targetFormat string
 	if body == nil || !targetsNeedBase64[targetFormat] {
 		return 0
 	}
+
 	refs := collectImageRefs(body, sourceFormat)
 	if len(refs) == 0 {
 		return 0
 	}
+
 	converted := 0
+
 	for _, ref := range refs {
 		u := ref.get()
 		if _, _, err := ParseDataUri(u); err == nil {
 			continue
 		}
+
 		data, mime, err := fetchImageAsBase64(u)
 		if err != nil {
 			continue
 		}
+
 		if ref.set != nil {
 			ref.set(fmt.Sprintf("data:%s;base64,%s", mime, data))
 		} else if ref.part != nil {
@@ -237,8 +260,10 @@ func PrefetchRemoteImages(body map[string]any, sourceFormat, targetFormat string
 				"data":       data,
 			}
 		}
+
 		converted++
 	}
+
 	return converted
 }
 
@@ -247,17 +272,21 @@ func PrefetchRemoteImagesByProvider(body map[string]any, provider string) map[st
 	if body == nil || !ShouldPrefetchImages(provider) {
 		return body
 	}
+
 	target := provider
 	if provider == "vertex-partner" {
 		target = "vertex"
 	}
+
 	if provider == "ollama-local" {
 		target = "ollama"
 	}
+
 	PrefetchRemoteImages(body, "openai", target)
 	PrefetchRemoteImages(body, "claude", target)
 	PrefetchRemoteImages(body, "gemini", target)
 	PrefetchRemoteImages(body, "antigravity", target)
+
 	return body
 }
 
@@ -266,10 +295,12 @@ func fetchImageAsBase64(rawURL string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+
 	host := parsed.Hostname()
 	if host == "" {
 		return "", "", fmt.Errorf("empty host")
 	}
+
 	if blockedHosts[strings.ToLower(host)] {
 		return "", "", fmt.Errorf("blocked host: %s", host)
 	}
@@ -278,6 +309,7 @@ func fetchImageAsBase64(rawURL string) (string, string, error) {
 	if err != nil || len(ips) == 0 {
 		return "", "", fmt.Errorf("DNS lookup failed for %s", host)
 	}
+
 	for _, ip := range ips {
 		if isPrivateIP(ip) {
 			return "", "", fmt.Errorf("private IP blocked: %s", ip.String())
@@ -291,6 +323,7 @@ func fetchImageAsBase64(rawURL string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+
 	req.Header.Set("User-Agent", "FlameRouter/1.0")
 
 	client := &http.Client{
@@ -315,6 +348,7 @@ func fetchImageAsBase64(rawURL string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+
 	if len(body) > MaxImageBytes {
 		return "", "", fmt.Errorf("image too large")
 	}
@@ -323,6 +357,7 @@ func fetchImageAsBase64(rawURL string) (string, string, error) {
 	if mime == "" {
 		return "", "", fmt.Errorf("not a recognized image")
 	}
+
 	return base64.StdEncoding.EncodeToString(body), mime, nil
 }
 
@@ -330,9 +365,11 @@ func isPrivateIP(ip net.IP) bool {
 	if ip == nil {
 		return true
 	}
+
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
 		return true
 	}
+
 	if ip4 := ip.To4(); ip4 != nil {
 		// CGNAT 100.64.0.0/10
 		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
@@ -342,6 +379,7 @@ func isPrivateIP(ip net.IP) bool {
 		if ip4[0] == 169 && ip4[1] == 254 {
 			return true
 		}
+
 		if ip4[0] == 0 {
 			return true
 		}
@@ -352,6 +390,7 @@ func isPrivateIP(ip net.IP) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -376,12 +415,14 @@ func detectImageMIME(data []byte) string {
 		if len(data) >= 12 && data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50 {
 			return "image/webp"
 		}
+
 		return ""
 	}
 	// BMP
 	if data[0] == 0x42 && data[1] == 0x4D {
 		return "image/bmp"
 	}
+
 	return ""
 }
 
@@ -393,16 +434,20 @@ func ParseDataUri(dataUri string) (string, []byte, error) {
 	if !strings.HasPrefix(dataUri, "data:") {
 		return "", nil, fmt.Errorf("not a data URI")
 	}
+
 	parts := strings.SplitN(dataUri, ",", 2)
 	if len(parts) != 2 {
 		return "", nil, fmt.Errorf("invalid data URI")
 	}
+
 	header := parts[0]
 	mime := strings.TrimPrefix(header, "data:")
 	mime = strings.TrimSuffix(mime, ";base64")
+
 	data, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
 		return "", nil, err
 	}
+
 	return mime, data, nil
 }

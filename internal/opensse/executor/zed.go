@@ -33,13 +33,11 @@ const (
 	zedClientVersion     = "0.200.0"
 )
 
-var (
-	zedTokenCache sync.Map // key: string -> zedTokenEntry
-)
+var zedTokenCache sync.Map // key: string -> zedTokenEntry
 
 type zedTokenEntry struct {
-	token     string
 	expiresAt time.Time
+	token     string
 }
 
 type ZedExecutor struct {
@@ -51,12 +49,15 @@ func normalizeZedProvider(value string, model string) string {
 	if raw == "anthropic" {
 		return "Anthropic"
 	}
+
 	if raw == "openai" || raw == "open_ai" {
 		return "OpenAi"
 	}
+
 	if raw == "google" || raw == "gemini" {
 		return "Google"
 	}
+
 	if raw == "xai" || raw == "x_ai" || raw == "x-ai" {
 		return "XAi"
 	}
@@ -65,56 +66,69 @@ func normalizeZedProvider(value string, model string) string {
 	if strings.Contains(m, "claude") {
 		return "Anthropic"
 	}
+
 	if strings.Contains(m, "gemini") {
 		return "Google"
 	}
+
 	if strings.Contains(m, "grok") || strings.Contains(m, "xai") {
 		return "XAi"
 	}
+
 	return "OpenAi"
 }
 
 func buildZedUserAuthHeader(cred Credentials) (string, error) {
 	userId := ""
+
 	if cred.ProviderSpecificData != nil {
 		if u, ok := cred.ProviderSpecificData["userId"].(string); ok && u != "" {
 			userId = u
 		}
 	}
+
 	token := cred.AccessToken
 	if token == "" {
 		token = cred.APIKey
 	}
+
 	if userId == "" || token == "" {
 		return "", fmt.Errorf("Zed credential is missing userId or accessToken")
 	}
+
 	return fmt.Sprintf("%s %s", userId, token), nil
 }
 
 func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, forceRefresh bool) (string, error) {
 	orgId := ""
 	userId := ""
+
 	if cred.ProviderSpecificData != nil {
 		if o, ok := cred.ProviderSpecificData["organizationId"].(string); ok && o != "" {
 			orgId = o
 		} else if o, ok := cred.ProviderSpecificData["defaultOrganizationId"].(string); ok && o != "" {
 			orgId = o
 		}
+
 		if u, ok := cred.ProviderSpecificData["userId"].(string); ok {
 			userId = u
 		}
 	}
+
 	if orgId == "" {
 		orgId = "default"
 	}
+
 	token := cred.AccessToken
 	if token == "" {
 		token = cred.APIKey
 	}
+
 	tokenSuffix := token
 	if len(tokenSuffix) > 16 {
 		tokenSuffix = tokenSuffix[len(tokenSuffix)-16:]
 	}
+
 	cacheKey := fmt.Sprintf("%s:%s:%s", userId, orgId, tokenSuffix)
 
 	if !forceRefresh {
@@ -135,16 +149,20 @@ func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, force
 	if base == "" {
 		base = zedDefaultLLMBaseURL
 	}
+
 	url := base + "/client/llm_tokens"
 
 	reqBody, _ := json.Marshal(map[string]string{"organization_id": orgId})
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return "", err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", authHeader)
+
 	if cred.ProviderSpecificData != nil {
 		if sid, ok := cred.ProviderSpecificData["systemId"].(string); ok && sid != "" {
 			req.Header.Set("x-zed-system-id", sid)
@@ -165,6 +183,7 @@ func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, force
 	var data struct {
 		Token any `json:"token"`
 	}
+
 	if err := json.Unmarshal(bodyBytes, &data); err != nil {
 		return "", err
 	}
@@ -182,6 +201,7 @@ func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, force
 			llmToken = val
 		}
 	}
+
 	if llmToken == "" {
 		return "", fmt.Errorf("Zed did not return an LLM token")
 	}
@@ -190,6 +210,7 @@ func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, force
 		token:     llmToken,
 		expiresAt: time.Now().Add(50 * time.Minute),
 	})
+
 	return llmToken, nil
 }
 
@@ -210,6 +231,7 @@ func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model strin
 		"model":            model,
 		"provider_request": m,
 	}
+
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -228,6 +250,7 @@ func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model strin
 	if base == "" {
 		base = zedDefaultLLMBaseURL
 	}
+
 	url := base + "/completions"
 
 	h := make(http.Header)
@@ -247,9 +270,11 @@ func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model strin
 	// Retry on 401
 	if res.StatusCode == 401 {
 		DrainBody(res.Body)
+
 		refreshedToken, refreshErr := e.fetchLlmToken(ctx, cred, true)
 		if refreshErr == nil && refreshedToken != "" {
 			h.Set("Authorization", "Bearer "+refreshedToken)
+
 			res, err = e.DoPOST(ctx, url, h, payloadBytes)
 			if err != nil {
 				return nil, err
@@ -262,6 +287,7 @@ func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model strin
 	}
 
 	wrappedBody := wrapZedNDJSONStream(res.Body, model)
+
 	return &Result{
 		StatusCode: 200,
 		Header: http.Header{
@@ -294,9 +320,11 @@ func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
 			if line == "" {
 				continue
 			}
+
 			if strings.HasPrefix(line, "data:") {
 				line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			}
+
 			if line == "[DONE]" {
 				break
 			}
@@ -322,11 +350,14 @@ func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
 							"finish_reason": "stop",
 						}},
 					})
+
 					break
 				}
+
 				if typ, _ := status["type"].(string); typ == "stream_ended" {
 					break
 				}
+
 				continue
 			}
 
@@ -358,6 +389,7 @@ func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
 									"finish_reason": nil,
 								}},
 							})
+
 							continue
 						}
 					}
@@ -370,5 +402,6 @@ func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
 
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
+
 	return pr
 }

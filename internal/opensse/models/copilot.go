@@ -3,14 +3,13 @@ package models
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/store"
+	"flamerouter/internal/tokenrefresh"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
-
-	"flamerouter/internal/store"
-	"flamerouter/internal/tokenrefresh"
 )
 
 const (
@@ -37,6 +36,7 @@ func (r *CopilotResolver) client() *http.Client {
 	if r.Client != nil {
 		return r.Client
 	}
+
 	return http.DefaultClient
 }
 
@@ -50,18 +50,19 @@ func (r *CopilotResolver) buildHeaders(token string) http.Header {
 	h.Set("editor-plugin-version", fmt.Sprintf("copilot-chat/%s", copilotChatVersion))
 	h.Set("user-agent", copilotUserAgent)
 	h.Set("x-github-api-version", copilotAPIVersion)
+
 	return h
 }
 
 type copilotRawModel struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
 	Capabilities *struct {
 		Type string `json:"type"`
 	} `json:"capabilities"`
 	Policy *struct {
 		State string `json:"state"`
 	} `json:"policy"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type copilotResponse struct {
@@ -76,6 +77,7 @@ func (r *CopilotResolver) fetchRaw(ctx context.Context, token string) ([]copilot
 	if err != nil {
 		return nil, 0, err
 	}
+
 	req.Header = r.buildHeaders(token)
 
 	resp, err := r.client().Do(req)
@@ -104,9 +106,11 @@ func (r *CopilotResolver) Resolve(ctx context.Context, conn *store.Connection) (
 			token = ct
 		}
 	}
+
 	if token == "" {
 		token = conn.APIKey
 	}
+
 	if token == "" {
 		return nil, nil
 	}
@@ -117,38 +121,48 @@ func (r *CopilotResolver) Resolve(ctx context.Context, conn *store.Connection) (
 		if rm == nil {
 			rm = tokenrefresh.NewRefreshManager()
 		}
+
 		refreshed, refErr := rm.Refresh(ctx, "github", conn.RefreshToken)
 		if refErr == nil && refreshed != nil && refreshed.AccessToken != "" {
 			token = refreshed.AccessToken
 			raw, _, err = r.fetchRaw(ctx, token)
 		}
 	}
+
 	if err != nil {
 		return nil, err
 	}
 
 	seen := make(map[string]bool)
+
 	var out []DynamicModel
+
 	for _, m := range raw {
 		id := strings.TrimSpace(m.ID)
 		if id == "" || seen[id] {
 			continue
 		}
+
 		if m.Capabilities != nil && m.Capabilities.Type != "chat" {
 			continue
 		}
+
 		if m.Policy != nil && m.Policy.State != "" && m.Policy.State != "enabled" {
 			continue
 		}
+
 		seen[id] = true
+
 		name := m.Name
 		if name == "" {
 			name = id
 		}
+
 		out = append(out, DynamicModel{
 			ID:   id,
 			Name: name,
 		})
 	}
+
 	return out, nil
 }

@@ -23,6 +23,7 @@ func openaiToAntigravityResponse(chunk map[string]any, state *concerns.ResponseS
 		if chunkUsage, ok := chunk["usage"].(map[string]any); ok {
 			state.RawUsage = parseAntigravityUsage(chunkUsage)
 		}
+
 		return nil
 	}
 
@@ -32,9 +33,11 @@ func openaiToAntigravityResponse(chunk map[string]any, state *concerns.ResponseS
 	if state.ToolCallAccum == nil {
 		state.ToolCallAccum = make(map[int]map[string]any)
 	}
+
 	if state.ResponseId == "" {
 		state.ResponseId = "resp_" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 	}
+
 	if state.Model == "" {
 		state.Model, _ = chunk["model"].(string)
 	}
@@ -55,26 +58,32 @@ func openaiToAntigravityResponse(chunk map[string]any, state *concerns.ResponseS
 			if !ok {
 				continue
 			}
+
 			idx := 0
 			if i, ok := toolCall["index"].(float64); ok {
 				idx = int(i)
 			}
+
 			if _, exists := state.ToolCallAccum[idx]; !exists {
 				state.ToolCallAccum[idx] = map[string]any{"id": "", "name": "", "arguments": ""}
 			}
+
 			accum := state.ToolCallAccum[idx]
 			if id, ok := toolCall["id"].(string); ok && id != "" {
 				accum["id"] = id
 			}
+
 			if fn, ok := toolCall["function"].(map[string]any); ok {
 				if name, ok := fn["name"].(string); ok {
 					accum["name"] = accum["name"].(string) + name
 				}
+
 				if args, ok := fn["arguments"].(string); ok {
 					accum["arguments"] = accum["arguments"].(string) + args
 				}
 			}
 		}
+
 		if len(parts) == 0 && finishReason == "" {
 			return nil
 		}
@@ -83,10 +92,12 @@ func openaiToAntigravityResponse(chunk map[string]any, state *concerns.ResponseS
 	if finishReason != "" {
 		for idx, accum := range state.ToolCallAccum {
 			var args map[string]any
+
 			argsStr, _ := accum["arguments"].(string)
 			if argsStr != "" {
 				json.Unmarshal([]byte(argsStr), &args)
 			}
+
 			name, _ := accum["name"].(string)
 			parts = append(parts, map[string]any{
 				"functionCall": map[string]any{
@@ -101,6 +112,7 @@ func openaiToAntigravityResponse(chunk map[string]any, state *concerns.ResponseS
 	if len(parts) == 0 && finishReason == "" {
 		return nil
 	}
+
 	if len(parts) == 0 && finishReason != "" {
 		parts = append(parts, map[string]any{"text": ""})
 	}
@@ -114,9 +126,9 @@ func openaiToAntigravityResponse(chunk map[string]any, state *concerns.ResponseS
 
 	if finishReason != "" {
 		reasonMap := map[string]string{
-			"stop":          "STOP",
-			"length":        "MAX_TOKENS",
-			"tool_calls":    "STOP",
+			"stop":           "STOP",
+			"length":         "MAX_TOKENS",
+			"tool_calls":     "STOP",
 			"content_filter": "SAFETY",
 		}
 		if mapped, ok := reasonMap[finishReason]; ok {
@@ -146,21 +158,25 @@ func parseAntigravityUsage(raw map[string]any) map[string]any {
 	if raw == nil {
 		return nil
 	}
+
 	result := map[string]any{
 		"promptTokenCount":     getInt(raw, "prompt_tokens"),
 		"candidatesTokenCount": getInt(raw, "completion_tokens"),
 		"totalTokenCount":      getInt(raw, "total_tokens"),
 	}
+
 	if details, ok := raw["completion_tokens_details"].(map[string]any); ok {
 		if rt, ok := details["reasoning_tokens"].(float64); ok && rt > 0 {
 			result["thoughtsTokenCount"] = int(rt)
 		}
 	}
+
 	if details, ok := raw["prompt_tokens_details"].(map[string]any); ok {
 		if ct, ok := details["cached_tokens"].(float64); ok && ct > 0 {
 			result["cachedContentTokenCount"] = int(ct)
 		}
 	}
+
 	return result
 }
 
@@ -169,6 +185,8 @@ func extractFirstChoice(chunk map[string]any) (map[string]any, bool) {
 	if !ok || len(choices) == 0 {
 		return nil, false
 	}
+
 	choice, ok := choices[0].(map[string]any)
+
 	return choice, ok
 }

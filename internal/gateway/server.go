@@ -3,12 +3,6 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
-
 	"flamerouter/internal/auth"
 	"flamerouter/internal/config"
 	"flamerouter/internal/netutil"
@@ -19,6 +13,11 @@ import (
 	"flamerouter/internal/store"
 	"flamerouter/internal/tokenrefresh"
 	"flamerouter/internal/usage"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
 )
 
 type Server struct {
@@ -57,6 +56,7 @@ func New(cfg *config.Config, st *store.Store, keys *auth.APIKeys, exec executor.
 		mux:      http.NewServeMux(),
 	}
 	s.routes()
+
 	return auth.DashboardGuard(jwt, st, s)
 }
 
@@ -262,14 +262,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1beta/", s.handleGeminiV1Beta)
 	s.mux.HandleFunc("/codex/", s.handleCodexRewrite)
 	s.mux.HandleFunc("/v1/", s.handleCORS)
-
-	}
+}
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		s.writeCORS(w)
 		return
 	}
+
 	s.mux.ServeHTTP(w, r)
 }
 
@@ -297,16 +297,19 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 			return
 		}
+
 		type out struct {
 			ID        string `json:"id"`
 			Name      string `json:"name"`
 			Key       string `json:"key"`
 			KeyID     string `json:"keyId"`
 			MachineID string `json:"machineId"`
-			IsActive  bool   `json:"isActive"`
 			CreatedAt string `json:"createdAt"`
+			IsActive  bool   `json:"isActive"`
 		}
+
 		list := make([]out, 0, len(keys))
+
 		for _, k := range keys {
 			fullKey := s.keys.Format(k.MachineID, k.KeyID)
 			list = append(list, out{
@@ -314,24 +317,29 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 				MachineID: k.MachineID, IsActive: k.IsActive, CreatedAt: k.CreatedAt,
 			})
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": list})
 	case http.MethodPost:
 		var req struct {
 			Name string `json:"name"`
 		}
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 			http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
 			return
 		}
+
 		mid := machineID(s.cfg.MachineIDSalt)
 		key, keyID := s.keys.Generate(mid)
 		hash := auth.HashKey(key)
+
 		_, err := s.st.CreateAPIKey(req.Name, keyID, hash, mid)
 		if err != nil {
 			http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"key":"` + key + `"}`))
 	default:
@@ -344,21 +352,25 @@ func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	var req struct {
 		Provider string `json:"provider"`
 		Name     string `json:"name"`
 		APIKey   string `json:"api_key"`
 		BaseURL  string `json:"base_url"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Provider == "" {
 		http.Error(w, `{"error":"provider required"}`, http.StatusBadRequest)
 		return
 	}
+
 	id, err := s.st.CreateConnection(req.Provider, "api_key", req.Name, req.APIKey, req.BaseURL)
 	if err != nil {
 		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"id":"` + id + `"}`))
 }
@@ -371,6 +383,7 @@ func (s *Server) handleCombos(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(combos)
 	case http.MethodPost:
@@ -378,15 +391,18 @@ func (s *Server) handleCombos(w http.ResponseWriter, r *http.Request) {
 			Name   string   `json:"name"`
 			Models []string `json:"models"`
 		}
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 			http.Error(w, `{"error":"name and models required"}`, http.StatusBadRequest)
 			return
 		}
+
 		id, err := s.st.CreateCombo(req.Name, req.Models)
 		if err != nil {
 			http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"` + id + `"}`))
 	default:
@@ -402,6 +418,7 @@ func (s *Server) handleAliases(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(aliases)
 	case http.MethodPost:
@@ -409,15 +426,18 @@ func (s *Server) handleAliases(w http.ResponseWriter, r *http.Request) {
 			Alias       string `json:"alias"`
 			TargetModel string `json:"target_model"`
 		}
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Alias == "" {
 			http.Error(w, `{"error":"alias and target_model required"}`, http.StatusBadRequest)
 			return
 		}
+
 		err := s.st.SetAlias(req.Alias, req.TargetModel)
 		if err != nil {
 			http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	default:
@@ -430,6 +450,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	handlers.Models(w, r, s.st)
 }
 
@@ -444,6 +465,7 @@ func (s *Server) handleModelsByKind(w http.ResponseWriter, r *http.Request) {
 		handlers.ModelsInfo(w, r, s.st)
 		return
 	}
+
 	handlers.ModelsByKind(w, r, s.st, kind)
 }
 
@@ -452,6 +474,7 @@ func (s *Server) handleCountTokens(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	handlers.CountTokens(w, r)
 }
 
@@ -460,11 +483,13 @@ func (s *Server) handleVercelAI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.VercelAIChat(r.Context(), w, body, s.st, s.exec, s.fb)
 }
 
@@ -473,11 +498,13 @@ func (s *Server) handleCompactResponses(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.CompactResponses(r.Context(), w, body, s.st, s.exec, s.fb)
 }
 
@@ -486,10 +513,12 @@ func (s *Server) handleGeminiV1Beta(w http.ResponseWriter, r *http.Request) {
 		s.writeCORS(w)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	_ = handlers.GeminiV1Beta(r.Context(), w, r, s.st, s.exec, s.fb)
 }
 
@@ -506,15 +535,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	ts := handlers.LoadTokenSaverFromStore(s.st)
 	strategy, sticky := handlers.LoadAccountStrategyFromStore(s.st)
 	_ = handlers.ChatWithOptions(r.Context(), w, body, s.st, s.exec, s.fb, handlers.ChatOptions{
@@ -533,6 +565,7 @@ func (u usageBridge) OnUsage(provider, model, connectionID string, prompt, compl
 	if u.t == nil {
 		return
 	}
+
 	u.t.Track(usage.Record{
 		Provider: provider, Model: model, ConnectionID: connectionID,
 		PromptTokens: prompt, CompletionTokens: completion, StatusCode: statusCode,
@@ -544,15 +577,18 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	ts := handlers.LoadTokenSaverFromStore(s.st)
 	// Anthropic Messages API — force Claude source format
 	_ = handlers.ChatWithOptions(r.Context(), w, body, s.st, s.exec, s.fb, handlers.ChatOptions{
@@ -568,15 +604,18 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.Responses(r.Context(), w, body, s.st, s.exec, s.fb)
 }
 
@@ -585,15 +624,18 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.Embeddings(r.Context(), w, body, s.st, s.exec, s.fb)
 }
 
@@ -602,15 +644,18 @@ func (s *Server) handleImageGeneration(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.ImageGeneration(r.Context(), w, body, s.st, s.exec, s.fb)
 }
 
@@ -619,15 +664,18 @@ func (s *Server) handleTTS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.TTS(r.Context(), w, body, s.st, s.exec, s.fb)
 }
 
@@ -636,6 +684,7 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
@@ -643,16 +692,19 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 	// parity 9router maxDuration: 300s
 	ctx, cancel := context.WithTimeout(r.Context(), 300*time.Second)
 	defer cancel()
+
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/") {
 		_ = handlers.STTMultipart(ctx, w, r, s.st, s.fb)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.STT(ctx, w, body, s.st, s.exec, s.fb)
 }
 
@@ -661,10 +713,12 @@ func (s *Server) handleVoices(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	_ = handlers.Voices(r.Context(), w, s.st)
 }
 
@@ -673,15 +727,18 @@ func (s *Server) handleVideo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.Video(r.Context(), w, r, body, s.st, s.exec, s.fb)
 }
 
@@ -690,10 +747,12 @@ func (s *Server) handleVideoPoll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	_ = handlers.VideoPoll(r.Context(), w, r, r.PathValue("id"), s.st, s.fb)
 }
 
@@ -702,15 +761,18 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.Search(r.Context(), w, body, s.st, s.exec, s.fb)
 }
 
@@ -719,21 +781,25 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
 	if s.cfg.RequireAPIKey && !s.authOK(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
+
 	_ = handlers.Fetch(r.Context(), w, body, s.st, s.exec, s.fb)
 }
 
 func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/oauth/")
 	path = strings.Trim(path, "/")
+
 	if path == "" {
 		http.Error(w, `{"error":"invalid oauth path"}`, http.StatusBadRequest)
 		return
@@ -745,12 +811,13 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 
 	parts := strings.Split(path, "/")
 	provider := parts[0]
+
 	action := "authorize"
 	if len(parts) > 1 {
 		action = parts[1]
 	}
 
-switch action {
+	switch action {
 	case "authorize":
 		cfg, ok := oauth.ProviderConfigs[provider]
 		if ok && cfg.AuthStyle == "device" {
@@ -759,10 +826,13 @@ switch action {
 				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 				return
 			}
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(dc)
+
 			return
 		}
+
 		s.oauth.StartAuth(w, r, provider)
 	case "device-code":
 		// GET parity with 9router device-code start
@@ -770,16 +840,19 @@ switch action {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
+
 		cfg, ok := oauth.ProviderConfigs[provider]
 		if !ok || cfg.AuthStyle != "device" {
 			http.Error(w, `{"error":"Provider does not support device code flow"}`, http.StatusBadRequest)
 			return
 		}
+
 		dc, err := oauth.StartDeviceFlowForProvider(r.Context(), provider)
 		if err != nil {
 			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(dc)
 	case "start-proxy":
@@ -787,24 +860,30 @@ switch action {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Proxy only supported for codex/xai"})
 			return
 		}
+
 		appPortStr := r.URL.Query().Get("app_port")
 		if appPortStr == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Missing app_port"})
 			return
 		}
+
 		appPort, _ := strconv.Atoi(appPortStr)
+
 		result, err := oauth.StartOAuthProxy(provider, appPort, s.oauth, s.st)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
+
 		serverSide := false
 		state := r.URL.Query().Get("state")
 		cv := r.URL.Query().Get("code_verifier")
 		ru := r.URL.Query().Get("redirect_uri")
+
 		if ok, _ := result["success"].(bool); ok && state != "" && cv != "" && ru != "" {
 			serverSide = oauth.RegisterProxySession(provider, state, cv, ru)
 		}
+
 		result["serverSide"] = serverSide
 		writeJSONOK(w, result)
 	case "poll-status":
@@ -812,29 +891,36 @@ switch action {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Poll only supported for codex/xai"})
 			return
 		}
+
 		state := r.URL.Query().Get("state")
 		if state == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Missing state"})
 			return
 		}
+
 		session := oauth.GetProxySessionStatus(provider, state)
 		if session == nil {
 			writeJSONOK(w, map[string]any{"status": "unknown"})
 			return
 		}
+
 		st, _ := session["status"].(string)
 		if st == "done" || st == "error" {
 			oauth.ClearProxySession(provider, state)
 			writeJSONOK(w, session)
+
 			return
 		}
+
 		writeJSONOK(w, map[string]any{"status": st})
 	case "stop-proxy":
 		if provider != "codex" && provider != "xai" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Proxy only supported for codex/xai"})
 			return
 		}
+
 		_ = oauth.StopOAuthProxy(provider)
+
 		writeJSONOK(w, map[string]any{"success": true})
 	case "device", "poll":
 		// POST {device_code|deviceCode} → poll once / return token
@@ -842,33 +928,40 @@ switch action {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
+
 		var req struct {
-			DeviceCode  string         `json:"device_code"`
-			DeviceCode2 string         `json:"deviceCode"`
-			Interval    int            `json:"interval"`
-			CodeVerifier string        `json:"codeVerifier"`
-			ExtraData   map[string]any `json:"extraData"`
+			ExtraData    map[string]any `json:"extraData"`
+			DeviceCode   string         `json:"device_code"`
+			DeviceCode2  string         `json:"deviceCode"`
+			CodeVerifier string         `json:"codeVerifier"`
+			Interval     int            `json:"interval"`
 		}
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
 			return
 		}
+
 		dc := req.DeviceCode
 		if dc == "" {
 			dc = req.DeviceCode2
 		}
+
 		if dc == "" {
 			http.Error(w, `{"error":"device_code required"}`, http.StatusBadRequest)
 			return
 		}
+
 		if req.Interval <= 0 {
 			req.Interval = 5
 		}
+
 		cfg, ok := oauth.ProviderConfigs[provider]
 		if !ok {
 			http.Error(w, `{"error":"unknown provider"}`, http.StatusBadRequest)
 			return
 		}
+
 		if provider == "github" || provider == "copilot" {
 			tok, extra, err := oauth.ExchangeGithubDeviceToken(r.Context(), dc, provider == "copilot" || provider == "github")
 			if err != nil {
@@ -876,6 +969,7 @@ switch action {
 				writeJSONOK(w, map[string]any{"success": false, "error": err.Error(), "pending": true})
 				return
 			}
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  tok.AccessToken,
@@ -884,15 +978,19 @@ switch action {
 				"extra":         extra,
 				"success":       true,
 			})
+
 			return
 		}
+
 		tok, err := oauth.PollDeviceToken(r.Context(), cfg, dc, req.Interval)
 		if err != nil {
 			msg := err.Error()
 			pending := strings.Contains(msg, "authorization_pending") || strings.Contains(msg, "slow_down") || strings.Contains(msg, "pending")
 			writeJSONOK(w, map[string]any{"success": false, "error": msg, "pending": pending})
+
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"access_token":  tok.AccessToken,
@@ -905,42 +1003,51 @@ switch action {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
+
 		var body struct {
+			Meta         map[string]any `json:"meta"`
 			Code         string         `json:"code"`
 			RedirectURI  string         `json:"redirectUri"`
 			CodeVerifier string         `json:"codeVerifier"`
 			State        string         `json:"state"`
-			Meta         map[string]any `json:"meta"`
 		}
+
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid or empty request body"})
 			return
 		}
+
 		conn, err := s.oauth.ExchangeAndSave(r.Context(), s.st, provider, body.Code, body.RedirectURI, body.CodeVerifier, body.State, body.Meta)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
+
 		writeJSONOK(w, map[string]any{"success": true, "connection": conn})
 	case "manual-code":
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
+
 		if provider != "xai" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Manual code only supported for xai"})
 			return
 		}
+
 		var body struct {
 			Code  string `json:"code"`
 			State string `json:"state"`
 		}
+
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid body"})
 			return
 		}
+
 		code := strings.TrimSpace(body.Code)
 		state := strings.TrimSpace(body.State)
+
 		sess := oauth.GetProxySessionStatus("xai", state)
 		if sess == nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "xAI OAuth session not found; restart the login flow and paste the code again"})
@@ -955,11 +1062,15 @@ switch action {
 		if err != nil {
 			oauth.ClearProxySession("xai", state)
 			_ = oauth.StopOAuthProxy("xai")
+
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+
 			return
 		}
+
 		oauth.ClearProxySession("xai", state)
 		_ = oauth.StopOAuthProxy("xai")
+
 		writeJSONOK(w, map[string]any{"success": true, "connection": conn})
 	case "callback":
 		s.oauth.HandleCallback(w, r, provider)
@@ -968,14 +1079,17 @@ switch action {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
+
 		var req struct {
-			RefreshToken string         `json:"refresh_token"`
 			PSD          map[string]any `json:"provider_specific_data"`
+			RefreshToken string         `json:"refresh_token"`
 		}
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RefreshToken == "" {
 			http.Error(w, `{"error":"refresh_token required"}`, http.StatusBadRequest)
 			return
 		}
+
 		if provider == "kiro" {
 			tok, err := oauth.RefreshKiroToken(r.Context(), req.RefreshToken, req.PSD)
 			if err != nil {
@@ -984,18 +1098,23 @@ switch action {
 					http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 					return
 				}
+
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(token)
+
 				return
 			}
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  tok.AccessToken,
 				"refresh_token": tok.RefreshToken,
 				"expires_at":    tok.ExpiresAt,
 			})
+
 			return
 		}
+
 		token, err := s.refresh.Refresh(r.Context(), provider, req.RefreshToken)
 		if err != nil {
 			tok, err2 := s.oauth.RefreshToken(r.Context(), provider, req.RefreshToken)
@@ -1003,14 +1122,17 @@ switch action {
 				http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 				return
 			}
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  tok.AccessToken,
 				"refresh_token": tok.RefreshToken,
 				"expires_at":    tok.ExpiresAt,
 			})
+
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(token)
 	default:
@@ -1029,22 +1151,27 @@ func (s *Server) authOK(r *http.Request) bool {
 	if h == "" {
 		return !s.cfg.RequireAPIKey
 	}
+
 	const p = "Bearer "
 	if !strings.HasPrefix(h, p) {
 		return false
 	}
+
 	raw := strings.TrimSpace(h[len(p):])
 	if !s.keys.VerifyCRC(raw) {
 		return false
 	}
+
 	_, keyID, ok := s.keys.Parse(raw)
 	if !ok {
 		return false
 	}
+
 	hash, _, found, err := s.st.LookupActiveByKeyID(keyID)
 	if err != nil || !found || hash != auth.HashKey(raw) {
 		return false
 	}
+
 	return true
 }
 

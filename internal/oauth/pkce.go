@@ -11,6 +11,7 @@ func GenerateCodeVerifier() (string, error) {
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
+
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
@@ -24,5 +25,6 @@ func GenerateState() (string, error) {
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
+
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

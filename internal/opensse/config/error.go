@@ -46,10 +46,12 @@ func GetQuotaCooldown(backoffLevel int) int64 {
 	if level < 0 {
 		level = 0
 	}
+
 	cooldown := BackoffConfig.Base * (1 << uint(level))
 	if cooldown > BackoffConfig.Max {
 		cooldown = BackoffConfig.Max
 	}
+
 	return cooldown
 }
 
@@ -63,21 +65,27 @@ func CheckFallbackError(status int, errorText string, backoffLevel int) (shouldF
 				if newLevel > BackoffConfig.MaxLevel {
 					newLevel = BackoffConfig.MaxLevel
 				}
+
 				return true, GetQuotaCooldown(newLevel), newLevel
 			}
+
 			return true, rule.CooldownMs, backoffLevel
 		}
+
 		if rule.Status != 0 && rule.Status == status {
 			if rule.Backoff {
 				newLevel := backoffLevel + 1
 				if newLevel > BackoffConfig.MaxLevel {
 					newLevel = BackoffConfig.MaxLevel
 				}
+
 				return true, GetQuotaCooldown(newLevel), newLevel
 			}
+
 			return true, rule.CooldownMs, backoffLevel
 		}
 	}
+
 	return true, TransientCooldownMs, backoffLevel
 }
 
@@ -85,10 +93,12 @@ func IsAccountUnavailable(until string) bool {
 	if until == "" {
 		return false
 	}
+
 	t, err := time.Parse(time.RFC3339, until)
 	if err != nil {
 		return false
 	}
+
 	return time.Now().Before(t)
 }
 

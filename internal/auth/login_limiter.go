@@ -1,12 +1,11 @@
 package auth
 
 import (
+	"flamerouter/internal/config"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
-
-	"flamerouter/internal/config"
 )
 
 const (
@@ -22,10 +21,10 @@ var lockSteps = []time.Duration{
 }
 
 type loginEntry struct {
-	fails      int
 	lockUntil  time.Time
-	lockLevel  int
 	lastFailAt time.Time
+	fails      int
+	lockLevel  int
 }
 
 var (
@@ -38,12 +37,14 @@ var (
 func ResetLoginLimiterForTest() {
 	loginMu.Lock()
 	defer loginMu.Unlock()
+
 	loginAttempts = map[string]*loginEntry{}
 }
 
 func clearLockUntilForTest(ip string) {
 	loginMu.Lock()
 	defer loginMu.Unlock()
+
 	if e := loginAttempts[ip]; e != nil {
 		e.lockUntil = time.Time{}
 	}
@@ -54,6 +55,7 @@ func getEntry(ip string) *loginEntry {
 	if e == nil {
 		return nil
 	}
+
 	now := loginNow()
 	// Auto reset if window expired and not currently locked
 	if !e.lastFailAt.IsZero() && now.Sub(e.lastFailAt) > failWindow &&
@@ -61,6 +63,7 @@ func getEntry(ip string) *loginEntry {
 		delete(loginAttempts, ip)
 		return nil
 	}
+
 	return e
 }
 
@@ -68,18 +71,22 @@ func getEntry(ip string) *loginEntry {
 func CheckLock(ip string) (locked bool, retryAfterSec int) {
 	loginMu.Lock()
 	defer loginMu.Unlock()
+
 	e := getEntry(ip)
 	if e == nil || e.lockUntil.IsZero() {
 		return false, 0
 	}
+
 	remaining := e.lockUntil.Sub(loginNow())
 	if remaining <= 0 {
 		return false, 0
 	}
+
 	sec := int(remaining.Seconds())
 	if remaining%time.Second != 0 {
 		sec++ // ceil
 	}
+
 	return true, sec
 }
 
@@ -87,26 +94,33 @@ func CheckLock(ip string) (locked bool, retryAfterSec int) {
 func RecordFail(ip string) (remainingBeforeLock int) {
 	loginMu.Lock()
 	defer loginMu.Unlock()
+
 	e := getEntry(ip)
 	if e == nil {
 		e = &loginEntry{}
 	}
+
 	e.fails++
+
 	e.lastFailAt = loginNow()
 	if e.fails >= maxFailsBeforeLock {
 		idx := e.lockLevel
 		if idx >= len(lockSteps) {
 			idx = len(lockSteps) - 1
 		}
+
 		e.lockUntil = loginNow().Add(lockSteps[idx])
 		e.lockLevel++
 		e.fails = 0
 	}
+
 	loginAttempts[ip] = e
+
 	rem := maxFailsBeforeLock - e.fails
 	if rem < 0 {
 		rem = 0
 	}
+
 	return rem
 }
 
@@ -122,11 +136,13 @@ func ClientIP(r *http.Request) string {
 	if realIP := r.Header.Get("x-9r-real-ip"); realIP != "" {
 		return realIP
 	}
+
 	if config.TrustProxy() {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			return strings.TrimSpace(parts[0])
 		}
 	}
+
 	return "unknown"
 }

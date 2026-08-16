@@ -2,21 +2,20 @@ package handlers
 
 import (
 	"context"
+	"flamerouter/internal/opensse/fallback"
+	"flamerouter/internal/opensse/testutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"flamerouter/internal/opensse/fallback"
-	"flamerouter/internal/opensse/testutil"
 )
 
 type testUsageSink struct {
-	called     bool
 	provider   string
 	model      string
 	prompt     int
 	completion int
 	statusCode int
+	called     bool
 }
 
 func (s *testUsageSink) OnUsage(provider, model, connectionID string, prompt, completion, statusCode int) {
@@ -55,6 +54,7 @@ func TestUsageSinkRecordedOnSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)
 	}
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -62,12 +62,15 @@ func TestUsageSinkRecordedOnSuccess(t *testing.T) {
 	if !sink.called {
 		t.Fatal("expected UsageSink.OnUsage to be called")
 	}
+
 	if sink.provider != "openai" || sink.model != "gpt-4o" {
 		t.Fatalf("sink provider/model = %s/%s", sink.provider, sink.model)
 	}
+
 	if sink.prompt != 15 || sink.completion != 25 {
 		t.Fatalf("sink prompt/completion = %d/%d", sink.prompt, sink.completion)
 	}
+
 	if sink.statusCode != http.StatusOK {
 		t.Fatalf("sink status code = %d", sink.statusCode)
 	}
@@ -98,6 +101,7 @@ func TestTokenSaverHeaderOptOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)
 	}
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}

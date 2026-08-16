@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	kiroCwHost    = "https://codewhisperer.us-east-1.amazonaws.com"
+	kiroCwHost     = "https://codewhisperer.us-east-1.amazonaws.com"
 	kiroLimitsPath = "/getUsageLimits"
-	kiroQHost     = "https://q.us-east-1.amazonaws.com"
+	kiroQHost      = "https://q.us-east-1.amazonaws.com"
 )
 
 func init() {
@@ -30,6 +30,7 @@ func fetchKiroUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 	if authMethod == "" {
 		authMethod = "builder-id"
 	}
+
 	isAPIKey := authMethod == "api_key"
 	isExternalIDP := authMethod == "external_idp"
 
@@ -44,8 +45,8 @@ func fetchKiroUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 	cwGetURL := fmt.Sprintf("%s%s?%s", kiroCwHost, kiroLimitsPath, params.Encode())
 
 	type attempt struct {
-		name string
 		exec func() (*http.Response, error)
+		name string
 	}
 
 	attempts := []attempt{
@@ -103,6 +104,7 @@ func fetchKiroUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 	}
 
 	var lastErr string
+
 	for _, att := range attempts {
 		res, err := att.exec()
 		if err != nil {
@@ -118,14 +120,17 @@ func fetchKiroUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 					Quotas:  map[string]QuotaItem{},
 				}, nil
 			}
+
 			return &QuotaResult{
 				Message: "Kiro quota API authentication expired. Chat may still work.",
 				Quotas:  map[string]QuotaItem{},
 			}, nil
 		}
+
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
 			errBytes, _ := io.ReadAll(io.LimitReader(res.Body, 512))
 			lastErr = fmt.Sprintf("%s: %d %s", att.name, res.StatusCode, strings.TrimSpace(string(errBytes)))
+
 			continue
 		}
 
@@ -153,9 +158,11 @@ func setKiroHeaders(h http.Header, token string, isAPIKey, isExternalIDP bool) {
 	h.Set("Accept", "application/json")
 	h.Set("x-amz-user-agent", "aws-sdk-js/1.0.0 KiroIDE")
 	h.Set("user-agent", "aws-sdk-js/1.0.0 KiroIDE")
+
 	if isAPIKey {
 		h.Set("tokentype", "API_KEY")
 	}
+
 	if isExternalIDP {
 		h.Set("TokenType", "EXTERNAL_IDP")
 	}
@@ -164,6 +171,7 @@ func setKiroHeaders(h http.Header, token string, isAPIKey, isExternalIDP bool) {
 func parseKiroQuotaData(data map[string]any) *QuotaResult {
 	breakdowns, _ := data["usageBreakdownList"].([]any)
 	quotas := make(map[string]QuotaItem)
+
 	resetAt := parseResetTime(data["nextDateReset"])
 	if resetAt == nil {
 		resetAt = parseResetTime(data["resetDate"])
@@ -174,10 +182,12 @@ func parseKiroQuotaData(data map[string]any) *QuotaResult {
 		if !ok {
 			continue
 		}
+
 		resType := strings.ToLower(fmt.Sprintf("%v", b["resourceType"]))
 		if resType == "" || resType == "<nil>" {
 			resType = "unknown"
 		}
+
 		used := toFiniteFloat(b["currentUsageWithPrecision"], 0)
 		total := toFiniteFloat(b["usageLimitWithPrecision"], 0)
 
@@ -186,15 +196,18 @@ func parseKiroQuotaData(data map[string]any) *QuotaResult {
 		if fti, ok := b["freeTrialInfo"].(map[string]any); ok && fti != nil {
 			freeUsed := toFiniteFloat(fti["currentUsageWithPrecision"], 0)
 			freeTotal := toFiniteFloat(fti["usageLimitWithPrecision"], 0)
+
 			freeReset := parseResetTime(fti["freeTrialExpiry"])
 			if freeReset == nil {
 				freeReset = resetAt
 			}
+
 			quotas[resType+"_freetrial"] = makeQuota(freeUsed, freeTotal, freeReset, false)
 		}
 	}
 
 	plan := "Kiro"
+
 	if subInfo, ok := data["subscriptionInfo"].(map[string]any); ok {
 		if t, ok := subInfo["subscriptionTitle"].(string); ok && t != "" {
 			plan = t

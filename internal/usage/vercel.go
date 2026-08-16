@@ -18,6 +18,7 @@ func fetchVercelUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	if apiKey == "" {
 		apiKey = opts.AccessToken
 	}
+
 	if apiKey == "" {
 		return &QuotaResult{Message: "Vercel AI Gateway API key not available."}, nil
 	}
@@ -26,6 +27,7 @@ func fetchVercelUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
@@ -38,6 +40,7 @@ func fetchVercelUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	if res.StatusCode == 401 || res.StatusCode == 403 {
 		return &QuotaResult{Message: "Vercel AI Gateway API key invalid or expired."}, nil
 	}
+
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		errBytes, _ := io.ReadAll(io.LimitReader(res.Body, 512))
 		return &QuotaResult{Message: fmt.Sprintf("Vercel AI Gateway credits API error (%d): %s", res.StatusCode, strings.TrimSpace(string(errBytes)))}, nil
@@ -47,6 +50,7 @@ func fetchVercelUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 		Balance   any `json:"balance"`
 		TotalUsed any `json:"total_used"`
 	}
+
 	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
 		return &QuotaResult{Message: "Vercel AI Gateway error: invalid response JSON"}, nil
 	}

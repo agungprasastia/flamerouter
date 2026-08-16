@@ -33,6 +33,7 @@ func ApplyThinkingLevel(body []byte, model, provider, targetFormat string, provi
 		if err != nil {
 			return body, cleanModel
 		}
+
 		return out, cleanModel
 	}
 
@@ -41,6 +42,7 @@ func ApplyThinkingLevel(body []byte, model, provider, targetFormat string, provi
 	if fromSuffix {
 		caps := GetCapabilitiesForModel(provider, cleanModel)
 		fmt := resolveThinkingFormat(targetFormat, cleanModel, provider)
+
 		stripAllThinking(m)
 		applyThinkingFormat(fmt, m, cfg, caps)
 	} else {
@@ -51,6 +53,7 @@ func ApplyThinkingLevel(body []byte, model, provider, targetFormat string, provi
 	if err != nil {
 		return body, cleanModel
 	}
+
 	return out, cleanModel
 }
 
@@ -63,6 +66,7 @@ func stripColonThinking(model string) (string, bool) {
 	if base == "" {
 		base = model
 	}
+
 	if strings.HasSuffix(strings.ToLower(base), ":thinking") {
 		return base[:len(base)-len(":thinking")], true
 	}
@@ -70,6 +74,7 @@ func stripColonThinking(model string) (string, bool) {
 	if strings.HasSuffix(strings.ToLower(model), ":thinking") {
 		return model[:len(model)-len(":thinking")], true
 	}
+
 	return base, false
 }
 
@@ -77,13 +82,16 @@ func resolveThinkingCfg(fromSuffix bool, body map[string]any, providerThinking m
 	if fromSuffix {
 		return map[string]any{"mode": "budget", "budget": defaultThinkingBudget}
 	}
+
 	if providerThinking == nil {
 		return nil
 	}
+
 	mode, _ := providerThinking["mode"].(string)
 	if mode == "" || mode == "auto" {
 		return nil
 	}
+
 	switch mode {
 	case "on":
 		return map[string]any{"mode": "budget", "budget": defaultThinkingBudget}
@@ -95,6 +103,7 @@ func resolveThinkingCfg(fromSuffix bool, body map[string]any, providerThinking m
 		if mode == "thinking" {
 			return map[string]any{"mode": "budget", "budget": defaultThinkingBudget}
 		}
+
 		return map[string]any{"mode": "level", "level": mode}
 	}
 }
@@ -109,7 +118,9 @@ func injectProviderThinking(body map[string]any, cfg map[string]any) {
 		if body["thinking"] != nil {
 			return
 		}
+
 		budget := defaultThinkingBudget
+
 		switch b := cfg["budget"].(type) {
 		case int:
 			if b > 0 {
@@ -120,16 +131,19 @@ func injectProviderThinking(body map[string]any, cfg map[string]any) {
 				budget = int(b)
 			}
 		}
+
 		body["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
 	case "off":
 		if body["thinking"] != nil {
 			return
 		}
+
 		body["thinking"] = map[string]any{"type": "disabled"}
 	case "level":
 		if body["reasoning_effort"] != nil {
 			return
 		}
+
 		level, _ := cfg["level"].(string)
 		if level != "" {
 			body["reasoning_effort"] = level

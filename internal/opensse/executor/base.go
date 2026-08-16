@@ -22,6 +22,7 @@ func (b *Base) client() *http.Client {
 	if b.Client != nil {
 		return b.Client
 	}
+
 	return http.DefaultClient
 }
 
@@ -31,11 +32,14 @@ func (b *Base) BuildURL(model string, stream bool, urlIndex int, cred Credential
 		if urlIndex < len(b.BaseURLs) {
 			return b.BaseURLs[urlIndex]
 		}
+
 		return b.BaseURLs[0]
 	}
+
 	if b.BaseURL != "" {
 		return b.BaseURL
 	}
+
 	return strings.TrimRight(cred.BaseURL, "/")
 }
 
@@ -43,21 +47,26 @@ func (b *Base) BuildURL(model string, stream bool, urlIndex int, cred Credential
 func (b *Base) BuildHeaders(cred Credentials, stream bool) http.Header {
 	h := make(http.Header)
 	h.Set("Content-Type", "application/json")
+
 	for k, v := range b.Headers {
 		h.Set(k, v)
 	}
+
 	tok := cred.AccessToken
 	if tok == "" {
 		tok = cred.APIKey
 	}
+
 	if tok != "" {
 		h.Set("Authorization", "Bearer "+tok)
 	}
+
 	if stream {
 		h.Set("Accept", "text/event-stream")
 	} else {
 		h.Set("Accept", "application/json")
 	}
+
 	return h
 }
 
@@ -72,15 +81,18 @@ func (b *Base) DoPOST(ctx context.Context, url string, headers http.Header, payl
 	if err != nil {
 		return nil, err
 	}
+
 	for k, vals := range headers {
 		for _, v := range vals {
 			req.Header.Add(k, v)
 		}
 	}
+
 	resp, err := b.client().Do(req)
 	if err != nil {
 		return nil, err
 	}
+
 	return &Result{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }
 
@@ -94,25 +106,31 @@ func (b *Base) ExecuteJSON(ctx context.Context, cred Credentials, model string, 
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	if transform != nil {
 		m = transform(model, m, stream, cred)
 	} else {
 		m = b.TransformRequest(model, m, stream, cred)
 	}
+
 	m["model"] = model
 	m["stream"] = stream
+
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return nil, err
 	}
+
 	url := b.BuildURL(model, stream, 0, cred)
 	if buildURL != nil {
 		url = buildURL(model, stream, 0, cred)
 	}
+
 	headers := b.BuildHeaders(cred, stream)
 	if buildHeaders != nil {
 		headers = buildHeaders(cred, stream)
 	}
+
 	return b.DoPOST(ctx, url, headers, payload)
 }
 

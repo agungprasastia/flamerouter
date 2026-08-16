@@ -26,6 +26,7 @@ func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, fo
 	if !enabled || body == nil || proxyURL == "" {
 		return nil
 	}
+
 	defer func() { recover() }()
 
 	// Only OpenAI-shaped messages[] for simplicity; Claude/Kiro need translators — fail-open skip
@@ -35,10 +36,12 @@ func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, fo
 	}
 
 	endpoint := buildCompressEndpoint(proxyURL)
+
 	payload := map[string]any{"messages": messages, "model": model}
 	if compressUserMessages {
 		payload["config"] = map[string]any{"compress_user_messages": true}
 	}
+
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil
@@ -46,23 +49,30 @@ func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, fo
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultHeadroomTimeout)
 	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
 	if err != nil {
 		return nil
 	}
+
 	req.Header.Set("Content-Type", "application/json")
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil
 	}
+
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		return nil
 	}
+
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
 		return nil
 	}
+
 	var data struct {
 		Messages []any `json:"messages"`
 		Stats    struct {
@@ -70,6 +80,7 @@ func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, fo
 			TokensAfter  int `json:"tokens_after"`
 		} `json:"stats"`
 	}
+
 	if err := json.Unmarshal(raw, &data); err != nil || len(data.Messages) == 0 {
 		return nil
 	}
@@ -77,7 +88,9 @@ func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, fo
 	if len(data.Messages) != len(messages) {
 		return nil
 	}
+
 	body["messages"] = data.Messages
+
 	st := &HeadroomStats{
 		TokensBefore: data.Stats.TokensBefore,
 		TokensAfter:  data.Stats.TokensAfter,
@@ -85,15 +98,18 @@ func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, fo
 	if st.TokensBefore > st.TokensAfter {
 		st.Saved = st.TokensBefore - st.TokensAfter
 	}
+
 	return st
 }
 
 func buildCompressEndpoint(raw string) string {
 	raw = strings.TrimSpace(raw)
 	raw = strings.TrimRight(raw, "/")
+
 	if strings.HasSuffix(raw, "/v1/compress") {
 		return raw
 	}
+
 	return raw + "/v1/compress"
 }
 
@@ -102,5 +118,6 @@ func FormatHeadroomLog(st *HeadroomStats) string {
 	if st == nil || st.Saved <= 0 {
 		return ""
 	}
+
 	return fmt.Sprintf("[HEADROOM] saved %d tokens (%d→%d)", st.Saved, st.TokensBefore, st.TokensAfter)
 }

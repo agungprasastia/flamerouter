@@ -28,21 +28,26 @@ func postProcessForVertex(body map[string]any) map[string]any {
 		if !ok {
 			continue
 		}
+
 		parts, ok := turn["parts"].([]any)
 		if !ok {
 			continue
 		}
+
 		for _, partRaw := range parts {
 			part, ok := partRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			if _, ok := part["thoughtSignature"]; ok {
 				part["thoughtSignature"] = "AVhLS1AfXIFbELnIbBpHb2MqG1GnXz9pGxKmHxOmLzKmHxOmLzKmHxOmLzKmHxOmLzKm"
 			}
+
 			if fc, ok := part["functionCall"].(map[string]any); ok {
 				delete(fc, "id")
 			}
+
 			if fr, ok := part["functionResponse"].(map[string]any); ok {
 				delete(fr, "id")
 			}

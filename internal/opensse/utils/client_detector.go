@@ -11,6 +11,7 @@ func DetectClient(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
+
 	ua := strings.ToLower(r.UserAgent())
 	xApp := strings.ToLower(r.Header.Get("x-app"))
 	openaiIntent := strings.ToLower(r.Header.Get("openai-intent"))
@@ -71,9 +72,11 @@ func DetectClient(r *http.Request) string {
 	if r.Header.Get("x-stainless-os") != "" || r.Header.Get("x-stainless-lang") != "" {
 		return "codex"
 	}
+
 	if strings.EqualFold(r.Header.Get("x-client"), "cursor") {
 		return "cursor"
 	}
+
 	return ""
 }
 
@@ -87,6 +90,7 @@ func ShouldPassthrough(client, provider string) bool {
 	if strings.HasPrefix(provider, "anthropic-compatible") {
 		provider = "anthropic"
 	}
+
 	switch client {
 	case "claude-code", "claude":
 		return provider == "claude" || provider == "anthropic"
@@ -105,5 +109,6 @@ func ShouldPassthrough(client, provider string) bool {
 	case "github-copilot", "copilot":
 		return provider == "github" || provider == "copilot" || provider == "github-copilot"
 	}
+
 	return false
 }

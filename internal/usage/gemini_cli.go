@@ -31,6 +31,7 @@ func fetchGeminiUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 		subInfo := getGoogleSubscriptionInfo(ctx, opts.HTTPClient, opts.AccessToken, geminiLoadCodeAssistURL)
 		if subInfo != nil {
 			projectID = extractProjectFromSubInfo(subInfo)
+
 			if tierName := extractTierName(subInfo); tierName != "" {
 				plan = tierName
 			}
@@ -46,10 +47,12 @@ func fetchGeminiUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 
 	url := strings.ReplaceAll(geminiQuotaURL, "{project}", projectID)
 	reqBody, _ := json.Marshal(map[string]string{"project": projectID})
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -65,20 +68,23 @@ func fetchGeminiUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 
 	var data struct {
 		Buckets []struct {
+			ResetTime         any     `json:"resetTime"`
 			ModelID           string  `json:"modelId"`
 			RemainingFraction float64 `json:"remainingFraction"`
-			ResetTime         any     `json:"resetTime"`
 		} `json:"buckets"`
 	}
+
 	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
 		return &QuotaResult{Plan: plan, Message: "Gemini CLI error: invalid response JSON"}, nil
 	}
 
 	quotas := make(map[string]QuotaItem)
+
 	for _, b := range data.Buckets {
 		if b.ModelID == "" {
 			continue
 		}
+
 		remFrac := b.RemainingFraction
 		total := 1000.0
 		rem := math.Round(total * remFrac)

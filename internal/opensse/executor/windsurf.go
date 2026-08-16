@@ -28,10 +28,10 @@ func init() {
 }
 
 const (
-	windsurfDefaultURL   = "https://server.codeium.com/exa.language_server_pb.LanguageServerService/GetChatMessage"
-	windsurfIDEVersion   = "3.14.0"
-	windsurfIDEName      = "windsurf"
-	windsurfLocale       = "en-US"
+	windsurfDefaultURL = "https://server.codeium.com/exa.language_server_pb.LanguageServerService/GetChatMessage"
+	windsurfIDEVersion = "3.14.0"
+	windsurfIDEName    = "windsurf"
+	windsurfLocale     = "en-US"
 )
 
 var windsurfModelAliasMap = map[string]string{
@@ -125,6 +125,7 @@ func ResolveWsModelID(model string) string {
 	if mapped, ok := windsurfModelAliasMap[model]; ok {
 		return mapped
 	}
+
 	return model
 }
 
@@ -147,6 +148,7 @@ func BuildWindsurfGetChatMessageRequest(apiKey, model string, messages []any) []
 	writeProtoField(&metaBuf, 6, 2, []byte(windsurfLocale))
 
 	var modelBuf bytes.Buffer
+
 	writeProtoField(&modelBuf, 1, 2, []byte(model))
 
 	var reqBuf bytes.Buffer
@@ -163,16 +165,19 @@ func BuildWindsurfGetChatMessageRequest(apiKey, model string, messages []any) []
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 		if role == "" {
 			role = "user"
 		}
+
 		content := ""
 		switch c := msg["content"].(type) {
 		case string:
 			content = c
 		case []any:
 			var parts []string
+
 			for _, p := range c {
 				if pm, ok := p.(map[string]any); ok {
 					if t, _ := pm["type"].(string); t == "text" {
@@ -180,12 +185,15 @@ func BuildWindsurfGetChatMessageRequest(apiKey, model string, messages []any) []
 					}
 				}
 			}
+
 			content = strings.Join(parts, " ")
 		}
 
 		var chatMsgBuf bytes.Buffer
+
 		writeProtoField(&chatMsgBuf, 1, 2, []byte(role))
 		writeProtoField(&chatMsgBuf, 2, 2, []byte(content))
+
 		if tcid, _ := msg["tool_call_id"].(string); tcid != "" {
 			writeProtoField(&chatMsgBuf, 3, 2, []byte(tcid))
 		}
@@ -211,6 +219,7 @@ func decodeWsCompletionChunk(payload []byte) wsDecodedChunk {
 		if n <= 0 {
 			break
 		}
+
 		p += n
 		fieldNum := tag >> 3
 		wireType := tag & 0x07
@@ -220,11 +229,14 @@ func decodeWsCompletionChunk(payload []byte) wsDecodedChunk {
 			if ln <= 0 {
 				break
 			}
+
 			p += ln
+
 			end := p + int(length)
 			if end > len(payload) {
 				break
 			}
+
 			fieldBytes := payload[p:end]
 			p = end
 
@@ -245,11 +257,13 @@ func decodeWsCompletionChunk(payload []byte) wsDecodedChunk {
 			if vn <= 0 {
 				break
 			}
+
 			p += vn
 		} else {
 			break
 		}
 	}
+
 	return wsDecodedChunk{kind: "unknown"}
 }
 
@@ -260,33 +274,41 @@ func decodeWsStringField(payload []byte, targetField uint64) string {
 		if n <= 0 {
 			break
 		}
+
 		p += n
 		fieldNum := tag >> 3
+
 		wireType := tag & 0x07
 		if wireType == 2 {
 			length, ln := binary.Uvarint(payload[p:])
 			if ln <= 0 {
 				break
 			}
+
 			p += ln
+
 			end := p + int(length)
 			if end > len(payload) {
 				break
 			}
+
 			if fieldNum == targetField {
 				return string(payload[p:end])
 			}
+
 			p = end
 		} else if wireType == 0 {
 			_, vn := binary.Uvarint(payload[p:])
 			if vn <= 0 {
 				break
 			}
+
 			p += vn
 		} else {
 			break
 		}
 	}
+
 	return ""
 }
 
@@ -297,36 +319,46 @@ func decodeWsDoneChunk(payload []byte) (promptTokens, completionTokens int) {
 		if n <= 0 {
 			break
 		}
+
 		p += n
 		fieldNum := tag >> 3
+
 		wireType := tag & 0x07
 		if wireType == 2 { // Field 1 = UsageStats
 			length, ln := binary.Uvarint(payload[p:])
 			if ln <= 0 {
 				break
 			}
+
 			p += ln
+
 			end := p + int(length)
 			if end > len(payload) {
 				break
 			}
+
 			if fieldNum == 1 {
 				usageBytes := payload[p:end]
 				up := 0
+
 				for up < len(usageBytes) {
 					utag, un := binary.Uvarint(usageBytes[up:])
 					if un <= 0 {
 						break
 					}
+
 					up += un
 					ufield := utag >> 3
+
 					uwire := utag & 0x07
 					if uwire == 0 {
 						v, vn := binary.Uvarint(usageBytes[up:])
 						if vn <= 0 {
 							break
 						}
+
 						up += vn
+
 						if ufield == 1 {
 							promptTokens = int(v)
 						} else if ufield == 2 {
@@ -337,17 +369,20 @@ func decodeWsDoneChunk(payload []byte) (promptTokens, completionTokens int) {
 					}
 				}
 			}
+
 			p = end
 		} else if wireType == 0 {
 			_, vn := binary.Uvarint(payload[p:])
 			if vn <= 0 {
 				break
 			}
+
 			p += vn
 		} else {
 			break
 		}
 	}
+
 	return promptTokens, completionTokens
 }
 
@@ -361,7 +396,9 @@ func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model 
 	if apiKey == "" {
 		apiKey = cred.APIKey
 	}
+
 	wsModel := ResolveWsModelID(model)
+
 	messages, _ := m["messages"].([]any)
 	if len(messages) == 0 {
 		messages = []any{map[string]any{"role": "user", "content": ""}}
@@ -380,6 +417,7 @@ func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model 
 	h.Set("Accept", "application/grpc-web+proto")
 	h.Set("User-Agent", fmt.Sprintf("windsurf/%s", windsurfIDEVersion))
 	h.Set("X-Grpc-Web", "1")
+
 	if apiKey != "" {
 		h.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -398,6 +436,7 @@ func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model 
 
 	if stream {
 		sseBody := wrapWindsurfStream(res.Body, model, cid, created)
+
 		return &Result{
 			StatusCode: 200,
 			Header: http.Header{
@@ -413,6 +452,7 @@ func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model 
 	if err != nil {
 		return jsonErr(502, err.Error(), "windsurf_error", ""), nil
 	}
+
 	return &Result{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -422,26 +462,34 @@ func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model 
 
 func readWindsurfFrames(r io.Reader, handleFrame func(flag byte, payload []byte)) {
 	var pending []byte
+
 	buf := make([]byte, 32*1024)
+
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			pending = append(pending, buf[:n]...)
 			offset := 0
+
 			for offset+5 <= len(pending) {
 				flag := pending[offset]
+
 				length := int(binary.BigEndian.Uint32(pending[offset+1 : offset+5]))
 				if length < 0 || offset+5+length > len(pending) {
 					break
 				}
+
 				framePayload := pending[offset+5 : offset+5+length]
 				handleFrame(flag, framePayload)
+
 				offset += 5 + length
 			}
+
 			if offset > 0 {
 				pending = pending[offset:]
 			}
 		}
+
 		if err != nil {
 			break
 		}
@@ -469,6 +517,7 @@ func wrapWindsurfStream(r io.ReadCloser, model, cid string, created int64) io.Re
 		})
 
 		var promptTokens, completionTokens int
+
 		var hadError string
 
 		readWindsurfFrames(r, func(flag byte, payload []byte) {
@@ -477,8 +526,10 @@ func wrapWindsurfStream(r io.ReadCloser, model, cid string, created int64) io.Re
 				if strings.Contains(trailer, "grpc-status:") && !strings.Contains(trailer, "grpc-status: 0") && !strings.Contains(trailer, "grpc-status:0") {
 					hadError = trailer
 				}
+
 				return
 			}
+
 			if flag != 0x00 {
 				return
 			}
@@ -521,10 +572,13 @@ func wrapWindsurfStream(r io.ReadCloser, model, cid string, created int64) io.Re
 					"total_tokens":      promptTokens + completionTokens,
 				}
 			}
+
 			writeSSE(choiceChunk)
 		}
+
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
+
 	return pr
 }
 
@@ -532,7 +586,9 @@ func collectWindsurfNonStreaming(r io.ReadCloser, model, cid string, created int
 	defer r.Close()
 
 	var totalText string
+
 	var promptTokens, completionTokens int
+
 	var hadError string
 
 	readWindsurfFrames(r, func(flag byte, payload []byte) {
@@ -541,8 +597,10 @@ func collectWindsurfNonStreaming(r io.ReadCloser, model, cid string, created int
 			if strings.Contains(trailer, "grpc-status:") && !strings.Contains(trailer, "grpc-status: 0") && !strings.Contains(trailer, "grpc-status:0") {
 				hadError = trailer
 			}
+
 			return
 		}
+
 		if flag != 0x00 {
 			return
 		}
@@ -580,5 +638,6 @@ func collectWindsurfNonStreaming(r io.ReadCloser, model, cid string, created int
 			"total_tokens":      promptTokens + completionTokens,
 		}
 	}
+
 	return json.Marshal(out)
 }

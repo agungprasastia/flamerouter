@@ -20,15 +20,18 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 	}
 
 	data := chunk
+
 	if s, ok := chunk["raw"].(string); ok && s != "" {
 		s = strings.TrimSpace(s)
 		if s == "" || s == "[DONE]" {
 			return nil
 		}
+
 		jsonStr := s
 		if strings.HasPrefix(jsonStr, "data:") {
 			jsonStr = strings.TrimSpace(jsonStr[5:])
 		}
+
 		var parsed map[string]any
 		if json.Unmarshal([]byte(jsonStr), &parsed) == nil {
 			data = parsed
@@ -39,10 +42,12 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 	if !ok || len(choices) == 0 {
 		return nil
 	}
+
 	choice, _ := choices[0].(map[string]any)
 	if choice == nil {
 		return nil
 	}
+
 	delta, _ := choice["delta"].(map[string]any)
 	if delta == nil {
 		return nil
@@ -62,16 +67,20 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 	if !state.MessageStartSent {
 		state.MessageStartSent = true
 		state.MessageID = ""
+
 		if id, ok := data["id"].(string); ok {
 			state.MessageID = strings.TrimPrefix(id, "chatcmpl-")
 		}
+
 		if state.MessageID == "" {
 			state.MessageID = "msg_" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 		}
+
 		state.Model, _ = data["model"].(string)
 		if state.Model == "" {
 			state.Model = "kiro"
 		}
+
 		state.NextBlockIndex = 0
 		results = append(results, map[string]any{
 			"type": "message_start",
@@ -92,21 +101,24 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 	} else if rc, ok := delta["reasoning"].(string); ok {
 		reasoningContent = rc
 	}
+
 	if reasoningContent != "" {
 		if state.TextBlockStarted {
 			results = append(results, map[string]any{"type": "content_block_stop", "index": state.TextBlockIndex})
 			state.TextBlockStarted = false
 		}
+
 		if !state.ThinkingBlockStarted {
 			state.ThinkingBlockIndex = state.NextBlockIndex
 			state.NextBlockIndex++
 			state.ThinkingBlockStarted = true
 			results = append(results, map[string]any{
-				"type":           "content_block_start",
-				"index":          state.ThinkingBlockIndex,
+				"type":          "content_block_start",
+				"index":         state.ThinkingBlockIndex,
 				"content_block": map[string]any{"type": "thinking", "thinking": ""},
 			})
 		}
+
 		results = append(results, map[string]any{
 			"type":  "content_block_delta",
 			"index": state.ThinkingBlockIndex,
@@ -119,16 +131,18 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 			results = append(results, map[string]any{"type": "content_block_stop", "index": state.ThinkingBlockIndex})
 			state.ThinkingBlockStarted = false
 		}
+
 		if !state.TextBlockStarted {
 			state.TextBlockIndex = state.NextBlockIndex
 			state.NextBlockIndex++
 			state.TextBlockStarted = true
 			results = append(results, map[string]any{
-				"type":           "content_block_start",
-				"index":          state.TextBlockIndex,
+				"type":          "content_block_start",
+				"index":         state.TextBlockIndex,
 				"content_block": map[string]any{"type": "text", "text": ""},
 			})
 		}
+
 		results = append(results, map[string]any{
 			"type":  "content_block_delta",
 			"index": state.TextBlockIndex,
@@ -140,24 +154,29 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 		if state.KiroToolCalls == nil {
 			state.KiroToolCalls = make(map[int]map[string]any)
 		}
+
 		for _, tcRaw := range tc {
 			toolCall, ok := tcRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			idx := 0
 			if i, ok := toolCall["index"].(float64); ok {
 				idx = int(i)
 			}
+
 			if id, ok := toolCall["id"].(string); ok && id != "" {
 				if state.ThinkingBlockStarted {
 					results = append(results, map[string]any{"type": "content_block_stop", "index": state.ThinkingBlockIndex})
 					state.ThinkingBlockStarted = false
 				}
+
 				if state.TextBlockStarted {
 					results = append(results, map[string]any{"type": "content_block_stop", "index": state.TextBlockIndex})
 					state.TextBlockStarted = false
 				}
+
 				blockIndex := state.NextBlockIndex
 				state.NextBlockIndex++
 				state.KiroToolCalls[idx] = map[string]any{
@@ -165,10 +184,12 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 					"name":       "",
 					"blockIndex": blockIndex,
 				}
+
 				name := ""
 				if fn, ok := toolCall["function"].(map[string]any); ok {
 					name, _ = fn["name"].(string)
 				}
+
 				results = append(results, map[string]any{
 					"type":  "content_block_start",
 					"index": blockIndex,
@@ -180,6 +201,7 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 					},
 				})
 			}
+
 			if fn, ok := toolCall["function"].(map[string]any); ok {
 				if args, ok := fn["arguments"].(string); ok && args != "" {
 					if toolInfo, exists := state.KiroToolCalls[idx]; exists {
@@ -201,19 +223,24 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 			results = append(results, map[string]any{"type": "content_block_stop", "index": state.ThinkingBlockIndex})
 			state.ThinkingBlockStarted = false
 		}
+
 		if state.TextBlockStarted {
 			results = append(results, map[string]any{"type": "content_block_stop", "index": state.TextBlockIndex})
 			state.TextBlockStarted = false
 		}
+
 		for _, toolInfo := range state.KiroToolCalls {
 			blockIndex, _ := toolInfo["blockIndex"].(int)
 			results = append(results, map[string]any{"type": "content_block_stop", "index": blockIndex})
 		}
+
 		state.FinishReason = finishReason
+
 		usage := state.Usage
 		if usage == nil {
 			usage = &concerns.UsageInfo{InputTokens: 0, OutputTokens: 0}
 		}
+
 		results = append(results, map[string]any{
 			"type":  "message_delta",
 			"delta": map[string]any{"stop_reason": convertKiroFinishReason(finishReason)},
@@ -225,6 +252,7 @@ func kiroToClaudeResponse(chunk map[string]any, state *concerns.ResponseState) [
 	if len(results) == 0 {
 		return nil
 	}
+
 	return results
 }
 

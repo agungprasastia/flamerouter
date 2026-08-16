@@ -2,14 +2,13 @@ package gateway
 
 import (
 	"encoding/json"
+	"flamerouter/internal/infra/mitm"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync"
-
-	"flamerouter/internal/infra/mitm"
 )
 
 var (
@@ -23,51 +22,64 @@ func (s *Server) mitmCertPaths() (certPath, keyPath string) {
 	if s != nil && s.cfg != nil && s.cfg.DataDir != "" {
 		dir = filepath.Join(s.cfg.DataDir, "mitm")
 	}
+
 	return filepath.Join(dir, "rootCA.crt"), filepath.Join(dir, "rootCA.key")
 }
 
 func (s *Server) getOrCreateMITM() (*mitm.Server, error) {
 	mitmMu.Lock()
 	defer mitmMu.Unlock()
+
 	if mitmServer != nil {
 		return mitmServer, nil
 	}
+
 	certPath, keyPath := s.mitmCertPaths()
+
 	srv, err := mitm.New(certPath, keyPath)
 	if err != nil {
 		return nil, err
 	}
+
 	routerBase := "http://localhost:20128"
 	if s != nil && s.cfg != nil && s.cfg.Port > 0 {
 		routerBase = "http://localhost:" + strconv.Itoa(s.cfg.Port)
 	}
+
 	if s != nil && s.st != nil {
 		if v, _ := s.st.GetSetting("mitmRouterBaseUrl"); v != "" {
 			routerBase = v
 		}
 	}
+
 	srv.RegisterDefaultTools(routerBase, mitmAPIKey)
 	mitmServer = srv
+
 	return mitmServer, nil
 }
 
-// POST /api/mitm/start
+// POST /api/mitm/start.
 func (s *Server) handleMITMStart(w http.ResponseWriter, r *http.Request) {
 	if !requireLocal(w, r) {
 		return
 	}
+
 	var body struct {
 		APIKey string `json:"apiKey"`
 		Addr   string `json:"addr"`
 	}
+
 	_ = json.NewDecoder(r.Body).Decode(&body)
+
 	if body.APIKey != "" {
 		mitmAPIKey = body.APIKey
 	}
+
 	addr := body.Addr
 	if addr == "" {
 		addr = ":443"
 	}
+
 	srv, err := s.getOrCreateMITM()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -78,62 +90,77 @@ func (s *Server) handleMITMStart(w http.ResponseWriter, r *http.Request) {
 	if s.cfg != nil && s.cfg.Port > 0 {
 		routerBase = "http://localhost:" + strconv.Itoa(s.cfg.Port)
 	}
+
 	if s.st != nil {
 		if v, _ := s.st.GetSetting("mitmRouterBaseUrl"); v != "" {
 			routerBase = v
 		}
 	}
+
 	srv.RegisterDefaultTools(routerBase, mitmAPIKey)
+
 	if err := srv.Start(addr); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": srv.Status()})
 		return
 	}
+
 	if s.st != nil {
 		_ = s.st.SetSetting("mitmEnabled", "true")
 	}
+
 	writeJSONOK(w, map[string]any{"success": true, "status": srv.Status(), "addr": addr})
 }
 
-// POST /api/mitm/stop
+// POST /api/mitm/stop.
 func (s *Server) handleMITMStop(w http.ResponseWriter, r *http.Request) {
 	if !requireLocal(w, r) {
 		return
 	}
+
 	mitmMu.Lock()
 	srv := mitmServer
 	mitmMu.Unlock()
+
 	if srv != nil {
 		_ = srv.Stop()
 	}
+
 	if s.st != nil {
 		_ = s.st.SetSetting("mitmEnabled", "false")
 	}
+
 	writeJSONOK(w, map[string]any{"success": true, "status": "stopped"})
 }
 
-// GET /api/mitm/status
+// GET /api/mitm/status.
 func (s *Server) handleMITMStatus(w http.ResponseWriter, r *http.Request) {
 	certPath, _ := s.mitmCertPaths()
 	certExists := false
+
 	if _, err := os.Stat(certPath); err == nil {
 		certExists = true
 	}
+
 	status := "stopped"
 	running := false
 	certTrusted := false
+
 	mitmMu.Lock()
 	srv := mitmServer
 	mitmMu.Unlock()
+
 	if srv != nil {
 		status = srv.Status()
 		running = status == "running"
 		certExists = certExists || srv.CertExists()
+
 		if p := srv.CertPath(); p != "" {
 			certTrusted = mitm.CheckCATrusted(p)
 		}
 	} else if certExists {
 		certTrusted = mitm.CheckCATrusted(certPath)
 	}
+
 	writeJSONOK(w, map[string]any{
 		"running":           running,
 		"status":            status,
@@ -146,67 +173,78 @@ func (s *Server) handleMITMStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /api/mitm/cert — download root CA PEM
+// GET /api/mitm/cert — download root CA PEM.
 func (s *Server) handleMITMCert(w http.ResponseWriter, r *http.Request) {
 	srv, err := s.getOrCreateMITM()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+
 	pem := srv.RootCAPEM()
 	if len(pem) == 0 {
 		// try disk
 		certPath, _ := s.mitmCertPaths()
 		pem, _ = os.ReadFile(certPath)
 	}
+
 	if len(pem) == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "cert not found"})
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	w.Header().Set("Content-Disposition", `attachment; filename="flamerouter-mitm-ca.crt"`)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(pem)
 }
 
-// POST /api/mitm/trust — best-effort OS trust install
+// POST /api/mitm/trust — best-effort OS trust install.
 func (s *Server) handleMITMTrust(w http.ResponseWriter, r *http.Request) {
 	if !requireLocal(w, r) {
 		return
 	}
+
 	srv, err := s.getOrCreateMITM()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+
 	path := srv.CertPath()
 	if path == "" {
 		path, _ = s.mitmCertPaths()
 	}
+
 	if err := mitm.InstallCA(path); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"error":   err.Error(),
 			"note":    "CA trust install is best-effort; run process elevated (Administrator/root)",
 		})
+
 		return
 	}
+
 	writeJSONOK(w, map[string]any{"success": true, "certTrusted": true})
 }
 
-// POST /api/mitm/hosts — enable/disable tool hosts file entries
+// POST /api/mitm/hosts — enable/disable tool hosts file entries.
 func (s *Server) handleMITMHosts(w http.ResponseWriter, r *http.Request) {
 	if !requireLocal(w, r) {
 		return
 	}
+
 	var body struct {
 		Tool   string `json:"tool"`
 		Action string `json:"action"` // enable | disable
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Tool == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "tool required"})
 		return
 	}
+
 	var err error
 	switch body.Action {
 	case "disable":
@@ -214,12 +252,14 @@ func (s *Server) handleMITMHosts(w http.ResponseWriter, r *http.Request) {
 	default:
 		err = mitm.EnableToolHosts(body.Tool)
 	}
+
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"error":   err.Error(),
 			"note":    "hosts file edit requires elevation (Administrator/root)",
 		})
+
 		return
 	}
 	// also update in-memory DNS override
@@ -232,5 +272,6 @@ func (s *Server) handleMITMHosts(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
 	writeJSONOK(w, map[string]any{"success": true, "dnsStatus": mitm.AllDNSStatus()})
 }

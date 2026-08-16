@@ -1,11 +1,10 @@
 package auth
 
 import (
+	"flamerouter/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"flamerouter/internal/store"
 )
 
 func TestDashboardGuardRequireLoginPublicGET(t *testing.T) {
@@ -19,6 +18,7 @@ func TestDashboardGuardRequireLoginPublicGET(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/settings/require-login", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET require-login unauth: want 200 got %d body %s", rr.Code, rr.Body.String())
 	}
@@ -26,6 +26,7 @@ func TestDashboardGuardRequireLoginPublicGET(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPatch, "/api/settings/require-login", nil)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("PATCH require-login unauth: want 401 got %d", rr.Code)
 	}

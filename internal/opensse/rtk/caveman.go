@@ -1,6 +1,6 @@
 package rtk
 
-// Caveman levels
+// Caveman levels.
 const (
 	CavemanLite        = "lite"
 	CavemanFull        = "full"
@@ -11,8 +11,8 @@ const (
 )
 
 const (
-	sharedBoundaries = "Code blocks, file paths, commands, errors, URLs: keep exact. Security warnings, irreversible action confirmations, multi-step ordered sequences: write normal. Resume terse style after."
-	sharedExamples   = "Not: \"Sure! I'd be happy to help you with that. The issue you're experiencing is likely caused by...\" Yes: \"Bug in auth middleware. Token expiry check use `<` not `<=`. Fix:\""
+	sharedBoundaries  = "Code blocks, file paths, commands, errors, URLs: keep exact. Security warnings, irreversible action confirmations, multi-step ordered sequences: write normal. Resume terse style after."
+	sharedExamples    = "Not: \"Sure! I'd be happy to help you with that. The issue you're experiencing is likely caused by...\" Yes: \"Bug in auth middleware. Token expiry check use `<` not `<=`. Fix:\""
 	sharedAutoClarity = "Auto-Clarity: drop caveman for security warnings, irreversible actions, multi-step sequences where fragment ambiguity risks misread, or when user repeats a question. Resume after the clear part."
 	sharedPersistence = "ACTIVE EVERY RESPONSE. No revert after many turns. No filler drift. Still active if unsure."
 	sharedNoAbbrev    = "No invented abbreviations. Standard well-known tech acronyms (DB, API, HTTP, URL, JSON, ID, OS, CPU) OK. Names of code symbols, function names, API names, error strings: keep verbatim."
@@ -41,9 +41,11 @@ func InjectCaveman(body map[string]any, format, level string) {
 	if level == "" {
 		level = CavemanFull
 	}
+
 	prompt, ok := CavemanPrompts[level]
 	if !ok {
 		return
 	}
+
 	InjectSystemPrompt(body, format, prompt)
 }

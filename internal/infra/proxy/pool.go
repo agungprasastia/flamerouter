@@ -1,12 +1,11 @@
 package proxy
 
 import (
+	"flamerouter/internal/store"
 	"fmt"
 	"net/http"
 	"net/url"
 	"sync"
-
-	"flamerouter/internal/store"
 )
 
 // Pool manages a rotating pool of HTTP/SOCKS proxies.
@@ -25,24 +24,30 @@ func (p *Pool) Next() *url.URL {
 	if p.st == nil {
 		return nil
 	}
+
 	pools, err := p.st.ListProxyPools()
 	if err != nil || len(pools) == 0 {
 		return nil
 	}
+
 	active := make([]store.ProxyPool, 0, len(pools))
+
 	for _, pl := range pools {
 		if pl.IsActive {
 			active = append(active, pl)
 		}
 	}
+
 	if len(active) == 0 {
 		// fall back to all if none marked active
 		active = pools
 	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	pl := active[p.current%len(active)]
 	p.current++
+
 	return poolToURL(pl)
 }
 
@@ -51,8 +56,10 @@ func poolToURL(pl store.ProxyPool) *url.URL {
 	if scheme == "" {
 		scheme = "http"
 	}
+
 	host := fmt.Sprintf("%s:%d", pl.Host, pl.Port)
 	u := &url.URL{Scheme: scheme, Host: host}
+
 	if pl.Username != "" {
 		if pl.Password != "" {
 			u.User = url.UserPassword(pl.Username, pl.Password)
@@ -60,6 +67,7 @@ func poolToURL(pl store.ProxyPool) *url.URL {
 			u.User = url.User(pl.Username)
 		}
 	}
+
 	return u
 }
 
@@ -70,7 +78,9 @@ func (p *Pool) Transport() *http.Transport {
 		if t, ok := http.DefaultTransport.(*http.Transport); ok {
 			return t.Clone()
 		}
+
 		return &http.Transport{}
 	}
+
 	return &http.Transport{Proxy: http.ProxyURL(proxy)}
 }

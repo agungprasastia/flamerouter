@@ -8,20 +8,20 @@ type ThinkingRange struct {
 }
 
 type Capabilities struct {
-	Vision             bool
-	AudioInput         bool
-	AudioOutput        bool
+	ThinkingRange      *ThinkingRange
+	ThinkingFormat     string
+	MaxOutput          int
+	ContextWindow      int
 	PDF                bool
-	ImageOutput        bool
 	VideoInput         bool
 	Tools              bool
 	Reasoning          bool
 	Search             bool
-	ThinkingFormat     string
+	ImageOutput        bool
 	ThinkingCanDisable bool
-	ThinkingRange      *ThinkingRange
-	ContextWindow      int
-	MaxOutput          int
+	Vision             bool
+	AudioOutput        bool
+	AudioInput         bool
 }
 
 func defaultCaps() *Capabilities {
@@ -111,15 +111,18 @@ func GetCapabilitiesForModel(provider, model string) *Capabilities {
 	if clean == "" {
 		clean = model
 	}
+
 	if caps, ok := modelCapabilities[clean]; ok {
 		c := *caps
-		if c.ThinkingCanDisable == false && caps.ThinkingCanDisable == false {
+		if !c.ThinkingCanDisable && !caps.ThinkingCanDisable {
 			// keep false
 		} else if !caps.Reasoning {
 			c.ThinkingCanDisable = true
 		}
+
 		return &c
 	}
+
 	lower := strings.ToLower(clean)
 	for _, p := range patternCapabilities {
 		if strings.HasPrefix(lower, p.prefix) || strings.HasPrefix(clean, p.prefix) {
@@ -127,5 +130,6 @@ func GetCapabilitiesForModel(provider, model string) *Capabilities {
 			return &c
 		}
 	}
+
 	return defaultCaps()
 }

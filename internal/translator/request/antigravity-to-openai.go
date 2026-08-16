@@ -1,10 +1,10 @@
 package request
 
 import (
+	"encoding/json"
 	"flamerouter/internal/translator"
 	"flamerouter/internal/translator/concerns"
 	"flamerouter/internal/translator/schema"
-	"encoding/json"
 )
 
 func init() {
@@ -18,24 +18,28 @@ func antigravityToOpenAIRequest(model string, body map[string]any, stream bool, 
 	}
 
 	result := map[string]any{
-		"model":   model,
+		"model":    model,
 		"messages": []any{},
-		"stream":  stream,
+		"stream":   stream,
 	}
 
 	if genConfig, ok := req["generationConfig"].(map[string]any); ok {
 		if mot, ok := genConfig["maxOutputTokens"].(float64); ok {
 			result["max_tokens"] = mot
 		}
+
 		if temp, ok := genConfig["temperature"].(float64); ok {
 			result["temperature"] = temp
 		}
+
 		if tp, ok := genConfig["topP"].(float64); ok {
 			result["top_p"] = tp
 		}
+
 		if tk, ok := genConfig["topK"].(float64); ok {
 			result["top_k"] = tk
 		}
+
 		if tc, ok := genConfig["thinkingConfig"].(map[string]any); ok {
 			if tb, ok := tc["thinkingBudget"].(float64); ok {
 				effort := concerns.BudgetToEffort(int(tb))
@@ -64,47 +68,54 @@ func antigravityToOpenAIRequest(model string, body map[string]any, stream bool, 
 			if !ok {
 				continue
 			}
+
 			converted := convertAntigravityContent(content)
 			if converted == nil {
 				continue
 			}
+
 			messages := result["messages"].([]any)
 			if arr, ok := converted.([]any); ok {
 				messages = append(messages, arr...)
 			} else {
 				messages = append(messages, converted)
 			}
+
 			result["messages"] = messages
 		}
 	}
 
 	if tools, ok := req["tools"].([]any); ok {
 		var resultTools []any
+
 		for _, toolRaw := range tools {
 			tool, ok := toolRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			if funcDecls, ok := tool["functionDeclarations"].([]any); ok {
 				for _, funcRaw := range funcDecls {
 					fn, ok := funcRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					name, _ := fn["name"].(string)
 					desc, _ := fn["description"].(string)
 					params, _ := fn["parameters"].(map[string]any)
 					resultTools = append(resultTools, map[string]any{
 						"type": schema.OpenaiBlockFunction,
 						"function": map[string]any{
-							"name":       name,
+							"name":        name,
 							"description": desc,
-							"parameters": normalizeSchemaTypes(params),
+							"parameters":  normalizeSchemaTypes(params),
 						},
 					})
 				}
 			}
 		}
+
 		if len(resultTools) > 0 {
 			result["tools"] = resultTools
 		}
@@ -127,8 +138,11 @@ func convertAntigravityContent(content map[string]any) any {
 	}
 
 	var textParts []any
+
 	var toolCalls []any
+
 	var toolResults []any
+
 	var reasoningContent string
 
 	for _, partRaw := range parts {
@@ -141,6 +155,7 @@ func convertAntigravityContent(content map[string]any) any {
 			if text, ok := part["text"].(string); ok {
 				reasoningContent += text
 			}
+
 			continue
 		}
 
@@ -151,6 +166,7 @@ func convertAntigravityContent(content map[string]any) any {
 					"text": text,
 				})
 			}
+
 			continue
 		}
 
@@ -189,7 +205,7 @@ func convertAntigravityContent(content map[string]any) any {
 		if fr, ok := part["functionResponse"].(map[string]any); ok {
 			name, _ := fr["name"].(string)
 			response, _ := fr["response"].(map[string]any)
-			result, _ := response["result"]
+			result := response["result"]
 			resultJSON, _ := json.Marshal(result)
 			toolResults = append(toolResults, map[string]any{
 				"role":         schema.RoleTool,
@@ -205,17 +221,22 @@ func convertAntigravityContent(content map[string]any) any {
 			if len(textParts) > 0 {
 				assistantMsg["content"] = concerns.CollapseTextParts(textParts)
 			}
+
 			if reasoningContent != "" {
 				assistantMsg["reasoning_content"] = reasoningContent
 			}
+
 			if len(toolCalls) > 0 {
 				assistantMsg["tool_calls"] = toolCalls
 			}
+
 			var result []any
 			result = append(result, toolResults...)
 			result = append(result, assistantMsg)
+
 			return result
 		}
+
 		return toolResults
 	}
 
@@ -224,10 +245,13 @@ func convertAntigravityContent(content map[string]any) any {
 		if len(textParts) > 0 {
 			msg["content"] = concerns.CollapseTextParts(textParts)
 		}
+
 		if reasoningContent != "" {
 			msg["reasoning_content"] = reasoningContent
 		}
+
 		msg["tool_calls"] = toolCalls
+
 		return msg
 	}
 
@@ -236,9 +260,11 @@ func convertAntigravityContent(content map[string]any) any {
 		if len(textParts) > 0 {
 			msg["content"] = concerns.CollapseTextParts(textParts)
 		}
+
 		if reasoningContent != "" {
 			msg["reasoning_content"] = reasoningContent
 		}
+
 		return msg
 	}
 
@@ -249,13 +275,17 @@ func normalizeSchemaTypes(s map[string]any) map[string]any {
 	if s == nil {
 		return s
 	}
+
 	result := make(map[string]any)
 	for k, v := range s {
 		result[k] = v
 	}
+
 	delete(result, "enumDescriptions")
+
 	if props, ok := result["properties"].(map[string]any); ok {
 		normalized := make(map[string]any)
+
 		for k, v := range props {
 			if subSchema, ok := v.(map[string]any); ok {
 				normalized[k] = normalizeSchemaTypes(subSchema)
@@ -263,8 +293,10 @@ func normalizeSchemaTypes(s map[string]any) map[string]any {
 				normalized[k] = v
 			}
 		}
+
 		result["properties"] = normalized
 	}
+
 	return result
 }
 
@@ -275,6 +307,7 @@ func extractText(instruction any) string {
 	case map[string]any:
 		if parts, ok := v["parts"].([]any); ok {
 			var text string
+
 			for _, p := range parts {
 				if part, ok := p.(map[string]any); ok {
 					if t, ok := part["text"].(string); ok {
@@ -282,8 +315,10 @@ func extractText(instruction any) string {
 					}
 				}
 			}
+
 			return text
 		}
 	}
+
 	return ""
 }

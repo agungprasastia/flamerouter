@@ -27,14 +27,14 @@ func init() {
 }
 
 const (
-	MimoBootstrapURL       = "https://api.xiaomimimo.com/api/free-ai/bootstrap"
-	MimoChatURL            = "https://api.xiaomimimo.com/v1/chat/completions"
-	MimoSessionAffinity    = "ses_"
-	MimoSessionIDLength    = 24
-	MimoJWTFallbackTTLSec  = 3000
-	MimoJWTExpiryBufferMS  = 300000 // 5 minutes in ms
-	MimoSessionChars       = "abcdefghijklmnopqrstuvwxyz0123456789"
-	MimoSystemMarker       = "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks."
+	MimoBootstrapURL      = "https://api.xiaomimimo.com/api/free-ai/bootstrap"
+	MimoChatURL           = "https://api.xiaomimimo.com/v1/chat/completions"
+	MimoSessionAffinity   = "ses_"
+	MimoSessionIDLength   = 24
+	MimoJWTFallbackTTLSec = 3000
+	MimoJWTExpiryBufferMS = 300000 // 5 minutes in ms
+	MimoSessionChars      = "abcdefghijklmnopqrstuvwxyz0123456789"
+	MimoSystemMarker      = "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks."
 )
 
 var mimoUserAgents = []string{
@@ -44,19 +44,20 @@ var mimoUserAgents = []string{
 }
 
 type MimoFreeExecutor struct {
+	sessionID    string
+	bootstrapURL string
+	chatURL      string
+	cachedJWT    string
 	Base
-	sessionID     string
-	bootstrapURL  string
-	chatURL       string
-	jwtMu         sync.Mutex
-	cachedJWT     string
-	jwtExpiresAt  int64
+	jwtExpiresAt int64
+	jwtMu        sync.Mutex
 }
 
 func NewMimoFreeExecutor(client *http.Client) *MimoFreeExecutor {
 	if client == nil {
 		client = http.DefaultClient
 	}
+
 	return &MimoFreeExecutor{
 		Base: Base{
 			Provider: "mimo-free",
@@ -74,15 +75,19 @@ func generateMimoFingerprint() string {
 	if u, err := user.Current(); err == nil && u.Username != "" {
 		username = u.Username
 	}
+
 	hostname, _ := os.Hostname()
 	seed := fmt.Sprintf("%s|%s|%s|%s|%s", hostname, runtime.GOOS, runtime.GOARCH, "unknown-cpu", username)
 	h := sha256.Sum256([]byte(seed))
+
 	return hex.EncodeToString(h[:])
 }
 
 func generateMimoSessionID() string {
 	var sb strings.Builder
+
 	sb.WriteString(MimoSessionAffinity)
+
 	charsLen := big.NewInt(int64(len(MimoSessionChars)))
 	for i := 0; i < MimoSessionIDLength; i++ {
 		idx, err := rand.Int(rand.Reader, charsLen)
@@ -92,6 +97,7 @@ func generateMimoSessionID() string {
 			sb.WriteByte(MimoSessionChars[idx.Int64()])
 		}
 	}
+
 	return sb.String()
 }
 
@@ -103,19 +109,23 @@ func parseMimoJWTExp(jwt string) int64 {
 		if rem := len(payloadSegment) % 4; rem > 0 {
 			payloadSegment += strings.Repeat("=", 4-rem)
 		}
+
 		data, err := base64.URLEncoding.DecodeString(payloadSegment)
 		if err != nil {
 			data, err = base64.StdEncoding.DecodeString(payloadSegment)
 		}
+
 		if err == nil {
 			var payload struct {
 				Exp int64 `json:"exp"`
 			}
+
 			if err := json.Unmarshal(data, &payload); err == nil && payload.Exp > 0 {
 				return payload.Exp * 1000
 			}
 		}
 	}
+
 	return time.Now().UnixMilli() + MimoJWTFallbackTTLSec*1000
 }
 
@@ -123,6 +133,7 @@ func injectMimoSystemMarker(body map[string]any) map[string]any {
 	if body == nil {
 		return body
 	}
+
 	messages, ok := body["messages"].([]any)
 	if !ok {
 		return body
@@ -132,6 +143,7 @@ func injectMimoSystemMarker(body map[string]any) map[string]any {
 		if msg, ok := item.(map[string]any); ok {
 			role, _ := msg["role"].(string)
 			content, _ := msg["content"].(string)
+
 			if role == "system" && strings.Contains(content, MimoSystemMarker) {
 				return body
 			}
@@ -142,6 +154,7 @@ func injectMimoSystemMarker(body map[string]any) map[string]any {
 	for k, v := range body {
 		cloned[k] = v
 	}
+
 	newMsgs := make([]any, 0, len(messages)+1)
 	newMsgs = append(newMsgs, map[string]any{
 		"role":    "system",
@@ -149,6 +162,7 @@ func injectMimoSystemMarker(body map[string]any) map[string]any {
 	})
 	newMsgs = append(newMsgs, messages...)
 	cloned["messages"] = newMsgs
+
 	return cloned
 }
 
@@ -164,6 +178,7 @@ func (e *MimoFreeExecutor) bootstrapJWT(ctx context.Context) (string, error) {
 	if e.cachedJWT != "" && time.Now().UnixMilli() < e.jwtExpiresAt-MimoJWTExpiryBufferMS {
 		jwt := e.cachedJWT
 		e.jwtMu.Unlock()
+
 		return jwt, nil
 	}
 	e.jwtMu.Unlock()
@@ -181,6 +196,7 @@ func (e *MimoFreeExecutor) bootstrapJWT(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", ua)
 
@@ -197,9 +213,11 @@ func (e *MimoFreeExecutor) bootstrapJWT(ctx context.Context) (string, error) {
 	var data struct {
 		JWT string `json:"jwt"`
 	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return "", fmt.Errorf("decode bootstrap response: %w", err)
 	}
+
 	if data.JWT == "" {
 		return "", errors.New("MiMo bootstrap returned no JWT")
 	}
@@ -225,14 +243,17 @@ func (e *MimoFreeExecutor) buildHeaders(stream bool, jwt string) http.Header {
 	h.Set("X-Mimo-Source", "mimocode-cli-free")
 	h.Set("User-Agent", ua)
 	h.Set("x-session-affinity", e.sessionID)
+
 	if stream {
 		h.Set("Accept", "text/event-stream")
 	} else {
 		h.Set("Accept", "application/json")
 	}
+
 	if jwt != "" {
 		h.Set("Authorization", "Bearer "+jwt)
 	}
+
 	return h
 }
 
@@ -249,6 +270,7 @@ func (e *MimoFreeExecutor) Execute(ctx context.Context, cred Credentials, model 
 
 	transformedBody := injectMimoSystemMarker(parsedBody)
 	transformedBody["stream"] = stream
+
 	if model != "" {
 		transformedBody["model"] = model
 	}
@@ -267,6 +289,7 @@ func (e *MimoFreeExecutor) Execute(ctx context.Context, cred Credentials, model 
 	}
 
 	headers := e.buildHeaders(stream, jwt)
+
 	res, err := e.DoPOST(ctx, chatURL, headers, payload)
 	if err != nil {
 		return nil, err
@@ -276,11 +299,14 @@ func (e *MimoFreeExecutor) Execute(ctx context.Context, cred Credentials, model 
 	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
 		DrainBody(res.Body)
 		e.resetJWTCache()
+
 		jwt, err = e.bootstrapJWT(ctx)
 		if err != nil {
 			return nil, err
 		}
+
 		headers.Set("Authorization", "Bearer "+jwt)
+
 		return e.DoPOST(ctx, chatURL, headers, payload)
 	}
 

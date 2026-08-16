@@ -1,13 +1,12 @@
 package gateway
 
 import (
+	"flamerouter/internal/store"
+	"flamerouter/internal/usage"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"flamerouter/internal/store"
-	"flamerouter/internal/usage"
 )
 
 func (s *Server) handleUsageStream(w http.ResponseWriter, r *http.Request) {
@@ -15,10 +14,12 @@ func (s *Server) handleUsageStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method")
 		return
 	}
+
 	if s.usageHub == nil {
 		writeErr(w, http.StatusServiceUnavailable, "stream unavailable")
 		return
 	}
+
 	s.usageHub.ServeHTTP(w, r)
 }
 
@@ -27,12 +28,14 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method")
 		return
 	}
+
 	period := r.URL.Query().Get("period")
 	if period == "" {
 		period = "today"
 	}
 
 	from, to := usageRange(r)
+
 	dailyRows, err := s.st.QueryUsageDaily(from, to)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
@@ -41,12 +44,14 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch connections map for account names
 	connMap := make(map[string]string)
+
 	if conns, err := s.st.ListAllConnections(); err == nil {
 		for _, c := range conns {
 			name := c.Name
 			if name == "" {
 				name = c.ID
 			}
+
 			connMap[c.ID] = name
 		}
 	}
@@ -55,16 +60,16 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 	reqDetails, _ := s.st.QueryRequestDetails(100)
 
 	type usageItem struct {
-		Requests         int     `json:"requests"`
-		PromptTokens     int     `json:"promptTokens"`
-		CompletionTokens int     `json:"completionTokens"`
-		CachedTokens     int     `json:"cachedTokens"`
-		Cost             float64 `json:"cost"`
 		RawModel         string  `json:"rawModel,omitempty"`
 		Provider         string  `json:"provider,omitempty"`
 		ConnectionID     string  `json:"connectionId,omitempty"`
 		AccountName      string  `json:"accountName,omitempty"`
 		LastUsed         string  `json:"lastUsed,omitempty"`
+		Requests         int     `json:"requests"`
+		PromptTokens     int     `json:"promptTokens"`
+		CompletionTokens int     `json:"completionTokens"`
+		CachedTokens     int     `json:"cachedTokens"`
+		Cost             float64 `json:"cost"`
 	}
 
 	byProvider := make(map[string]map[string]any)
@@ -87,6 +92,7 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 			pData = map[string]any{"requests": 0, "promptTokens": 0, "completionTokens": 0, "cachedTokens": 0, "cost": 0.0}
 			byProvider[row.Provider] = pData
 		}
+
 		pData["requests"] = pData["requests"].(int) + row.Requests
 		pData["promptTokens"] = pData["promptTokens"].(int) + row.PromptTokens
 		pData["completionTokens"] = pData["completionTokens"].(int) + row.CompletionTokens
@@ -96,6 +102,7 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 		if row.Provider != "" {
 			modelKey = row.Model + " (" + row.Provider + ")"
 		}
+
 		mItem, ok := byModel[modelKey]
 		if !ok {
 			mItem = &usageItem{
@@ -105,9 +112,11 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 			}
 			byModel[modelKey] = mItem
 		}
+
 		mItem.Requests += row.Requests
 		mItem.PromptTokens += row.PromptTokens
 		mItem.CompletionTokens += row.CompletionTokens
+
 		if row.Date > mItem.LastUsed {
 			mItem.LastUsed = row.Date
 		}
@@ -123,7 +132,9 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 					accName = "Account " + d.ConnectionID[:8] + "..."
 				}
 			}
+
 			accKey := d.Model + " (" + d.Provider + " - " + accName + ")"
+
 			aItem, ok := byAccount[accKey]
 			if !ok {
 				aItem = &usageItem{
@@ -135,9 +146,11 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 				}
 				byAccount[accKey] = aItem
 			}
+
 			aItem.Requests++
 			aItem.PromptTokens += d.PromptTokens
 			aItem.CompletionTokens += d.CompletionTokens
+
 			if d.Timestamp > aItem.LastUsed {
 				aItem.LastUsed = d.Timestamp
 			}
@@ -147,6 +160,7 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 		if d.Provider != "" {
 			modelKey = d.Model + " (" + d.Provider + ")"
 		}
+
 		if mItem, ok := byModel[modelKey]; ok {
 			if d.Timestamp > mItem.LastUsed {
 				mItem.LastUsed = d.Timestamp
@@ -159,12 +173,14 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 	if s.usageHub != nil {
 		recent = s.usageHub.GetRecent()
 	}
+
 	if len(recent) == 0 {
 		for _, d := range reqDetails {
 			status := "ok"
 			if d.StatusCode >= 400 || d.ErrorText != "" {
 				status = "error"
 			}
+
 			recent = append(recent, usage.RecentRequestItem{
 				Timestamp:        d.Timestamp,
 				Model:            d.Model,
@@ -181,22 +197,22 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONOK(w, map[string]any{
-		"period":                 period,
-		"from":                   from,
-		"to":                     to,
-		"totalRequests":          totalRequests,
-		"totalPromptTokens":      totalPrompt,
-		"totalCompletionTokens":  totalCompletion,
-		"totalCachedTokens":      0,
-		"totalCost":              0.0,
-		"byProvider":             byProvider,
-		"byModel":                byModel,
-		"byAccount":              byAccount,
-		"byApiKey":               map[string]any{},
-		"byEndpoint":             map[string]any{},
-		"recentRequests":         recent,
-		"activeRequests":         []any{},
-		"activeConnections":      len(connMap),
+		"period":                period,
+		"from":                  from,
+		"to":                    to,
+		"totalRequests":         totalRequests,
+		"totalPromptTokens":     totalPrompt,
+		"totalCompletionTokens": totalCompletion,
+		"totalCachedTokens":     0,
+		"totalCost":             0.0,
+		"byProvider":            byProvider,
+		"byModel":               byModel,
+		"byAccount":             byAccount,
+		"byApiKey":              map[string]any{},
+		"byEndpoint":            map[string]any{},
+		"recentRequests":        recent,
+		"activeRequests":        []any{},
+		"activeConnections":     len(connMap),
 	})
 }
 
@@ -213,19 +229,25 @@ func (s *Server) handleRequestDetails(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method")
 		return
 	}
+
 	limit := 100
+
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
 		}
 	}
+
 	page := 1
+
 	if v := r.URL.Query().Get("page"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			page = n
 		}
 	}
+
 	pageSize := limit
+
 	if v := r.URL.Query().Get("pageSize"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			pageSize = n
@@ -243,33 +265,41 @@ func (s *Server) handleRequestDetails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var filtered []store.RequestDetail
+
 	for _, d := range rows {
 		if providerFilter != "" && !strings.EqualFold(d.Provider, providerFilter) {
 			continue
 		}
+
 		if startDate != "" && d.Timestamp < startDate {
 			continue
 		}
+
 		if endDate != "" && d.Timestamp > endDate {
 			continue
 		}
+
 		filtered = append(filtered, d)
 	}
 
 	totalItems := len(filtered)
 	totalPages := 1
+
 	if pageSize > 0 {
 		totalPages = (totalItems + pageSize - 1) / pageSize
 	}
+
 	if totalPages == 0 {
 		totalPages = 1
 	}
 
 	startIdx := (page - 1) * pageSize
 	endIdx := startIdx + pageSize
+
 	if startIdx > totalItems {
 		startIdx = totalItems
 	}
+
 	if endIdx > totalItems {
 		endIdx = totalItems
 	}
@@ -277,11 +307,13 @@ func (s *Server) handleRequestDetails(w http.ResponseWriter, r *http.Request) {
 	pageRows := filtered[startIdx:endIdx]
 
 	out := make([]map[string]any, 0, len(pageRows))
+
 	for _, d := range pageRows {
 		status := "ok"
 		if d.StatusCode >= 400 || d.ErrorText != "" {
 			status = "error"
 		}
+
 		out = append(out, map[string]any{
 			"id":           d.ID,
 			"timestamp":    d.Timestamp,
@@ -333,15 +365,18 @@ func (s *Server) handleUsageProviders(w http.ResponseWriter, r *http.Request) {
 	reqDetails, _ := s.st.QueryRequestDetails(500)
 	seen := make(map[string]bool)
 	providers := make([]map[string]string, 0)
+
 	for _, d := range reqDetails {
 		if d.Provider != "" && !seen[d.Provider] {
 			seen[d.Provider] = true
+
 			providers = append(providers, map[string]string{
 				"id":   d.Provider,
 				"name": d.Provider,
 			})
 		}
 	}
+
 	writeJSONOK(w, map[string]any{"providers": providers})
 }
 
@@ -350,12 +385,15 @@ func (s *Server) handleUsageHistory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method")
 		return
 	}
+
 	from, to := usageRange(r)
+
 	rows, err := s.st.QueryUsageDaily(from, to)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+
 	writeJSONOK(w, map[string]any{"from": from, "to": to, "data": rows})
 }
 
@@ -364,12 +402,9 @@ func (s *Server) handleUsageChart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method")
 		return
 	}
-	period := r.URL.Query().Get("period")
-	if period == "" {
-		period = "7d"
-	}
 
 	from, to := usageRange(r)
+
 	rows, err := s.st.QueryUsageChart(from, to)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
@@ -383,11 +418,13 @@ func (s *Server) handleUsageChart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	points := make([]chartPoint, 0, len(rows))
+
 	for _, row := range rows {
 		lbl := row.Date
 		if t, err := time.Parse("2006-01-02", row.Date); err == nil {
 			lbl = t.Format("Jan 2")
 		}
+
 		points = append(points, chartPoint{
 			Label:  lbl,
 			Tokens: row.PromptTokens + row.CompletionTokens,
@@ -403,6 +440,7 @@ func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusMethodNotAllowed, "method")
 		return
 	}
+
 	connID := r.PathValue("connectionId")
 	if connID == "" {
 		// fallback: last path segment
@@ -411,18 +449,24 @@ func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request)
 			connID = parts[len(parts)-1]
 		}
 	}
+
 	limit := 100
+
 	rows, err := s.st.QueryRequestDetails(limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+
 	out := make([]map[string]any, 0)
+
 	var prompt, completion int
+
 	for _, d := range rows {
 		if d.ConnectionID != connID {
 			continue
 		}
+
 		prompt += d.PromptTokens
 		completion += d.CompletionTokens
 		out = append(out, map[string]any{
@@ -440,6 +484,7 @@ func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request)
 			"data":  out,
 			"quota": usage.FetchQuota(""),
 		})
+
 		return
 	}
 
@@ -459,11 +504,13 @@ func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request)
 func usageRange(r *http.Request) (from, to string) {
 	from = r.URL.Query().Get("from")
 	to = r.URL.Query().Get("to")
+
 	if from == "" || to == "" {
 		df, dt := usage.DefaultRange()
 		if from == "" {
 			from = df
 		}
+
 		if to == "" {
 			to = dt
 		}
@@ -472,8 +519,10 @@ func usageRange(r *http.Request) (from, to string) {
 	if _, err := time.Parse("2006-01-02", from); err != nil {
 		from, _ = usage.DefaultRange()
 	}
+
 	if _, err := time.Parse("2006-01-02", to); err != nil {
 		_, to = usage.DefaultRange()
 	}
+
 	return
 }

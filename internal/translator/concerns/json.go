@@ -14,6 +14,7 @@ func MustMarshal(v any) string {
 	if err != nil {
 		return ""
 	}
+
 	return string(b)
 }
 
@@ -22,6 +23,7 @@ func MustMarshalIndent(v any, prefix, indent string) string {
 	if err != nil {
 		return ""
 	}
+
 	return string(b)
 }
 

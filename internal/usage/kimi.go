@@ -37,20 +37,24 @@ func fetchKimiUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 	if opts.BaseURL != "" {
 		u = opts.BaseURL
 	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	if useAPIKey {
 		req.Header.Set("x-api-key", opts.APIKey)
 	} else {
 		req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
+
 		if opts.ProviderSpecificData != nil {
 			if devID, ok := opts.ProviderSpecificData["deviceId"].(string); ok && devID != "" {
 				req.Header.Set("X-Msh-Device-Id", devID)
 			}
 		}
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
@@ -79,15 +83,18 @@ func fetchKimiUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 	}
 
 	quotas := make(map[string]QuotaItem)
+
 	usageObj, _ := data["usage"].(map[string]any)
 	if usageObj != nil {
 		lim := toFiniteFloat(getVal(usageObj, nil, "Limit", "limit"), 0)
 		usd := toFiniteFloat(getVal(usageObj, nil, "Used", "used"), 0)
 		rem := toFiniteFloat(getVal(usageObj, nil, "Remaining", "remaining"), math.NaN())
+
 		rst := getVal(usageObj, nil, "ResetTime", "resetTime")
 		if rst == nil {
 			rst = getVal(usageObj, nil, "resetAt", "reset_at")
 		}
+
 		if lim > 0 {
 			quotas["Weekly"] = makeKimiQuota(usd, lim, rem, parseResetTime(rst))
 		}
@@ -99,27 +106,33 @@ func fetchKimiUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 		if !ok {
 			continue
 		}
+
 		detail, _ := m["detail"].(map[string]any)
 		if detail == nil {
 			continue
 		}
+
 		lim := toFiniteFloat(getVal(detail, nil, "Limit", "limit"), 0)
 		rem := toFiniteFloat(getVal(detail, nil, "Remaining", "remaining"), math.NaN())
+
 		rst := getVal(detail, nil, "ResetTime", "resetTime")
 		if rst == nil {
 			rst = getVal(detail, nil, "resetAt", "reset_at")
 		}
+
 		if lim > 0 {
 			resolvedRem := rem
 			if math.IsNaN(resolvedRem) {
 				resolvedRem = math.Max(0, lim)
 			}
+
 			used := math.Max(0, lim-resolvedRem)
 			quotas["Ratelimit"] = makeKimiQuota(used, lim, resolvedRem, parseResetTime(rst))
 		}
 	}
 
 	planName := "Kimi Coding"
+
 	if userObj, ok := data["user"].(map[string]any); ok {
 		if mem, ok := userObj["membership"].(map[string]any); ok {
 			if lvl, ok := mem["level"].(string); ok && lvl != "" {
@@ -150,12 +163,14 @@ func fetchKimiUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 func makeKimiQuota(used, total, rem float64, resetAt *string) QuotaItem {
 	safeTot := math.Max(0, total)
 	safeUsd := math.Max(0, used)
+
 	remPct := 0.0
 	if safeTot > 0 && !math.IsNaN(rem) {
 		remPct = (math.Max(0, rem) / safeTot) * 100.0
 	} else if safeTot > 0 {
 		remPct = (math.Max(0, safeTot-safeUsd) / safeTot) * 100.0
 	}
+
 	return QuotaItem{
 		Used:                safeUsd,
 		Total:               safeTot,
@@ -170,6 +185,7 @@ func formatKimiUsageError(status int, responseText string) string {
 	_ = json.Unmarshal([]byte(responseText), &parsed)
 
 	var reason string
+
 	var localized string
 
 	if details, ok := parsed["details"].([]any); ok && len(details) > 0 {
@@ -180,6 +196,7 @@ func formatKimiUsageError(status int, responseText string) string {
 					localized, _ = loc["message"].(string)
 				}
 			}
+
 			if localized == "" {
 				if loc, ok := d0["localizedMessage"].(map[string]any); ok {
 					localized, _ = loc["message"].(string)
@@ -187,9 +204,11 @@ func formatKimiUsageError(status int, responseText string) string {
 			}
 		}
 	}
+
 	if reason == "" {
 		reason, _ = parsed["reason"].(string)
 	}
+
 	if localized == "" {
 		localized, _ = parsed["message"].(string)
 	}
@@ -197,11 +216,13 @@ func formatKimiUsageError(status int, responseText string) string {
 	if status == 401 {
 		return "Kimi authentication expired. Please re-authorize."
 	}
+
 	if status == 403 {
 		if reason == "REASON_FEATURE_NO_PERMISSION" || strings.Contains(strings.ToLower(fmt.Sprintf("%v %s %s", parsed["code"], localized, responseText)), "permission") {
 			if localized != "" {
 				return localized
 			}
+
 			return "Kimi connected, but this account has no permission to view usage. Subscribe to Kimi Code to access quota."
 		}
 	}
@@ -210,11 +231,14 @@ func formatKimiUsageError(status int, responseText string) string {
 	if snippet == "" {
 		snippet = responseText
 	}
+
 	if len(snippet) > 100 {
 		snippet = snippet[:100]
 	}
+
 	if snippet != "" {
 		return fmt.Sprintf("Kimi Coding connected. API Error %d: %s", status, snippet)
 	}
+
 	return fmt.Sprintf("Kimi Coding connected. API Error %d", status)
 }

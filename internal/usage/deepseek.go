@@ -21,6 +21,7 @@ func fetchDeepseekUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, e
 	if apiKey == "" {
 		apiKey = opts.AccessToken
 	}
+
 	if apiKey == "" {
 		return &QuotaResult{Message: "DeepSeek API key not available. Add a key to view usage."}, nil
 	}
@@ -29,10 +30,12 @@ func fetchDeepseekUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, e
 	if opts.BaseURL != "" {
 		u = opts.BaseURL
 	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -52,16 +55,19 @@ func fetchDeepseekUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, e
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		errBytes, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+
 		trimmed := strings.TrimSpace(string(errBytes))
 		if len(trimmed) > 120 {
 			trimmed = trimmed[:120]
 		}
+
 		if trimmed != "" {
 			return &QuotaResult{
 				Plan:    "DeepSeek",
 				Message: fmt.Sprintf("DeepSeek balance API error (%d): %s", res.StatusCode, trimmed),
 			}, nil
 		}
+
 		return &QuotaResult{
 			Plan:    "DeepSeek",
 			Message: fmt.Sprintf("DeepSeek balance API error (%d)", res.StatusCode),
@@ -79,6 +85,7 @@ func fetchDeepseekUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, e
 			ToppedBalance  any    `json:"topped_up_balance"`
 		} `json:"balance_infos"`
 	}
+
 	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
 		return &QuotaResult{Message: "DeepSeek balance response was not JSON."}, nil
 	}
@@ -92,25 +99,31 @@ func fetchDeepseekUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, e
 
 	isAvail := data.IsAvailable || data.IsAvailable2
 	plan := "DeepSeek"
+
 	if !isAvail {
 		plan = "DeepSeek (Insufficient Balance)"
 	}
 
 	quotas := make(map[string]QuotaItem)
+
 	for _, b := range data.BalanceInfos {
 		curr := strings.ToUpper(strings.TrimSpace(b.Currency))
 		if curr == "" {
 			continue
 		}
+
 		tot := toFiniteFloat(b.TotalBalance, math.NaN())
 		if math.IsNaN(tot) {
 			tot = toFiniteFloat(b.TotalBalance2, 0)
 		}
+
 		tot = math.Max(0, tot)
 		remPct := 0.0
+
 		if tot > 0 {
 			remPct = 100.0
 		}
+
 		quotas[fmt.Sprintf("Balance (%s)", curr)] = QuotaItem{
 			Used:                0,
 			Total:               tot,

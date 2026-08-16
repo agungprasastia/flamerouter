@@ -12,5 +12,6 @@ func GenerateCursorChecksum(machineID string) string {
 	ts := fmt.Sprintf("%d", time.Now().UnixMilli())
 	h := sha256.New()
 	h.Write([]byte(machineID + ts))
+
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }

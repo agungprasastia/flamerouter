@@ -1,15 +1,15 @@
 package translator
 
 import (
-	"regexp"
-	"strings"
-
 	"flamerouter/internal/translator/concerns"
 	"flamerouter/internal/translator/formats"
+	"strings"
 )
 
-type RequestFunc func(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any
-type ResponseFunc func(chunk map[string]any, state *concerns.ResponseState) []map[string]any
+type (
+	RequestFunc  func(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any
+	ResponseFunc func(chunk map[string]any, state *concerns.ResponseState) []map[string]any
+)
 
 type Registry struct {
 	requestFns  map[string]RequestFunc
@@ -27,22 +27,24 @@ var DefaultRegistry = NewRegistry()
 
 func Register(from, to string, reqFn RequestFunc, resFn ResponseFunc) {
 	key := from + ":" + to
+
 	if reqFn != nil {
 		DefaultRegistry.requestFns[key] = reqFn
 	}
+
 	if resFn != nil {
 		DefaultRegistry.responseFns[key] = resFn
 	}
 }
 
 type TranslateOptions struct {
-	Model        string
-	Stream       bool
-	Credentials  map[string]any
-	Provider     string
-	StripList    []string
-	ConnectionId string
 	ClientTool   any
+	Credentials  map[string]any
+	Model        string
+	Provider     string
+	ConnectionId string
+	StripList    []string
+	Stream       bool
 }
 
 func (r *Registry) TranslateRequest(sourceFormat, targetFormat string, body map[string]any, opts TranslateOptions) map[string]any {
@@ -57,6 +59,7 @@ func (r *Registry) TranslateRequest(sourceFormat, targetFormat string, body map[
 	if caps != nil {
 		concerns.StripUnsupportedModalities(result, sourceFormat, caps)
 	}
+
 	concerns.PrefetchRemoteImages(result, sourceFormat, targetFormat)
 
 	concerns.NormalizeThinkingConfig(result)
@@ -82,6 +85,7 @@ func (r *Registry) TranslateRequest(sourceFormat, targetFormat string, body map[
 					result = toOpenAI(opts.Model, result, opts.Stream, opts.Credentials)
 				}
 			}
+
 			if targetFormat != FormatOpenAI {
 				fromOpenAI := r.requestFns[FormatOpenAI+":"+targetFormat]
 				if fromOpenAI != nil {
@@ -97,6 +101,7 @@ func (r *Registry) TranslateRequest(sourceFormat, targetFormat string, body map[
 
 	if targetFormat == FormatClaude {
 		apiKey := ""
+
 		if opts.Credentials != nil {
 			if at, ok := opts.Credentials["accessToken"].(string); ok {
 				apiKey = at
@@ -104,12 +109,15 @@ func (r *Registry) TranslateRequest(sourceFormat, targetFormat string, body map[
 				apiKey = ak
 			}
 		}
+
 		rawHeaders := ""
+
 		if opts.Credentials != nil {
 			if rh, ok := opts.Credentials["rawHeaders"].(string); ok {
 				rawHeaders = rh
 			}
 		}
+
 		result = prepareClaudeRequest(result, opts.Provider, apiKey, opts.ConnectionId, rawHeaders, clientSessionId)
 	}
 
@@ -119,6 +127,7 @@ func (r *Registry) TranslateRequest(sourceFormat, targetFormat string, body map[
 
 	if opts.Provider != "" && isCloakToolsOnOAuth(opts.Provider) {
 		apiKey := ""
+
 		if opts.Credentials != nil {
 			if at, ok := opts.Credentials["accessToken"].(string); ok {
 				apiKey = at
@@ -126,10 +135,12 @@ func (r *Registry) TranslateRequest(sourceFormat, targetFormat string, body map[
 				apiKey = ak
 			}
 		}
+
 		if strings.Contains(apiKey, "sk-ant-oat") {
 			cloakedBody, toolNameMap := cloakClaudeTools(result)
 			result = cloakedBody
-			if toolNameMap != nil && len(toolNameMap) > 0 {
+
+			if len(toolNameMap) > 0 {
 				result["_toolNameMap"] = toolNameMap
 			}
 		}
@@ -142,15 +153,19 @@ func (r *Registry) TranslateResponse(targetFormat, sourceFormat string, chunk ma
 	if sourceFormat == targetFormat {
 		return []map[string]any{chunk}
 	}
+
 	key := targetFormat + ":" + sourceFormat
 	if directFn, ok := r.responseFns[key]; ok {
 		result := directFn(chunk, state)
 		if result == nil {
 			return nil
 		}
+
 		return result
 	}
+
 	var results []map[string]any
+
 	if targetFormat != FormatOpenAI {
 		toOpenAI := r.responseFns[targetFormat+":"+FormatOpenAI]
 		if toOpenAI != nil {
@@ -159,19 +174,23 @@ func (r *Registry) TranslateResponse(targetFormat, sourceFormat string, chunk ma
 	} else {
 		results = []map[string]any{chunk}
 	}
+
 	if sourceFormat != FormatOpenAI {
 		fromOpenAI := r.responseFns[FormatOpenAI+":"+sourceFormat]
 		if fromOpenAI != nil {
 			var finalResults []map[string]any
+
 			for _, r := range results {
 				converted := fromOpenAI(r, state)
 				if converted != nil {
 					finalResults = append(finalResults, converted...)
 				}
 			}
+
 			results = finalResults
 		}
 	}
+
 	return results
 }
 
@@ -182,8 +201,6 @@ func NeedsTranslation(sourceFormat, targetFormat string) bool {
 func InitState(sourceFormat string) *concerns.ResponseState {
 	return concerns.NewResponseState()
 }
-
-var toolIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 func getCapabilitiesForModel(provider, model string) *concerns.Capabilities {
 	return concerns.GetCapabilitiesForModel(provider, model)
@@ -200,6 +217,7 @@ func filterToOpenAIFormat(body map[string]any) map[string]any {
 	}
 
 	var filteredMessages []any
+
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
 		if !ok {
@@ -247,6 +265,7 @@ func filterToOpenAIFormat(body map[string]any) map[string]any {
 		}
 
 		var newContent []any
+
 		for _, blockRaw := range contentArr {
 			block, ok := blockRaw.(map[string]any)
 			if !ok {
@@ -284,6 +303,7 @@ func filterToOpenAIFormat(body map[string]any) map[string]any {
 	}
 
 	var finalMessages []any
+
 	for _, msgRaw := range filteredMessages {
 		msg, ok := msgRaw.(map[string]any)
 		if !ok {
@@ -296,6 +316,7 @@ func filterToOpenAIFormat(body map[string]any) map[string]any {
 			finalMessages = append(finalMessages, msg)
 			continue
 		}
+
 		if role == "assistant" {
 			if _, hasTC := msg["tool_calls"]; hasTC {
 				finalMessages = append(finalMessages, msg)
@@ -316,12 +337,14 @@ func filterToOpenAIFormat(body map[string]any) map[string]any {
 		}
 
 		hasContent := false
+
 		for _, b := range contentArr {
 			block, ok := b.(map[string]any)
 			if !ok {
 				hasContent = true
 				break
 			}
+
 			btype, _ := block["type"].(string)
 			if btype == "text" {
 				if text, ok := block["text"].(string); ok && text != "" {
@@ -333,6 +356,7 @@ func filterToOpenAIFormat(body map[string]any) map[string]any {
 				break
 			}
 		}
+
 		if hasContent {
 			finalMessages = append(finalMessages, msg)
 		}
@@ -346,6 +370,7 @@ func filterToOpenAIFormat(body map[string]any) map[string]any {
 
 	if tools, ok := body["tools"].([]any); ok && len(tools) > 0 {
 		var normalizedTools []any
+
 		for _, toolRaw := range tools {
 			tool, ok := toolRaw.(map[string]any)
 			if !ok {
@@ -366,17 +391,19 @@ func filterToOpenAIFormat(body map[string]any) map[string]any {
 					normalizedTools = append(normalizedTools, map[string]any{
 						"type": "function",
 						"function": map[string]any{
-							"name":       name,
+							"name":        name,
 							"description": desc,
-							"parameters": tool["input_schema"],
+							"parameters":  tool["input_schema"],
 						},
 					})
+
 					continue
 				}
 			}
 
 			normalizedTools = append(normalizedTools, tool)
 		}
+
 		body["tools"] = normalizedTools
 	}
 
@@ -403,12 +430,15 @@ func filterToOpenAIFormat(body map[string]any) map[string]any {
 
 func stripBlock(block map[string]any) map[string]any {
 	result := make(map[string]any)
+
 	for k, v := range block {
 		if k == "signature" {
 			continue
 		}
+
 		result[k] = v
 	}
+
 	return result
 }
 
@@ -434,6 +464,7 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 		if caps := getCapabilitiesForModel(provider, model); caps != nil && caps.MaxOutput > 0 {
 			ceiling = caps.MaxOutput
 		}
+
 		mt := 0
 		switch v := body["max_tokens"].(type) {
 		case float64:
@@ -441,10 +472,12 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 		case int:
 			mt = v
 		}
+
 		if mt > ceiling {
 			mt = ceiling
 			body["max_tokens"] = mt
 		}
+
 		if thinking, ok := body["thinking"].(map[string]any); ok {
 			if ttype, _ := thinking["type"].(string); ttype == "enabled" {
 				bt := 0
@@ -454,18 +487,22 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 				case int:
 					bt = v
 				}
+
 				if bt > 0 && bt >= mt {
 					newMt := bt + 1024
 					if newMt > ceiling {
 						newMt = ceiling
 					}
+
 					body["max_tokens"] = newMt
+
 					mt = newMt
 					if bt >= mt {
 						newBt := mt - 1024
 						if newBt < 1024 {
 							newBt = 1024
 						}
+
 						thinking["budget_tokens"] = newBt
 					}
 				}
@@ -475,36 +512,46 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 
 	if system, ok := body["system"].([]any); ok {
 		var newSystem []any
+
 		for i, blockRaw := range system {
 			block, ok := blockRaw.(map[string]any)
 			if !ok {
 				newSystem = append(newSystem, blockRaw)
 				continue
 			}
+
 			stripped := make(map[string]any)
+
 			for k, v := range block {
 				if k == "cache_control" {
 					continue
 				}
+
 				stripped[k] = v
 			}
+
 			if i == len(system)-1 {
 				stripped["cache_control"] = map[string]any{"type": "ephemeral", "ttl": "1h"}
 			}
+
 			newSystem = append(newSystem, stripped)
 		}
+
 		body["system"] = newSystem
 	}
 
 	if messages, ok := body["messages"].([]any); ok {
 		lenMsgs := len(messages)
+
 		var filtered []any
+
 		for i, msgRaw := range messages {
 			msg, ok := msgRaw.(map[string]any)
 			if !ok {
 				filtered = append(filtered, msgRaw)
 				continue
 			}
+
 			if contentArr, ok := msg["content"].([]any); ok {
 				for _, blockRaw := range contentArr {
 					if block, ok := blockRaw.(map[string]any); ok {
@@ -514,6 +561,7 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 			}
 			// Keep final assistant even if empty
 			role, _ := msg["role"].(string)
+
 			isFinalAssistant := i == lenMsgs-1 && role == "assistant"
 			if isFinalAssistant || formats.HasValidContent(msg) {
 				filtered = append(filtered, msg)
@@ -524,6 +572,7 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 
 		// Thinking enabled + last message is user
 		lastMessageIsUser := false
+
 		if len(filtered) > 0 {
 			if last, ok := filtered[len(filtered)-1].(map[string]any); ok {
 				if role, _ := last["role"].(string); role == "user" {
@@ -531,7 +580,9 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 				}
 			}
 		}
+
 		thinkingEnabled := false
+
 		if t, ok := body["thinking"].(map[string]any); ok {
 			if tt, _ := t["type"].(string); tt == "enabled" && lastMessageIsUser {
 				thinkingEnabled = true
@@ -540,31 +591,37 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 
 		// Reverse pass: cache_control on last assistant + thinking block handling
 		lastAssistantProcessed := false
+
 		for i := len(filtered) - 1; i >= 0; i-- {
 			msg, ok := filtered[i].(map[string]any)
 			if !ok {
 				continue
 			}
+
 			role, _ := msg["role"].(string)
 			if role != "assistant" {
 				continue
 			}
+
 			content, ok := msg["content"].([]any)
 			if !ok {
 				continue
 			}
+
 			if !lastAssistantProcessed && len(content) > 0 {
 				for j := len(content) - 1; j >= 0; j-- {
 					block, ok := content[j].(map[string]any)
 					if !ok {
 						continue
 					}
+
 					bt, _ := block["type"].(string)
 					if bt != "thinking" && bt != "redacted_thinking" {
 						block["cache_control"] = map[string]any{"type": "ephemeral"}
 						break
 					}
 				}
+
 				lastAssistantProcessed = true
 			}
 
@@ -573,43 +630,56 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 				isDeepSeek := provider == "deepseek"
 				hasToolUse := false
 				hasKeptThinking := false
+
 				var kept []any
+
 				for _, blockRaw := range content {
 					block, ok := blockRaw.(map[string]any)
 					if !ok {
 						kept = append(kept, blockRaw)
 						continue
 					}
+
 					bt, _ := block["type"].(string)
+
 					isThinking := bt == "thinking" || bt == "redacted_thinking"
 					if isThinking {
 						if isClaudeNative {
 							sig, _ := block["signature"].(string)
 							if formats.IsValidClaudeSignature(sig) {
 								hasKeptThinking = true
+
 								kept = append(kept, block)
 							}
 						} else if isDeepSeek {
 							hasKeptThinking = true
+
 							kept = append(kept, block)
 						} else {
 							block["signature"] = formats.DefaultThinkingClaudeSignature
 							hasKeptThinking = true
+
 							kept = append(kept, block)
 						}
+
 						continue
 					}
+
 					if bt == "tool_use" {
 						hasToolUse = true
 					}
+
 					kept = append(kept, block)
 				}
+
 				msg["content"] = kept
+
 				if thinkingEnabled && !hasKeptThinking && hasToolUse {
 					placeholder := map[string]any{"type": "thinking", "thinking": "."}
 					if !isDeepSeek {
 						placeholder["signature"] = formats.DefaultThinkingClaudeSignature
 					}
+
 					msg["content"] = append([]any{placeholder}, kept...)
 				}
 			}
@@ -622,53 +692,69 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 		// Strip built-in tools for non-Anthropic; normalize function shape
 		if provider != "claude" {
 			var normalized []any
+
 			for _, toolRaw := range tools {
 				tool, ok := toolRaw.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				if t, ok := tool["type"].(string); ok && t != "" && t != "function" {
 					continue
 				}
+
 				if fn, ok := tool["function"].(map[string]any); ok {
 					normalized = append(normalized, map[string]any{
 						"name":         fn["name"],
 						"description":  fn["description"],
 						"input_schema": fn["parameters"],
 					})
+
 					continue
 				}
+
 				newTool := make(map[string]any)
+
 				for k, v := range tool {
 					if k == "type" {
 						continue
 					}
+
 					newTool[k] = v
 				}
+
 				normalized = append(normalized, newTool)
 			}
+
 			tools = normalized
 		}
 
 		var cleanedTools []any
+
 		for i, toolRaw := range tools {
 			tool, ok := toolRaw.(map[string]any)
 			if !ok {
 				cleanedTools = append(cleanedTools, toolRaw)
 				continue
 			}
+
 			newTool := make(map[string]any)
+
 			for k, v := range tool {
 				if k == "cache_control" {
 					continue
 				}
+
 				newTool[k] = v
 			}
+
 			if i == len(tools)-1 {
 				newTool["cache_control"] = map[string]any{"type": "ephemeral", "ttl": "1h"}
 			}
+
 			cleanedTools = append(cleanedTools, newTool)
 		}
+
 		if len(cleanedTools) == 0 {
 			delete(body, "tools")
 			delete(body, "tool_choice")
@@ -690,6 +776,7 @@ func isCloakToolsOnOAuth(provider string) bool {
 		"claude":     true,
 		"claudecode": true,
 	}
+
 	return cloakProviders[provider]
 }
 
@@ -726,6 +813,7 @@ func cloakClaudeTools(body map[string]any) (map[string]any, map[string]string) {
 
 	toolNameMap := make(map[string]string)
 	clientToolNames := make(map[string]bool)
+
 	var clientDeclarations []any
 
 	for _, toolRaw := range tools {
@@ -754,19 +842,20 @@ func cloakClaudeTools(body map[string]any) (map[string]any, map[string]string) {
 		for k, v := range tool {
 			newTool[k] = v
 		}
+
 		newTool["name"] = suffixed
 		clientDeclarations = append(clientDeclarations, newTool)
 	}
 
 	var allTools []any
-	for _, t := range clientDeclarations {
-		allTools = append(allTools, t)
-	}
+	allTools = append(allTools, clientDeclarations...)
+
 	for _, t := range ccDecoyTools {
 		allTools = append(allTools, t)
 	}
 
 	var renamedMessages []any
+
 	if messages, ok := body["messages"].([]any); ok {
 		for _, msgRaw := range messages {
 			msg, ok := msgRaw.(map[string]any)
@@ -782,6 +871,7 @@ func cloakClaudeTools(body map[string]any) (map[string]any, map[string]string) {
 			}
 
 			var renamedContent []any
+
 			for _, blockRaw := range contentArr {
 				block, ok := blockRaw.(map[string]any)
 				if !ok {
@@ -795,17 +885,22 @@ func cloakClaudeTools(body map[string]any) (map[string]any, map[string]string) {
 						for k, v := range block {
 							newBlock[k] = v
 						}
+
 						newBlock["name"] = name + claudeToolSuffix
 						renamedContent = append(renamedContent, newBlock)
+
 						continue
 					}
 				}
+
 				renamedContent = append(renamedContent, block)
 			}
+
 			newMsg := make(map[string]any)
 			for k, v := range msg {
 				newMsg[k] = v
 			}
+
 			newMsg["content"] = renamedContent
 			renamedMessages = append(renamedMessages, newMsg)
 		}
@@ -815,6 +910,7 @@ func cloakClaudeTools(body map[string]any) (map[string]any, map[string]string) {
 	for k, v := range body {
 		cloakedBody[k] = v
 	}
+
 	cloakedBody["tools"] = allTools
 	if renamedMessages != nil {
 		cloakedBody["messages"] = renamedMessages
@@ -827,6 +923,7 @@ func cloakClaudeTools(body map[string]any) (map[string]any, map[string]string) {
 				for k, v := range tc {
 					newTC[k] = v
 				}
+
 				newTC["name"] = name + claudeToolSuffix
 				cloakedBody["tool_choice"] = newTC
 			}
@@ -852,6 +949,7 @@ func decloakToolNames(body map[string]any, toolNameMap map[string]string) map[st
 	}
 
 	var newContent []any
+
 	for _, blockRaw := range contentArr {
 		block, ok := blockRaw.(map[string]any)
 		if !ok {
@@ -866,12 +964,15 @@ func decloakToolNames(body map[string]any, toolNameMap map[string]string) map[st
 					for k, v := range block {
 						newBlock[k] = v
 					}
+
 					newBlock["name"] = original
 					newContent = append(newContent, newBlock)
+
 					continue
 				}
 			}
 		}
+
 		newContent = append(newContent, block)
 	}
 
@@ -879,8 +980,8 @@ func decloakToolNames(body map[string]any, toolNameMap map[string]string) map[st
 	for k, v := range body {
 		result[k] = v
 	}
+
 	result["content"] = newContent
+
 	return result
 }
-
-

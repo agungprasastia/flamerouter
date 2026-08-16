@@ -19,6 +19,7 @@ func claudeToKiroRequest(model string, body map[string]any, stream bool, credent
 	tools, _ := body["tools"].([]any)
 	temp, _ := body["temperature"].(float64)
 	topP, _ := body["top_p"].(float64)
+
 	maxTokens := 32000
 	if mt, ok := body["max_tokens"].(float64); ok && mt > 0 {
 		maxTokens = int(mt)
@@ -39,12 +40,14 @@ func claudeToKiroRequest(model string, body map[string]any, stream bool, credent
 
 	authMethod := ""
 	profileArn := ""
+
 	if credentials != nil {
 		if psd, ok := credentials["providerSpecificData"].(map[string]any); ok {
 			authMethod, _ = psd["authMethod"].(string)
 			profileArn, _ = psd["profileArn"].(string)
 		}
 	}
+
 	accountBoundAuth := authMethod == "api_key" || authMethod == "idc" || authMethod == "external_idp"
 	if accountBoundAuth {
 		if profileArn == "" {
@@ -60,16 +63,20 @@ func claudeToKiroRequest(model string, body map[string]any, stream bool, credent
 	if thinkingBudget != nil {
 		systemPromptParts = append(systemPromptParts, buildThinkingSystemPrefixFromBudgetClaude(*thinkingBudget))
 	}
+
 	if agentic {
 		systemPromptParts = append(systemPromptParts, translator.KiroAgenticSystemPrompt)
 	}
+
 	systemInstruction := extractClaudeSystemText(body["system"])
 	if systemInstruction != "" {
 		systemPromptParts = append(systemPromptParts, systemInstruction)
 	}
+
 	systemPrompt := strings.Join(systemPromptParts, "\n\n")
 	currentTimeContext := "[Context: Current time is " + concerns.CurrentTimestamp() + "]"
 	contentPrefix := systemPrompt
+
 	if contentPrefix != "" {
 		contentPrefix += "\n\n" + currentTimeContext
 	} else {
@@ -78,10 +85,10 @@ func claudeToKiroRequest(model string, body map[string]any, stream bool, credent
 
 	payload := map[string]any{
 		"conversationState": map[string]any{
-			"chatTriggerType":      "MANUAL",
-			"conversationId":       uuid.New().String(),
-			"agentContinuationId":  uuid.New().String(),
-			"agentTaskType":        "vibe",
+			"chatTriggerType":     "MANUAL",
+			"conversationId":      uuid.New().String(),
+			"agentContinuationId": uuid.New().String(),
+			"agentTaskType":       "vibe",
 			"currentMessage": map[string]any{
 				"userInputMessage": map[string]any{
 					"content": contentPrefix + "\n\n" + currentMessage,
@@ -97,6 +104,7 @@ func claudeToKiroRequest(model string, body map[string]any, stream bool, credent
 	if profileArn != "" {
 		payload["profileArn"] = profileArn
 	}
+
 	if systemPrompt != "" {
 		payload["systemPrompt"] = systemPrompt
 	}
@@ -112,9 +120,11 @@ func claudeToKiroRequest(model string, body map[string]any, stream bool, credent
 	if temp != 0 {
 		inferenceConfig["temperature"] = temp
 	}
+
 	if topP != 0 {
 		inferenceConfig["topP"] = topP
 	}
+
 	payload["inferenceConfig"] = inferenceConfig
 
 	_ = clientProvidedTools
@@ -124,21 +134,25 @@ func claudeToKiroRequest(model string, body map[string]any, stream bool, credent
 
 func flattenClaudeToolInteractions(messages []any) []any {
 	var out []any
+
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 
 		if role == schema.RoleAssistant {
 			if arr, ok := msg["content"].([]any); ok {
 				var parts []string
+
 				for _, blockRaw := range arr {
 					block, ok := blockRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					btype, _ := block["type"].(string)
 					if btype == schema.ClaudeBlockText {
 						if text, ok := block["text"].(string); ok {
@@ -150,10 +164,12 @@ func flattenClaudeToolInteractions(messages []any) []any {
 						parts = append(parts, "[Tool call: "+name+"("+string(input)+")]")
 					}
 				}
+
 				out = append(out, map[string]any{
 					"role":    schema.RoleAssistant,
 					"content": strings.Join(parts, "\n"),
 				})
+
 				continue
 			}
 		}
@@ -161,11 +177,13 @@ func flattenClaudeToolInteractions(messages []any) []any {
 		if role == schema.RoleUser {
 			if arr, ok := msg["content"].([]any); ok {
 				newContent := make([]any, 0, len(arr))
+
 				for _, blockRaw := range arr {
 					block, ok := blockRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					btype, _ := block["type"].(string)
 					if btype == "tool_result" {
 						var resultText string
@@ -173,6 +191,7 @@ func flattenClaudeToolInteractions(messages []any) []any {
 							resultText = c
 						} else if cArr, ok := block["content"].([]any); ok {
 							var parts []string
+
 							for _, cBlock := range cArr {
 								if cm, ok := cBlock.(map[string]any); ok {
 									if t, ok := cm["text"].(string); ok {
@@ -180,8 +199,10 @@ func flattenClaudeToolInteractions(messages []any) []any {
 									}
 								}
 							}
+
 							resultText = strings.Join(parts, "\n")
 						}
+
 						newContent = append(newContent, map[string]any{
 							"type": schema.ClaudeBlockText,
 							"text": "[Tool result: " + resultText + "]",
@@ -190,24 +211,31 @@ func flattenClaudeToolInteractions(messages []any) []any {
 						newContent = append(newContent, block)
 					}
 				}
+
 				out = append(out, map[string]any{
 					"role":    role,
 					"content": newContent,
 				})
+
 				continue
 			}
 		}
 
 		out = append(out, msg)
 	}
+
 	return out
 }
 
 func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]any, string) {
 	var history []any
+
 	var currentMessage string
+
 	var pendingUserContent []string
+
 	var pendingAssistantContent []string
+
 	var currentRole string
 
 	flushPending := func() {
@@ -216,6 +244,7 @@ func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]a
 			if content == "" {
 				content = "continue"
 			}
+
 			history = append(history, map[string]any{
 				"userInputMessage": map[string]any{
 					"content": content,
@@ -229,6 +258,7 @@ func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]a
 			if content == "" {
 				content = "..."
 			}
+
 			history = append(history, map[string]any{
 				"assistantResponseMessage": map[string]any{
 					"content": content,
@@ -243,11 +273,13 @@ func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]a
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 
 		if role != currentRole && currentRole != "" {
 			flushPending()
 		}
+
 		currentRole = role
 
 		if role == schema.RoleUser {
@@ -261,6 +293,7 @@ func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]a
 						if !ok {
 							continue
 						}
+
 						btype, _ := block["type"].(string)
 						if btype == schema.ClaudeBlockText {
 							if text, ok := block["text"].(string); ok {
@@ -272,12 +305,14 @@ func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]a
 			}
 		} else if role == schema.RoleAssistant {
 			var textContent string
+
 			if arr, ok := msg["content"].([]any); ok {
 				for _, blockRaw := range arr {
 					block, ok := blockRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					if text, ok := block["text"].(string); ok {
 						textContent += text
 					}
@@ -285,6 +320,7 @@ func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]a
 			} else if s, ok := msg["content"].(string); ok {
 				textContent = s
 			}
+
 			if textContent != "" {
 				pendingAssistantContent = append(pendingAssistantContent, textContent)
 			}
@@ -299,7 +335,9 @@ func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]a
 		if item, ok := history[i].(map[string]any); ok {
 			if _, ok := item["userInputMessage"]; ok {
 				currentMessage = extractKiroUserContentFromItem(item)
+
 				history = append(history[:i], history[i+1:]...)
+
 				break
 			}
 		}
@@ -310,17 +348,20 @@ func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]a
 		if len(mergedHistory) > 0 {
 			prev, ok := mergedHistory[len(mergedHistory)-1].(map[string]any)
 			curr, ok2 := item.(map[string]any)
+
 			if ok && ok2 {
 				if _, prevIsUser := prev["userInputMessage"]; prevIsUser {
 					if _, currIsUser := curr["userInputMessage"]; currIsUser {
 						prevMsg := prev["userInputMessage"].(map[string]any)
 						currMsg := curr["userInputMessage"].(map[string]any)
 						prevMsg["content"] = prevMsg["content"].(string) + "\n\n" + currMsg["content"].(string)
+
 						continue
 					}
 				}
 			}
 		}
+
 		mergedHistory = append(mergedHistory, item)
 	}
 
@@ -331,11 +372,14 @@ func extractClaudeSystemText(system any) string {
 	if system == nil {
 		return ""
 	}
+
 	if s, ok := system.(string); ok {
 		return s
 	}
+
 	if arr, ok := system.([]any); ok {
 		var parts []string
+
 		for _, s := range arr {
 			switch v := s.(type) {
 			case string:
@@ -346,8 +390,10 @@ func extractClaudeSystemText(system any) string {
 				}
 			}
 		}
+
 		return strings.Join(parts, "\n")
 	}
+
 	return ""
 }
 
@@ -356,7 +402,9 @@ func extractKiroUserContentFromItem(item map[string]any) string {
 	if !ok {
 		return ""
 	}
+
 	content, _ := uim["content"].(string)
+
 	return content
 }
 
@@ -364,8 +412,10 @@ func buildThinkingSystemPrefixFromBudgetClaude(budget int) string {
 	if budget < 1 {
 		budget = 1
 	}
+
 	if budget > 32000 {
 		budget = 32000
 	}
+
 	return "<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>" + concerns.MustMarshal(budget) + "</max_thinking_length>"
 }

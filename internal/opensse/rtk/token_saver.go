@@ -4,33 +4,33 @@ import "strings"
 
 // TokenSaverOptions controls all token-saver hooks (matches chatCore flags).
 type TokenSaverOptions struct {
-	Enabled                     bool // master; false if header x-*-token-saver: off
-	RTK                         bool
-	Headroom                    bool
-	HeadroomURL                 string
+	CavemanLevel                 string
+	HeadroomURL                  string
+	PonytailLevel                string
+	Model                        string
+	Format                       string
+	PxpipeMinChars               int
+	RTK                          bool
+	Headroom                     bool
 	HeadroomCompressUserMessages bool
-	Caveman                     bool
-	CavemanLevel                string
-	Ponytail                    bool
-	PonytailLevel               string
-	Pxpipe                      bool
-	PxpipeMinChars              int
-	Model                       string
-	Format                      string // final target format
+	Caveman                      bool
+	Enabled                      bool
+	Ponytail                     bool
+	Pxpipe                       bool
 }
 
 // DefaultTokenSaver returns defaults matching 9router settingsRepo.
 func DefaultTokenSaver() TokenSaverOptions {
 	return TokenSaverOptions{
-		Enabled:      true,
-		RTK:          true,
-		Headroom:     false,
-		HeadroomURL:  "http://localhost:8787",
-		Caveman:      false,
-		CavemanLevel: CavemanFull,
-		Ponytail:     false,
-		PonytailLevel: PonytailFull,
-		Pxpipe:       false,
+		Enabled:        true,
+		RTK:            true,
+		Headroom:       false,
+		HeadroomURL:    "http://localhost:8787",
+		Caveman:        false,
+		CavemanLevel:   CavemanFull,
+		Ponytail:       false,
+		PonytailLevel:  PonytailFull,
+		Pxpipe:         false,
 		PxpipeMinChars: 25000,
 	}
 }
@@ -41,6 +41,7 @@ func ApplyTokenSavers(body map[string]any, opts TokenSaverOptions) map[string]an
 	if body == nil || !opts.Enabled {
 		return body
 	}
+
 	defer func() { recover() }()
 
 	// 1. RTK tool_result compression
@@ -59,6 +60,7 @@ func ApplyTokenSavers(body map[string]any, opts TokenSaverOptions) map[string]an
 		if level == "" {
 			level = CavemanFull
 		}
+
 		InjectCaveman(body, opts.Format, level)
 	}
 
@@ -68,6 +70,7 @@ func ApplyTokenSavers(body map[string]any, opts TokenSaverOptions) map[string]an
 		if level == "" {
 			level = PonytailFull
 		}
+
 		InjectPonytail(body, opts.Format, level)
 	}
 
@@ -77,6 +80,7 @@ func ApplyTokenSavers(body map[string]any, opts TokenSaverOptions) map[string]an
 			return newBody
 		}
 	}
+
 	return body
 }
 

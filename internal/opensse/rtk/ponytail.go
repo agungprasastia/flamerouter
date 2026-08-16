@@ -29,9 +29,11 @@ func InjectPonytail(body map[string]any, format, level string) {
 	if level == "" {
 		level = PonytailFull
 	}
+
 	prompt, ok := PonytailPrompts[level]
 	if !ok {
 		return
 	}
+
 	InjectSystemPrompt(body, format, prompt)
 }

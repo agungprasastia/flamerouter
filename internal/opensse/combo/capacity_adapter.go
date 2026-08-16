@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
 	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
 )
@@ -14,9 +13,9 @@ const DefaultFallbackModel = "oc/mimo-v2.5-free"
 
 // ModalityPoolConfig defines configuration for a single capability pool.
 type ModalityPoolConfig struct {
+	Models     []string `json:"models"`
 	Enabled    bool     `json:"enabled"`
 	RoundRobin bool     `json:"roundRobin"`
-	Models     []string `json:"models"`
 }
 
 // CapacityAdapterConfig defines full configuration for all capability pools.
@@ -44,9 +43,11 @@ func NormalizePoolConfig(raw any) ModalityPoolConfig {
 	if raw == nil {
 		return ModalityPoolConfig{}
 	}
+
 	switch v := raw.(type) {
 	case []any:
 		var models []string
+
 		for _, item := range v {
 			if s, ok := item.(string); ok && s != "" {
 				models = append(models, s)
@@ -56,6 +57,7 @@ func NormalizePoolConfig(raw any) ModalityPoolConfig {
 				}
 			}
 		}
+
 		return ModalityPoolConfig{Enabled: true, RoundRobin: false, Models: models}
 	case []string:
 		return ModalityPoolConfig{Enabled: true, RoundRobin: false, Models: v}
@@ -64,9 +66,11 @@ func NormalizePoolConfig(raw any) ModalityPoolConfig {
 		if en, ok := v["enabled"].(bool); ok {
 			cfg.Enabled = en
 		}
+
 		if rr, ok := v["roundRobin"].(bool); ok {
 			cfg.RoundRobin = rr
 		}
+
 		if arr, ok := v["models"].([]any); ok {
 			for _, item := range arr {
 				if s, ok := item.(string); ok && s != "" {
@@ -76,6 +80,7 @@ func NormalizePoolConfig(raw any) ModalityPoolConfig {
 		} else if arr, ok := v["models"].([]string); ok {
 			cfg.Models = arr
 		}
+
 		return cfg
 	case ModalityPoolConfig:
 		return v
@@ -90,26 +95,33 @@ func LoadCapacityAdapterConfig(st *store.Store) CapacityAdapterConfig {
 	if st == nil {
 		return cfg
 	}
+
 	raw, err := st.GetSetting("capacityAdapter")
 	if err != nil || raw == "" {
 		return cfg
 	}
+
 	var m map[string]any
 	if json.Unmarshal([]byte(raw), &m) != nil {
 		return cfg
 	}
+
 	if v, ok := m["vision"]; ok {
 		cfg.Vision = NormalizePoolConfig(v)
 	}
+
 	if v, ok := m["pdf"]; ok {
 		cfg.PDF = NormalizePoolConfig(v)
 	}
+
 	if v, ok := m["audioInput"]; ok {
 		cfg.AudioInput = NormalizePoolConfig(v)
 	}
+
 	if v, ok := m["videoInput"]; ok {
 		cfg.VideoInput = NormalizePoolConfig(v)
 	}
+
 	return cfg
 }
 
@@ -120,6 +132,7 @@ func GetPoolConfig(capName string, cfg CapacityAdapterConfig) ModalityPoolConfig
 	if pool.Enabled && len(pool.Models) == 0 {
 		pool.Models = []string{DefaultFallbackModel}
 	}
+
 	return pool
 }
 
@@ -141,19 +154,24 @@ func poolByCapName(capName string, cfg CapacityAdapterConfig) ModalityPoolConfig
 // GetCapacityAdapterModels flattens enabled models across all capability pools in priority order, deduped.
 func GetCapacityAdapterModels(cfg CapacityAdapterConfig) []string {
 	seen := make(map[string]bool)
+
 	var models []string
+
 	for _, capName := range capabilityKeys {
 		pool := GetPoolConfig(capName, cfg)
 		if !pool.Enabled {
 			continue
 		}
+
 		for _, m := range pool.Models {
 			if m != "" && !seen[m] {
 				seen[m] = true
+
 				models = append(models, m)
 			}
 		}
 	}
+
 	return models
 }
 
@@ -163,6 +181,7 @@ func GetCapacityAdapterStrategy(capName string, cfg CapacityAdapterConfig) strin
 	if pool.Enabled && pool.RoundRobin {
 		return "round-robin"
 	}
+
 	return "fallback"
 }
 
@@ -172,12 +191,15 @@ func GetActiveAdapterStrategy(requiredCaps map[string]bool, cfg CapacityAdapterC
 		if !requiredCaps[capName] || !hardCaps[capName] {
 			continue
 		}
+
 		pool := GetPoolConfig(capName, cfg)
 		if !pool.Enabled || len(pool.Models) == 0 {
 			continue
 		}
+
 		return GetCapacityAdapterStrategy(capName, cfg)
 	}
+
 	return "fallback"
 }
 
@@ -185,6 +207,7 @@ func GetActiveAdapterStrategy(requiredCaps map[string]bool, cfg CapacityAdapterC
 func ModelSatisfiesCapabilities(modelStr string, requiredHard []string) bool {
 	_, modelName := splitProviderModel(modelStr)
 	caps := provider.GetCapabilities(modelName)
+
 	has := func(name string) bool {
 		switch name {
 		case "vision":
@@ -206,20 +229,24 @@ func ModelSatisfiesCapabilities(modelStr string, requiredHard []string) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
 // AugmentModelsWithCapacityAdapter prepends capacity-adapter models when none of the original models satisfy requirements.
 func AugmentModelsWithCapacityAdapter(models []string, requiredCaps map[string]bool, cfg CapacityAdapterConfig) []string {
 	var hard []string
+
 	for _, k := range capabilityKeys {
 		if requiredCaps[k] && hardCaps[k] {
 			hard = append(hard, k)
 		}
 	}
+
 	if len(hard) == 0 || len(models) == 0 {
 		return models
 	}
+
 	for _, m := range models {
 		if ModelSatisfiesCapabilities(m, hard) {
 			return models
@@ -232,14 +259,17 @@ func AugmentModelsWithCapacityAdapter(models []string, requiredCaps map[string]b
 	}
 
 	var pool []string
+
 	for _, m := range GetCapacityAdapterModels(cfg) {
 		if !origSet[m] && ModelSatisfiesCapabilities(m, hard) {
 			pool = append(pool, m)
 		}
 	}
+
 	if len(pool) == 0 {
 		return models
 	}
+
 	return append(pool, models...)
 }
 
@@ -249,34 +279,40 @@ func AdaptModelForCapabilities(ctx context.Context, requestedModel string, requi
 	if ctx != nil && ctx.Err() != nil {
 		return "", ctx.Err()
 	}
+
 	reqMap := make(map[string]bool, len(requiredCapabilities))
+
 	var hard []string
+
 	for _, c := range requiredCapabilities {
 		reqMap[c] = true
+
 		if hardCaps[c] {
 			hard = append(hard, c)
 		}
 	}
+
 	if len(hard) == 0 || requestedModel == "" || ModelSatisfiesCapabilities(requestedModel, hard) {
 		return requestedModel, nil
 	}
 
 	augmented := AugmentModelsWithCapacityAdapter([]string{requestedModel}, reqMap, config)
 	if len(augmented) > 0 && augmented[0] != requestedModel {
-		strat := GetActiveAdapterStrategy(reqMap, config)
-		if strat == "round-robin" {
+		start := GetActiveAdapterStrategy(reqMap, config)
+		if start == "round-robin" {
 			// ponytail: single sticky rotation for adapter pool when round-robin enabled
 			rotated := GetRotatedModels(augmented[:len(augmented)-1], "capacity_adapter", "round-robin", 1)
 			if len(rotated) > 0 {
 				return rotated[0], nil
 			}
 		}
+
 		return augmented[0], nil
 	}
 
 	if len(augmented) > 0 && augmented[0] != "" {
 		return augmented[0], nil
 	}
+
 	return requestedModel, errors.New("no capable model found")
 }
-

@@ -5,19 +5,20 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"flamerouter/internal/opensse/executor"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"flamerouter/internal/opensse/executor"
 )
 
 func buildMockWindsurfContentFrame(text string) []byte {
 	// ContentChunk: Field 1 = nested { Field 1 = text }
 	var inner bytes.Buffer
+
 	tag1 := uint64((1 << 3) | 2)
+
 	var tag1Buf [10]byte
 	n1 := binary.PutUvarint(tag1Buf[:], tag1)
 	inner.Write(tag1Buf[:n1])
@@ -28,7 +29,9 @@ func buildMockWindsurfContentFrame(text string) []byte {
 	inner.WriteString(text)
 
 	var outer bytes.Buffer
+
 	tagOuter := uint64((1 << 3) | 2)
+
 	var tagOBuf [10]byte
 	no := binary.PutUvarint(tagOBuf[:], tagOuter)
 	outer.Write(tagOBuf[:no])
@@ -44,28 +47,36 @@ func buildMockWindsurfContentFrame(text string) []byte {
 func buildMockWindsurfDoneFrame(promptTokens, completionTokens int) []byte {
 	// UsageStats: Field 1 = pt (varint), Field 2 = ct (varint)
 	var usageBuf bytes.Buffer
-	tag1 := uint64((1 << 3) | 0)
+
+	tag1 := uint64(1 << 3)
+
 	var t1 [10]byte
 	n1 := binary.PutUvarint(t1[:], tag1)
 	usageBuf.Write(t1[:n1])
+
 	var v1 [10]byte
 	vn1 := binary.PutUvarint(v1[:], uint64(promptTokens))
 	usageBuf.Write(v1[:vn1])
 
-	tag2 := uint64((2 << 3) | 0)
+	tag2 := uint64(2 << 3)
+
 	var t2 [10]byte
 	n2 := binary.PutUvarint(t2[:], tag2)
 	usageBuf.Write(t2[:n2])
+
 	var v2 [10]byte
 	vn2 := binary.PutUvarint(v2[:], uint64(completionTokens))
 	usageBuf.Write(v2[:vn2])
 
 	// DoneChunk: Field 1 = UsageStats
 	var doneInner bytes.Buffer
+
 	tagDone1 := uint64((1 << 3) | 2)
+
 	var td1 [10]byte
 	nd1 := binary.PutUvarint(td1[:], tagDone1)
 	doneInner.Write(td1[:nd1])
+
 	var ld1 [10]byte
 	lnd1 := binary.PutUvarint(ld1[:], uint64(usageBuf.Len()))
 	doneInner.Write(ld1[:lnd1])
@@ -73,7 +84,9 @@ func buildMockWindsurfDoneFrame(promptTokens, completionTokens int) []byte {
 
 	// Top CompletionChunk: Field 3 = DoneChunk
 	var outer bytes.Buffer
+
 	tagOuter := uint64((3 << 3) | 2)
+
 	var tagOBuf [10]byte
 	no := binary.PutUvarint(tagOBuf[:], tagOuter)
 	outer.Write(tagOBuf[:no])
@@ -88,6 +101,7 @@ func buildMockWindsurfDoneFrame(promptTokens, completionTokens int) []byte {
 
 func TestWindsurfExecutor_ExecutionAndStreaming(t *testing.T) {
 	var gotAuth string
+
 	var gotContentType string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -121,18 +135,22 @@ func TestWindsurfExecutor_ExecutionAndStreaming(t *testing.T) {
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
 	}
+
 	if gotAuth != "Bearer sk-ws-token-12345" {
 		t.Errorf("got auth %q", gotAuth)
 	}
+
 	if gotContentType != "application/grpc-web+proto" {
 		t.Errorf("got content-type %q", gotContentType)
 	}
 
 	outBytes, _ := io.ReadAll(res.Body)
+
 	outStr := string(outBytes)
 	if !strings.Contains(outStr, "Hello from Windsurf") {
 		t.Errorf("stream missing content: %s", outStr)
 	}
+
 	if !strings.Contains(outStr, "[DONE]") {
 		t.Errorf("stream missing [DONE]: %s", outStr)
 	}
@@ -164,11 +182,14 @@ func TestWindsurfExecutor_NonStreaming(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {
 		t.Fatal(err)
 	}
+
 	choices, _ := respObj["choices"].([]any)
 	if len(choices) == 0 {
 		t.Fatal("empty choices")
 	}
+
 	first, _ := choices[0].(map[string]any)
+
 	msg, _ := first["message"].(map[string]any)
 	if msg["content"] != "Unary code result" {
 		t.Errorf("content = %v, want Unary code result", msg["content"])

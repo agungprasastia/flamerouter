@@ -20,14 +20,17 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 	if chunk == nil {
 		return nil
 	}
+
 	choices, ok := chunk["choices"].([]any)
 	if !ok || len(choices) == 0 {
 		return nil
 	}
+
 	choice, _ := choices[0].(map[string]any)
 	if choice == nil {
 		return nil
 	}
+
 	delta, _ := choice["delta"].(map[string]any)
 	if delta == nil {
 		return nil
@@ -40,15 +43,17 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 		outputTokens := getInt(chunkUsage, "completion_tokens")
 		cacheRead := 0
 		cacheCreate := 0
+
 		if details, ok := chunkUsage["prompt_tokens_details"].(map[string]any); ok {
 			cacheRead = getInt(details, "cached_tokens")
 			cacheCreate = getInt(details, "cache_creation_tokens")
 		}
+
 		inputTokens := promptTokens - cacheRead - cacheCreate
 		state.Usage = &concerns.UsageInfo{
-			InputTokens:             inputTokens,
-			OutputTokens:            outputTokens,
-			CacheReadInputTokens:    cacheRead,
+			InputTokens:              inputTokens,
+			OutputTokens:             outputTokens,
+			CacheReadInputTokens:     cacheRead,
 			CacheCreationInputTokens: cacheCreate,
 		}
 	}
@@ -57,6 +62,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 		state.MessageStartSent = true
 		state.MessageID, _ = chunk["id"].(string)
 		state.MessageID = strings.TrimPrefix(state.MessageID, "chatcmpl-")
+
 		if state.MessageID == "" || state.MessageID == "chat" || len(state.MessageID) < 8 {
 			if ext, ok := chunk["extend_fields"].(map[string]any); ok {
 				if rid, ok := ext["requestId"].(string); ok && rid != "" {
@@ -64,13 +70,16 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 				}
 			}
 		}
+
 		if state.MessageID == "" {
 			state.MessageID = "msg_" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 		}
+
 		state.Model, _ = chunk["model"].(string)
 		if state.Model == "" {
 			state.Model = schema.ModelFallback
 		}
+
 		state.NextBlockIndex = 0
 		results = append(results, map[string]any{
 			"type": "message_start",
@@ -148,6 +157,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 				},
 			})
 		}
+
 		results = append(results, map[string]any{
 			"type":  "content_block_delta",
 			"index": state.TextBlockIndex,
@@ -164,10 +174,12 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 			if tc == nil {
 				continue
 			}
+
 			idx := 0
 			if v, ok := tc["index"].(float64); ok {
 				idx = int(v)
 			}
+
 			if id, ok := tc["id"].(string); ok && id != "" {
 				if _, exists := state.ToolCalls[idx]; !exists {
 					if state.ThinkingBlockStarted {
@@ -177,6 +189,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 						})
 						state.ThinkingBlockStarted = false
 					}
+
 					if state.TextBlockStarted && !state.TextBlockClosed {
 						results = append(results, map[string]any{
 							"type":  "content_block_stop",
@@ -188,22 +201,25 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 
 					fn, _ := tc["function"].(map[string]any)
 					name := ""
+
 					if fn != nil {
 						name, _ = fn["name"].(string)
 					}
+
 					state.ToolCalls[idx] = &concerns.ToolCallInfo{
 						ID:         id,
 						Name:       name,
 						BlockIndex: state.NextBlockIndex,
 					}
 					state.NextBlockIndex++
+
 					toolName := name
 					if mapped, ok := state.ToolNameMap[name]; ok {
 						toolName = mapped
 					}
-					if strings.HasPrefix(toolName, ClaudeOAuthToolPrefix) {
-						toolName = strings.TrimPrefix(toolName, ClaudeOAuthToolPrefix)
-					}
+
+					toolName = strings.TrimPrefix(toolName, ClaudeOAuthToolPrefix)
+
 					results = append(results, map[string]any{
 						"type":  "content_block_start",
 						"index": state.ToolCalls[idx].BlockIndex,
@@ -216,6 +232,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 					})
 				}
 			}
+
 			if fn, ok := tc["function"].(map[string]any); ok {
 				if args, ok := fn["arguments"].(string); ok && args != "" {
 					if _, ok := state.ToolCalls[idx]; ok {
@@ -234,6 +251,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 			})
 			state.ThinkingBlockStarted = false
 		}
+
 		if state.TextBlockStarted && !state.TextBlockClosed {
 			results = append(results, map[string]any{
 				"type":  "content_block_stop",
@@ -242,6 +260,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 			state.TextBlockStarted = false
 			state.TextBlockClosed = true
 		}
+
 		for _, toolInfo := range state.ToolCalls {
 			buffered := state.ToolArgBuffers[toolInfo.BlockIndex]
 			if buffered != "" {
@@ -255,6 +274,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 					},
 				})
 			}
+
 			results = append(results, map[string]any{
 				"type":  "content_block_stop",
 				"index": toolInfo.BlockIndex,
@@ -268,6 +288,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 		if finalUsage == nil {
 			finalUsage = &concerns.UsageInfo{}
 		}
+
 		usageMap := map[string]any{
 			"input_tokens":  finalUsage.InputTokens,
 			"output_tokens": finalUsage.OutputTokens,
@@ -275,6 +296,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 		if finalUsage.CacheReadInputTokens > 0 {
 			usageMap["cache_read_input_tokens"] = finalUsage.CacheReadInputTokens
 		}
+
 		if finalUsage.CacheCreationInputTokens > 0 {
 			usageMap["cache_creation_input_tokens"] = finalUsage.CacheCreationInputTokens
 		}
@@ -294,6 +316,7 @@ func openaiToClaudeResponse(chunk map[string]any, state *concerns.ResponseState)
 	if len(results) == 0 {
 		return nil
 	}
+
 	return results
 }
 
@@ -312,6 +335,7 @@ func sanitizeToolArgs(toolName, argsJson string) string {
 	if err != nil {
 		return argsJson
 	}
+
 	return string(result)
 }
 
@@ -326,6 +350,7 @@ func sanitizeReadArgs(args map[string]any) {
 			if v > 2000 {
 				args["limit"] = float64(2000)
 			}
+
 			if v < 1 {
 				delete(args, "limit")
 			}
@@ -357,42 +382,23 @@ func isValidPdfPagesArg(filePath string, pages any) bool {
 	if filePath == "" || len(filePath) < 4 {
 		return false
 	}
+
 	if strings.ToLower(filePath[len(filePath)-4:]) != ".pdf" {
 		return false
 	}
+
 	pagesStr, ok := pages.(string)
 	if !ok {
 		return false
 	}
+
 	for _, c := range pagesStr {
 		if (c < '0' || c > '9') && c != '-' {
 			return false
 		}
 	}
+
 	return true
-}
-
-func stopThinkingBlock(state *concerns.ResponseState, results *[]map[string]any) {
-	if !state.ThinkingBlockStarted {
-		return
-	}
-	*results = append(*results, map[string]any{
-		"type":  "content_block_stop",
-		"index": state.ThinkingBlockIndex,
-	})
-	state.ThinkingBlockStarted = false
-}
-
-func stopTextBlock(state *concerns.ResponseState, results *[]map[string]any) {
-	if !state.TextBlockStarted || state.TextBlockClosed {
-		return
-	}
-	state.TextBlockClosed = true
-	*results = append(*results, map[string]any{
-		"type":  "content_block_stop",
-		"index": state.TextBlockIndex,
-	})
-	state.TextBlockStarted = false
 }
 
 func convertOpenAIToClaudeFinish(reason string) string {
@@ -414,10 +420,12 @@ func getInt(m map[string]any, key string) int {
 	if m == nil {
 		return 0
 	}
+
 	v, ok := m[key]
 	if !ok {
 		return 0
 	}
+
 	switch n := v.(type) {
 	case float64:
 		return int(n)

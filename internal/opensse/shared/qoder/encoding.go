@@ -15,9 +15,11 @@ func init() {
 	for i := range qoderS2C {
 		qoderS2C[i] = byte(i)
 	}
+
 	for i := 0; i < len(qoderStdAlphabet) && i < len(qoderCustomAlphabet); i++ {
 		qoderS2C[qoderStdAlphabet[i]] = qoderCustomAlphabet[i]
 	}
+
 	qoderS2C['='] = '$'
 }
 
@@ -27,6 +29,7 @@ func init() {
 // 3. Map characters via custom alphabet table (replacing '=' with '$').
 func QoderEncodeBody(rawBody []byte) string {
 	std := base64.StdEncoding.EncodeToString(rawBody)
+
 	n := len(std)
 	if n == 0 {
 		return ""
@@ -40,6 +43,7 @@ func QoderEncodeBody(rawBody []byte) string {
 	copy(rearranged[tailLen+midLen:], std[:a])
 
 	out := make([]byte, n)
+
 	for i := 0; i < n; i++ {
 		c := rearranged[i]
 		if c < 128 {

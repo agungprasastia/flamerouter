@@ -4,26 +4,25 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"flamerouter/internal/store"
 	"fmt"
 	"sync"
 	"time"
-
-	"flamerouter/internal/store"
 )
 
 // DynamicModel represents a discovered model from a provider.
 type DynamicModel struct {
-	ID              string         `json:"id"`
-	Name            string         `json:"name"`
-	ContextLength   int            `json:"contextLength,omitempty"`
-	MaxOutputTokens int            `json:"maxOutputTokens,omitempty"`
-	IsReasoning     bool           `json:"isReasoning,omitempty"`
-	IsVL            bool           `json:"isVL,omitempty"`
-	RateMultiplier  float64        `json:"rateMultiplier,omitempty"`
-	UpstreamModelID string         `json:"upstreamModelId,omitempty"`
-	Description     string         `json:"description,omitempty"`
 	Capabilities    map[string]any `json:"capabilities,omitempty"`
 	RawConfig       map[string]any `json:"rawConfig,omitempty"`
+	ID              string         `json:"id"`
+	Name            string         `json:"name"`
+	UpstreamModelID string         `json:"upstreamModelId,omitempty"`
+	Description     string         `json:"description,omitempty"`
+	ContextLength   int            `json:"contextLength,omitempty"`
+	MaxOutputTokens int            `json:"maxOutputTokens,omitempty"`
+	RateMultiplier  float64        `json:"rateMultiplier,omitempty"`
+	IsReasoning     bool           `json:"isReasoning,omitempty"`
+	IsVL            bool           `json:"isVL,omitempty"`
 }
 
 // ProviderResolver resolves live dynamic models for a connection.
@@ -39,10 +38,10 @@ type cacheEntry struct {
 
 // Engine coordinates dynamic model resolution across providers with in-memory TTL caching.
 type Engine struct {
-	mu        sync.RWMutex
 	resolvers map[string]ProviderResolver
 	cache     map[string]cacheEntry
 	inflight  map[string]chan struct{}
+	mu        sync.RWMutex
 }
 
 // DefaultEngine is the global default dynamic models resolver engine.
@@ -56,6 +55,7 @@ func NewEngine() *Engine {
 		inflight:  make(map[string]chan struct{}),
 	}
 	e.RegisterDefaultResolvers()
+
 	return e
 }
 
@@ -78,6 +78,7 @@ func (e *Engine) InvalidateCache(conn *store.Connection) {
 	if conn == nil {
 		return
 	}
+
 	key := e.cacheKey(conn)
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -89,9 +90,11 @@ func (e *Engine) cacheKey(conn *store.Connection) string {
 	if seed == "" {
 		seed = conn.APIKey
 	}
+
 	if seed == "" {
 		seed = conn.RefreshToken
 	}
+
 	if seed == "" && conn.ProviderSpecificData != nil {
 		for _, k := range []string{"clientId", "profileArn", "userId", "username", "copilotToken"} {
 			if v, ok := conn.ProviderSpecificData[k].(string); ok && v != "" {
@@ -100,10 +103,13 @@ func (e *Engine) cacheKey(conn *store.Connection) string {
 			}
 		}
 	}
+
 	if seed == "" {
 		seed = conn.ID
 	}
+
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s", conn.Provider, conn.BaseURL, seed)))
+
 	return hex.EncodeToString(sum[:])
 }
 
@@ -113,9 +119,11 @@ func (e *Engine) ResolveModels(ctx context.Context, conn *store.Connection) ([]D
 	if conn == nil {
 		return nil, nil
 	}
+
 	e.mu.RLock()
 	resolver, ok := e.resolvers[conn.Provider]
 	e.mu.RUnlock()
+
 	if !ok || resolver == nil {
 		return nil, nil
 	}
@@ -137,6 +145,7 @@ func (e *Engine) ResolveModels(ctx context.Context, conn *store.Connection) ([]D
 		e.mu.Unlock()
 		return entry.models, nil
 	}
+
 	waitChan, inProgress := e.inflight[key]
 	if inProgress {
 		e.mu.Unlock()
@@ -145,6 +154,7 @@ func (e *Engine) ResolveModels(ctx context.Context, conn *store.Connection) ([]D
 			e.mu.RLock()
 			entry = e.cache[key]
 			e.mu.RUnlock()
+
 			return entry.models, nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -166,6 +176,7 @@ func (e *Engine) ResolveModels(ctx context.Context, conn *store.Connection) ([]D
 	if err != nil {
 		return nil, err
 	}
+
 	if len(models) == 0 {
 		return nil, nil
 	}

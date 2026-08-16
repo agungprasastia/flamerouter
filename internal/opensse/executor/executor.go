@@ -7,18 +7,18 @@ import (
 )
 
 type Credentials struct {
+	ProviderSpecificData map[string]any
 	APIKey               string
 	AccessToken          string
 	RefreshToken         string
 	BaseURL              string
 	ProjectID            string
-	ProviderSpecificData map[string]any
 }
 
 type Result struct {
-	StatusCode int
-	Header     http.Header
 	Body       io.ReadCloser
+	Header     http.Header
+	StatusCode int
 }
 
 type Executor interface {

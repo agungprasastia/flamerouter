@@ -1,8 +1,8 @@
 package store
 
 type UsageDaily struct {
-	Date, Provider, Model        string
-	Requests                     int
+	Date, Provider, Model          string
+	Requests                       int
 	PromptTokens, CompletionTokens int
 }
 
@@ -16,6 +16,7 @@ func (s *Store) InsertUsageDaily(date, provider, model string, requests, prompt,
 		   completion_tokens = completion_tokens + excluded.completion_tokens`,
 		date, provider, model, requests, prompt, completion,
 	)
+
 	return err
 }
 
@@ -28,15 +29,20 @@ func (s *Store) QueryUsageDaily(from, to string) ([]UsageDaily, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	var out []UsageDaily
+
 	for rows.Next() {
 		var u UsageDaily
 		if err := rows.Scan(&u.Date, &u.Provider, &u.Model, &u.Requests, &u.PromptTokens, &u.CompletionTokens); err != nil {
 			return nil, err
 		}
+
 		out = append(out, u)
 	}
+
 	return out, rows.Err()
 }
 
@@ -51,14 +57,19 @@ func (s *Store) QueryUsageChart(from, to string) ([]UsageDaily, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	var out []UsageDaily
+
 	for rows.Next() {
 		var u UsageDaily
 		if err := rows.Scan(&u.Date, &u.Provider, &u.Model, &u.Requests, &u.PromptTokens, &u.CompletionTokens); err != nil {
 			return nil, err
 		}
+
 		out = append(out, u)
 	}
+
 	return out, rows.Err()
 }

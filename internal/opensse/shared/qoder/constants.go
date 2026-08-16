@@ -2,28 +2,28 @@ package qoder
 
 // Qoder API base URLs and endpoints ported from 9router/open-sse.
 const (
-	QODER_OPENAPI_BASE   = "https://openapi.qoder.sh"
-	QODER_CENTER_BASE    = "https://center.qoder.sh"
-	QODER_CHAT_BASE      = "https://api3.qoder.sh"
-	QODER_CHAT_BASE_ALT  = "https://api2.qoder.sh"
-	QODER_LOGIN_URL      = "https://qoder.com/device/selectAccounts"
+	QODER_OPENAPI_BASE  = "https://openapi.qoder.sh"
+	QODER_CENTER_BASE   = "https://center.qoder.sh"
+	QODER_CHAT_BASE     = "https://api3.qoder.sh"
+	QODER_CHAT_BASE_ALT = "https://api2.qoder.sh"
+	QODER_LOGIN_URL     = "https://qoder.com/device/selectAccounts"
 
-	// Device flow endpoints
+	// Device flow endpoints.
 	QODER_DEVICE_TOKEN_URL  = QODER_OPENAPI_BASE + "/api/v1/deviceToken/poll"
 	QODER_USERINFO_URL      = QODER_OPENAPI_BASE + "/api/v1/userinfo"
 	QODER_QUOTA_USAGE_URL   = QODER_OPENAPI_BASE + "/api/v2/quota/usage"
 	QODER_REFRESH_TOKEN_URL = QODER_CENTER_BASE + "/algo/api/v3/user/refresh_token"
 
-	// PAT token exchange endpoint
+	// PAT token exchange endpoint.
 	QODER_JOB_TOKEN_EXCHANGE_URL = QODER_OPENAPI_BASE + "/api/v1/jobToken/exchange"
 
-	// Inference endpoints (under /algo on api3.qoder.sh, all COSY-signed)
-	QODER_CHAT_SIG_PATH     = "/api/v2/service/pro/sse/agent_chat_generation"
-	QODER_CHAT_URL          = QODER_CHAT_BASE + "/algo" + QODER_CHAT_SIG_PATH + "?FetchKeys=llm_model_result&AgentId=agent_common"
-	QODER_CHAT_URL_ENCODED  = QODER_CHAT_URL + "&Encode=1"
-	QODER_MODEL_LIST_URL    = QODER_CHAT_BASE + "/algo/api/v2/model/list"
+	// Inference endpoints (under /algo on api3.qoder.sh, all COSY-signed).
+	QODER_CHAT_SIG_PATH    = "/api/v2/service/pro/sse/agent_chat_generation"
+	QODER_CHAT_URL         = QODER_CHAT_BASE + "/algo" + QODER_CHAT_SIG_PATH + "?FetchKeys=llm_model_result&AgentId=agent_common"
+	QODER_CHAT_URL_ENCODED = QODER_CHAT_URL + "&Encode=1"
+	QODER_MODEL_LIST_URL   = QODER_CHAT_BASE + "/algo/api/v2/model/list"
 
-	// COSY header constants
+	// COSY header constants.
 	QODER_IDE_VERSION   = "1.0.0"
 	QODER_CLIENT_TYPE   = "5"
 	QODER_DATA_POLICY   = "disagree"

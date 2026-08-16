@@ -5,6 +5,7 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 	if body == nil {
 		return nil
 	}
+
 	key := ""
 	if _, ok := body["messages"].([]any); ok {
 		key = "messages"
@@ -13,9 +14,11 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 	} else if _, ok := body["contents"].([]any); ok {
 		key = "contents"
 	}
+
 	if key == "" {
 		return body
 	}
+
 	arr, _ := body[key].([]any)
 	if len(arr) == 0 {
 		return body
@@ -25,12 +28,15 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 	isAssistant := func(r string) bool { return r == "assistant" || r == "model" }
 
 	var systemMsgs []any
+
 	var rest []any
+
 	for _, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		role, _ := m["role"].(string)
 		if isSystem(role) {
 			systemMsgs = append(systemMsgs, item)
@@ -38,6 +44,7 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 			rest = append(rest, item)
 		}
 	}
+
 	if len(rest) == 0 {
 		return body
 	}
@@ -51,9 +58,12 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 				break
 			}
 		}
+
 		i--
 	}
+
 	tail := rest[i+1:]
+
 	older := rest[:i+1]
 	if len(older) == 0 {
 		return body
@@ -64,10 +74,12 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 			if c, ok := mp["content"]; ok {
 				return c
 			}
+
 			if p, ok := mp["parts"]; ok {
 				return p
 			}
 		}
+
 		return nil
 	}
 
@@ -75,12 +87,14 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 	if cw <= 0 {
 		cw = 200000
 	}
+
 	budgetChars := int(float64(cw) * 0.8 * float64(charsPerToken))
 
 	headKeptCount := headKeep
 	if len(older) < headKeptCount {
 		headKeptCount = len(older)
 	}
+
 	headKept := make([]any, headKeptCount)
 	copy(headKept, older[:headKeptCount])
 
@@ -88,9 +102,11 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 	for _, m := range systemMsgs {
 		total += blockLength(contentOf(m))
 	}
+
 	for _, m := range headKept {
 		total += blockLength(contentOf(m))
 	}
+
 	for _, m := range tail {
 		total += blockLength(contentOf(m))
 	}
@@ -110,11 +126,13 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 	for k, v := range body {
 		out[k] = v
 	}
+
 	newArr := make([]any, 0, len(systemMsgs)+len(head)+len(tail))
 	newArr = append(newArr, systemMsgs...)
 	newArr = append(newArr, head...)
 	newArr = append(newArr, tail...)
 	out[key] = newArr
+
 	return out
 }
 
@@ -129,6 +147,7 @@ func blockLength(content any) int {
 		return len(v)
 	case []any:
 		sum := 0
+
 		for _, b := range v {
 			if m, ok := b.(map[string]any); ok {
 				if t, ok := m["text"].(string); ok {
@@ -138,6 +157,7 @@ func blockLength(content any) int {
 				}
 			}
 		}
+
 		return sum
 	default:
 		return 0

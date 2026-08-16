@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"flamerouter/internal/store"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
-
-	"flamerouter/internal/store"
 )
 
 type Handler struct {
@@ -100,6 +99,7 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request, provide
 		http.Error(w, `{"error":"invalid state"}`, http.StatusBadRequest)
 		return
 	}
+
 	delete(h.states, state)
 
 	token, err := h.exchangeCode(r.Context(), config, code, oauthState.RedirectURI, "")
@@ -125,28 +125,35 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 	// Raw JWT access token (codex website paste)
 	if strings.HasPrefix(code, "eyJ") && strings.Contains(code, ".") {
 		psd := map[string]any{"authMethod": "access_token"}
+
 		if info := decodeJWTClaims(code); info != nil {
 			if v, ok := info["account_id"].(string); ok && v != "" {
 				psd["chatgptAccountId"] = v
 			}
+
 			if v, ok := info["plan_type"].(string); ok && v != "" {
 				psd["chatgptPlanType"] = v
 			}
 		}
+
 		email := ""
+
 		if info := decodeJWTClaims(code); info != nil {
 			if v, ok := info["email"].(string); ok {
 				email = v
 			}
 		}
+
 		name := email
 		if name == "" {
 			name = provider
 		}
+
 		id, err := st.CreateOAuthConnection(provider, "access_token", name, code, "", "", psd)
 		if err != nil {
 			return nil, err
 		}
+
 		return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
 	}
 
@@ -154,6 +161,7 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 	if redirectURI == "" || (!noPKCE && codeVerifier == "") {
 		return nil, fmt.Errorf("missing required fields")
 	}
+
 	config, ok := ProviderConfigs[provider]
 	if !ok {
 		return nil, fmt.Errorf("unknown provider")
@@ -163,16 +171,20 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 		if cid, ok := meta["clientId"].(string); ok && cid != "" {
 			c2 := *config
 			c2.ClientID = cid
+
 			if sec, ok := meta["clientSecret"].(string); ok {
 				c2.ClientSecret = sec
 			}
+
 			config = &c2
 		}
 	}
+
 	token, err := h.exchangeCode(ctx, config, code, redirectURI, codeVerifier)
 	if err != nil {
 		return nil, err
 	}
+
 	expiresAt := ""
 	if !token.ExpiresAt.IsZero() {
 		expiresAt = token.ExpiresAt.UTC().Format(time.RFC3339)
@@ -180,6 +192,7 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 
 	email := ""
 	name := provider
+
 	var psd map[string]any
 
 	// Extract email and info from ID token if present
@@ -189,6 +202,7 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 				email = em
 				name = em
 			}
+
 			if nm, ok := claims["name"].(string); ok && nm != "" && name == provider {
 				name = nm
 			}
@@ -205,8 +219,10 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 			req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v1/userinfo?alt=json", nil)
 			if err == nil {
 				req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+
 				if resp, err := http.DefaultClient.Do(req); err == nil {
 					defer resp.Body.Close()
+
 					var uinfo map[string]any
 					if json.NewDecoder(resp.Body).Decode(&uinfo) == nil {
 						if em, ok := uinfo["email"].(string); ok && em != "" {
@@ -219,14 +235,17 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 		}
 		// Load Code Assist to get project ID and tier
 		loadReqBody := `{"metadata":{"ideType":9,"platform":1,"pluginType":2}}`
+
 		req, err := http.NewRequestWithContext(ctx, "POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
 		if err == nil {
 			req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("User-Agent", "antigravity/ide/2.1.1 darwin/arm64")
 			req.Header.Set("x-request-source", "local")
+
 			if resp, err := http.DefaultClient.Do(req); err == nil {
 				defer resp.Body.Close()
+
 				var loadData struct {
 					CloudAICompanionProject any `json:"cloudaicompanionProject"`
 					AllowedTiers            []struct {
@@ -234,6 +253,7 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 						IsDefault bool   `json:"isDefault"`
 					} `json:"allowedTiers"`
 				}
+
 				if json.NewDecoder(resp.Body).Decode(&loadData) == nil {
 					var projID string
 					switch p := loadData.CloudAICompanionProject.(type) {
@@ -244,9 +264,11 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 							projID = id
 						}
 					}
+
 					if projID != "" {
 						psd["projectId"] = projID
 					}
+
 					for _, tier := range loadData.AllowedTiers {
 						if tier.IsDefault && tier.ID != "" {
 							psd["tierId"] = strings.TrimSpace(tier.ID)
@@ -262,7 +284,9 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 	if err != nil {
 		return nil, err
 	}
+
 	_ = state
+
 	return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
 }
 
@@ -271,6 +295,7 @@ func decodeJWTClaims(tok string) map[string]any {
 	if len(parts) < 2 {
 		return nil
 	}
+
 	b64 := parts[1]
 	// base64url → raw
 	switch len(b64) % 4 {
@@ -279,15 +304,19 @@ func decodeJWTClaims(tok string) map[string]any {
 	case 3:
 		b64 += "="
 	}
+
 	b64 = strings.ReplaceAll(strings.ReplaceAll(b64, "-", "+"), "_", "/")
+
 	raw, err := decodeB64(b64)
 	if err != nil {
 		return nil
 	}
+
 	var m map[string]any
 	if json.Unmarshal(raw, &m) != nil {
 		return nil
 	}
+
 	return m
 }
 
@@ -299,14 +328,17 @@ func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, r
 	if redirectURI == "" {
 		redirectURI = config.RedirectURL
 	}
+
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
 	data.Set("redirect_uri", redirectURI)
 	data.Set("client_id", config.ClientID)
+
 	if config.ClientSecret != "" {
 		data.Set("client_secret", config.ClientSecret)
 	}
+
 	if codeVerifier != "" {
 		data.Set("code_verifier", codeVerifier)
 	}
@@ -315,6 +347,7 @@ func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, r
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
@@ -337,10 +370,11 @@ func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, r
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		TokenType    string `json:"token_type"`
-		ExpiresIn    int    `json:"expires_in"`
 		Scope        string `json:"scope"`
 		IDToken      string `json:"id_token"`
+		ExpiresIn    int    `json:"expires_in"`
 	}
+
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return nil, err
 	}
@@ -369,6 +403,7 @@ func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToke
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
 	data.Set("client_id", config.ClientID)
+
 	if config.ClientSecret != "" {
 		data.Set("client_secret", config.ClientSecret)
 	}
@@ -377,6 +412,7 @@ func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToke
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
@@ -399,9 +435,10 @@ func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToke
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		TokenType    string `json:"token_type"`
-		ExpiresIn    int    `json:"expires_in"`
 		Scope        string `json:"scope"`
+		ExpiresIn    int    `json:"expires_in"`
 	}
+
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return nil, err
 	}

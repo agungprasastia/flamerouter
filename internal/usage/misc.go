@@ -24,6 +24,17 @@ func init() {
 	RegisterQuotaHandler("glm-cn", fetchGlmCnUsage)
 }
 
+func titleCase(s string) string {
+	words := strings.Fields(s)
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + strings.ToLower(w[1:])
+		}
+	}
+
+	return strings.Join(words, " ")
+}
+
 func fetchIflowUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error) {
 	return &QuotaResult{
 		Provider: "iflow",
@@ -36,6 +47,7 @@ func fetchOllamaUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	if apiKey == "" {
 		apiKey = opts.AccessToken
 	}
+
 	if apiKey == "" {
 		return &QuotaResult{Message: "Ollama Cloud API key not available."}, nil
 	}
@@ -44,6 +56,7 @@ func fetchOllamaUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
@@ -56,6 +69,7 @@ func fetchOllamaUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	if res.StatusCode == 401 || res.StatusCode == 403 {
 		return &QuotaResult{Message: "Ollama Cloud API key invalid or expired."}, nil
 	}
+
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return &QuotaResult{Message: fmt.Sprintf("Ollama Cloud usage API error (%d).", res.StatusCode)}, nil
 	}
@@ -66,19 +80,23 @@ func fetchOllamaUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	}
 
 	plan := "Ollama Cloud"
+
 	reqMe, errMe := http.NewRequestWithContext(ctx, http.MethodPost, ollamaMeURL, nil)
 	if errMe == nil {
 		reqMe.Header.Set("Authorization", "Bearer "+apiKey)
 		reqMe.Header.Set("Accept", "application/json")
 		reqMe.Header.Set("Content-Length", "0")
+
 		if resMe, errMeDo := opts.HTTPClient.Do(reqMe); errMeDo == nil {
 			defer resMe.Body.Close()
+
 			if resMe.StatusCode >= 200 && resMe.StatusCode < 300 {
 				var meData struct {
 					Plan string `json:"Plan"`
 				}
+
 				if json.NewDecoder(resMe.Body).Decode(&meData) == nil && meData.Plan != "" {
-					plan = strings.Title(strings.ToLower(meData.Plan))
+					plan = titleCase(meData.Plan)
 				}
 			}
 		}
@@ -140,6 +158,7 @@ func queryGlm(ctx context.Context, opts FetchOptions, quotaURL string) (*QuotaRe
 	if apiKey == "" {
 		apiKey = opts.AccessToken
 	}
+
 	if apiKey == "" {
 		return &QuotaResult{Message: "GLM API key not available."}, nil
 	}
@@ -148,6 +167,7 @@ func queryGlm(ctx context.Context, opts FetchOptions, quotaURL string) (*QuotaRe
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
@@ -160,6 +180,7 @@ func queryGlm(ctx context.Context, opts FetchOptions, quotaURL string) (*QuotaRe
 	if res.StatusCode == 401 {
 		return &QuotaResult{Message: "GLM API key invalid or expired."}, nil
 	}
+
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return &QuotaResult{Message: fmt.Sprintf("GLM quota API error (%d).", res.StatusCode)}, nil
 	}
@@ -168,28 +189,34 @@ func queryGlm(ctx context.Context, opts FetchOptions, quotaURL string) (*QuotaRe
 		Data struct {
 			Level  string `json:"level"`
 			Limits []struct {
-				Type          string `json:"type"`
 				Percentage    any    `json:"percentage"`
 				NextResetTime any    `json:"nextResetTime"`
+				Type          string `json:"type"`
 			} `json:"limits"`
 		} `json:"data"`
 	}
+
 	if err := json.NewDecoder(res.Body).Decode(&jsonMap); err != nil {
 		return &QuotaResult{Message: "GLM error: invalid response JSON"}, nil
 	}
 
 	quotas := make(map[string]QuotaItem)
+
 	for _, l := range jsonMap.Data.Limits {
 		if l.Type != "TOKENS_LIMIT" {
 			continue
 		}
+
 		usedPct := toFiniteFloat(l.Percentage, 0)
 		resetMs := int64(toFiniteFloat(l.NextResetTime, 0))
+
 		var resetAt *string
+
 		if resetMs > 0 {
 			iso := time.UnixMilli(resetMs).UTC().Format(time.RFC3339Nano)
 			resetAt = &iso
 		}
+
 		rem := math.Max(0, 100-usedPct)
 		quotas["session"] = QuotaItem{
 			Used:                usedPct,
@@ -201,7 +228,7 @@ func queryGlm(ctx context.Context, opts FetchOptions, quotaURL string) (*QuotaRe
 		}
 	}
 
-	plan := strings.Title(strings.ToLower(jsonMap.Data.Level))
+	plan := titleCase(jsonMap.Data.Level)
 	if plan == "" {
 		plan = "Unknown"
 	}

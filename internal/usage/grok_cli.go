@@ -27,6 +27,7 @@ func fetchGrokCliUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, er
 	if err != nil {
 		return nil, err
 	}
+
 	setGrokHeaders(reqBilling.Header, opts.AccessToken, opts.ProviderSpecificData)
 
 	resBilling, err := opts.HTTPClient.Do(reqBilling)
@@ -38,15 +39,19 @@ func fetchGrokCliUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, er
 	if resBilling.StatusCode == 401 || resBilling.StatusCode == 403 {
 		return &QuotaResult{Message: "Grok CLI authentication expired. Please re-authorize."}, nil
 	}
+
 	if resBilling.StatusCode < 200 || resBilling.StatusCode >= 300 {
 		errBytes, _ := io.ReadAll(io.LimitReader(resBilling.Body, 512))
+
 		trimmed := strings.TrimSpace(string(errBytes))
 		if len(trimmed) > 200 {
 			trimmed = trimmed[:200]
 		}
+
 		if trimmed != "" {
 			return &QuotaResult{Message: fmt.Sprintf("Grok CLI billing API error (%d): %s", resBilling.StatusCode, trimmed)}, nil
 		}
+
 		return &QuotaResult{Message: fmt.Sprintf("Grok CLI billing API error (%d)", resBilling.StatusCode)}, nil
 	}
 
@@ -56,11 +61,14 @@ func fetchGrokCliUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, er
 	}
 
 	var userData map[string]any
+
 	reqUser, err := http.NewRequestWithContext(ctx, http.MethodGet, grokUserURL, nil)
 	if err == nil {
 		setGrokHeaders(reqUser.Header, opts.AccessToken, opts.ProviderSpecificData)
+
 		if resUser, err := opts.HTTPClient.Do(reqUser); err == nil {
 			defer resUser.Body.Close()
+
 			if resUser.StatusCode >= 200 && resUser.StatusCode < 300 {
 				_ = json.NewDecoder(resUser.Body).Decode(&userData)
 			}
@@ -78,8 +86,10 @@ func fetchGrokCliUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, er
 			parsed.Quotas = map[string]QuotaItem{
 				"Weekly SuperGrok": makeQuota(grpcPct, 100, grpcReset, false),
 			}
+
 			return parsed, nil
 		}
+
 		if parsed.Details != nil && parsed.Details["subscriptionAccess"] == true {
 			parsed.Message = "Subscription access is active; Grok does not expose a numeric included quota."
 		} else {

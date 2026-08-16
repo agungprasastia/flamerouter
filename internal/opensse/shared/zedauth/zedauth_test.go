@@ -8,12 +8,11 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"flamerouter/internal/opensse/shared/zedauth"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"flamerouter/internal/opensse/shared/zedauth"
 )
 
 func TestGenerateZedKeypair(t *testing.T) {
@@ -25,18 +24,23 @@ func TestGenerateZedKeypair(t *testing.T) {
 	if kp.PrivateKey == nil {
 		t.Fatal("expected non-nil PrivateKey")
 	}
+
 	if kp.PublicKey == nil {
 		t.Fatal("expected non-nil PublicKey")
 	}
+
 	if kp.PrivateKey.N.BitLen() != 2048 {
 		t.Fatalf("expected 2048-bit key, got %d", kp.PrivateKey.N.BitLen())
 	}
+
 	if !strings.HasPrefix(kp.Verifier, zedauth.PrivateKeyPrefix) {
 		t.Fatalf("expected verifier to have prefix %s, got %s", zedauth.PrivateKeyPrefix, kp.Verifier)
 	}
+
 	if !strings.Contains(kp.PrivateKeyPEM, "BEGIN RSA PRIVATE KEY") {
 		t.Fatalf("expected PrivateKeyPEM to contain RSA PRIVATE KEY, got %s", kp.PrivateKeyPEM)
 	}
+
 	if len(kp.PublicKeyDER) == 0 {
 		t.Fatal("expected non-empty PublicKeyDER")
 	}
@@ -62,6 +66,7 @@ func TestEncodeZedPublicKeyVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to parse PKCS#1 public key from verifier DER: %v", err)
 	}
+
 	if pub.N.Cmp(kp.PublicKey.N) != 0 || pub.E != kp.PublicKey.E {
 		t.Fatal("parsed public key does not match original")
 	}
@@ -85,6 +90,7 @@ func TestDecryptZedAccessTokenRoundTripPKCS1v15(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncryptPKCS1v15 failed: %v", err)
 	}
+
 	encryptedB64 := base64.RawURLEncoding.EncodeToString(encryptedBytes)
 
 	// Decrypt using Verifier string
@@ -92,6 +98,7 @@ func TestDecryptZedAccessTokenRoundTripPKCS1v15(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecryptZedAccessToken with verifier failed: %v", err)
 	}
+
 	if decryptedFromVerifier != sampleToken {
 		t.Fatalf("decrypted mismatch: got %q, want %q", decryptedFromVerifier, sampleToken)
 	}
@@ -101,6 +108,7 @@ func TestDecryptZedAccessTokenRoundTripPKCS1v15(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecryptZedAccessToken with raw PEM failed: %v", err)
 	}
+
 	if decryptedFromPEM != sampleToken {
 		t.Fatalf("decrypted mismatch: got %q, want %q", decryptedFromPEM, sampleToken)
 	}
@@ -119,6 +127,7 @@ func TestDecryptZedAccessTokenRoundTripOAEP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncryptOAEP failed: %v", err)
 	}
+
 	encryptedB64 := base64.RawURLEncoding.EncodeToString(encryptedBytes)
 
 	// Decrypt using Verifier string
@@ -126,6 +135,7 @@ func TestDecryptZedAccessTokenRoundTripOAEP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecryptZedAccessToken OAEP failed: %v", err)
 	}
+
 	if decrypted != sampleToken {
 		t.Fatalf("decrypted mismatch: got %q, want %q", decrypted, sampleToken)
 	}
@@ -197,21 +207,26 @@ func TestFetchZedLLMTokenSuccess(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
+
 		if r.Header.Get("Authorization") != "Bearer test_access_token" {
 			t.Errorf("unexpected Authorization header: %s", r.Header.Get("Authorization"))
 		}
+
 		if r.Header.Get("x-zed-client-supports-status-messages") != "1" {
 			t.Errorf("missing client supports status header")
 		}
+
 		if r.Header.Get("x-zed-client-supports-stream-ended-request-completion-status") != "1" {
 			t.Errorf("missing stream ended header")
 		}
+
 		if r.Header.Get("x-zed-client-supports-x-ai") != "1" {
 			t.Errorf("missing x-ai header")
 		}
 
 		var req map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&req)
+
 		if req["client_id"] != "client_test_123" {
 			t.Errorf("unexpected client_id: %v", req["client_id"])
 		}
@@ -242,7 +257,9 @@ func TestFetchZedLLMTokenSuccess(t *testing.T) {
 	var result struct {
 		Token string `json:"token"`
 	}
+
 	_ = json.NewDecoder(resp.Body).Decode(&result)
+
 	if result.Token != "zed_llm_token_response_abc123" {
 		t.Fatalf("unexpected token: %s", result.Token)
 	}

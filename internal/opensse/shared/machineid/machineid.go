@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	rawIDOnce  sync.Once
-	cachedRaw  string
-	saltCache  sync.Map // map[string]string
+	rawIDOnce sync.Once
+	cachedRaw string
+	saltCache sync.Map // map[string]string
 )
 
 // GetConsistentMachineID returns a 16-character hex string hash of (rawMachineID + salt).
@@ -27,12 +27,14 @@ func GetConsistentMachineID(salt string) string {
 
 	rawID := getRawMachineID()
 	h := sha256.Sum256([]byte(rawID + salt))
+
 	res := hex.EncodeToString(h[:])
 	if len(res) > 16 {
 		res = res[:16]
 	}
 
 	saltCache.Store(salt, res)
+
 	return res
 }
 
@@ -43,6 +45,7 @@ func getRawMachineID() string {
 			cachedRaw = fallbackMachineID()
 		}
 	})
+
 	return cachedRaw
 }
 
@@ -64,6 +67,7 @@ func readHostMachineID() string {
 func readWindowsMachineID() string {
 	// Query registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography\MachineGuid
 	cmd := exec.Command("reg", "query", `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid")
+
 	out, err := cmd.Output()
 	if err == nil {
 		lines := strings.Split(string(out), "\n")
@@ -79,12 +83,14 @@ func readWindowsMachineID() string {
 			}
 		}
 	}
+
 	return ""
 }
 
 func readDarwinMachineID() string {
 	// ioreg -rd1 -c IOPlatformExpertDevice
 	cmd := exec.Command("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
+
 	out, err := cmd.Output()
 	if err == nil {
 		lines := strings.Split(string(out), "\n")
@@ -100,6 +106,7 @@ func readDarwinMachineID() string {
 			}
 		}
 	}
+
 	return ""
 }
 
@@ -117,6 +124,7 @@ func readLinuxMachineID() string {
 			}
 		}
 	}
+
 	return ""
 }
 
@@ -133,6 +141,7 @@ func readBSDMachineID() string {
 			}
 		}
 	}
+
 	return ""
 }
 
@@ -140,5 +149,6 @@ func fallbackMachineID() string {
 	if h, err := os.Hostname(); err == nil && strings.TrimSpace(h) != "" {
 		return strings.TrimSpace(h)
 	}
+
 	return uuid.New().String()
 }

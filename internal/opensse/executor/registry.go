@@ -6,10 +6,10 @@ import (
 )
 
 var (
-	specialized   = map[string]Executor{}
-	defaultCache  = map[string]*DefaultExecutor{}
-	registryMu    sync.Mutex
-	sharedClient  *http.Client
+	specialized  = map[string]Executor{}
+	defaultCache = map[string]*DefaultExecutor{}
+	registryMu   sync.Mutex
+	sharedClient *http.Client
 )
 
 func init() {
@@ -20,6 +20,7 @@ func init() {
 func RegisterSpecialized(provider string, exec Executor) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
+
 	specialized[provider] = exec
 }
 
@@ -27,6 +28,7 @@ func RegisterSpecialized(provider string, exec Executor) {
 func GetExecutor(provider string) Executor {
 	registryMu.Lock()
 	defer registryMu.Unlock()
+
 	if e, ok := specialized[provider]; ok {
 		return e
 	}
@@ -49,13 +51,17 @@ func GetExecutor(provider string) Executor {
 		if e, ok := specialized[alias]; ok {
 			return e
 		}
+
 		provider = alias
 	}
+
 	if e, ok := defaultCache[provider]; ok {
 		return e
 	}
+
 	e := NewDefaultForProvider(sharedClient, provider)
 	defaultCache[provider] = e
+
 	return e
 }
 
@@ -63,6 +69,8 @@ func GetExecutor(provider string) Executor {
 func HasSpecializedExecutor(provider string) bool {
 	registryMu.Lock()
 	defer registryMu.Unlock()
+
 	_, ok := specialized[provider]
+
 	return ok
 }

@@ -12,32 +12,34 @@ import (
 )
 
 type Config struct {
-	Port                      int
-	DataDir                   string
+	SearXNGURL                string
+	HeadroomURL               string
 	JWTSecret                 string
 	InitialPassword           string
 	APIKeySecret              string
 	MachineIDSalt             string
-	RequireAPIKey             bool
-	BaseURL                   string
-	SearXNGURL                string
-	HeadroomURL               string
 	ShutdownSecret            string
+	BaseURL                   string
+	DataDir                   string
+	Port                      int
 	StreamStallTimeoutMs      int
 	StreamFirstChunkTimeoutMs int
 	FetchConnectTimeoutMs     int
+	VideoFetchTimeoutMs       int
+	RequireAPIKey             bool
 	TrustProxy                bool
 	AuthCookieSecure          bool
-	VideoFetchTimeoutMs       int
 }
 
 func Load() (*Config, error) {
 	port := 20130
+
 	if v := strings.TrimSpace(os.Getenv("PORT")); v != "" {
 		p, err := strconv.Atoi(v)
 		if err != nil {
 			return nil, fmt.Errorf("PORT: %w", err)
 		}
+
 		port = p
 	}
 
@@ -47,6 +49,7 @@ func Load() (*Config, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		dataDir = filepath.Join(home, ".flamerouter")
 	}
 
@@ -59,8 +62,8 @@ func Load() (*Config, error) {
 			b := make([]byte, 32)
 			_, _ = rand.Read(b)
 			jwtSecret = hex.EncodeToString(b)
-			_ = os.MkdirAll(dataDir, 0700)
-			_ = os.WriteFile(secretFile, []byte(jwtSecret), 0600)
+			_ = os.MkdirAll(dataDir, 0o700)
+			_ = os.WriteFile(secretFile, []byte(jwtSecret), 0o600)
 		}
 	}
 
@@ -83,6 +86,7 @@ func Load() (*Config, error) {
 		AuthCookieSecure:          strings.EqualFold(os.Getenv("AUTH_COOKIE_SECURE"), "true"),
 		VideoFetchTimeoutMs:       envMs("VIDEO_FETCH_TIMEOUT_MS", 120*1000),
 	}
+
 	return cfg, nil
 }
 
@@ -90,6 +94,7 @@ func envOr(k, def string) string {
 	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 		return v
 	}
+
 	return def
 }
 
@@ -99,10 +104,12 @@ func envMs(name string, def int) int {
 	if raw == "" {
 		return def
 	}
+
 	n, err := strconv.Atoi(raw)
 	if err != nil || n <= 0 {
 		return def
 	}
+
 	return n
 }
 

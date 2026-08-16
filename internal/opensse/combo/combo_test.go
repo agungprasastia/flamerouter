@@ -41,10 +41,12 @@ func TestResolve_PerComboOverride(t *testing.T) {
 
 func TestReorderForCapabilities_NoImages(t *testing.T) {
 	models := []string{"gpt-4", "claude-3-opus"}
+
 	result := ReorderForCapabilities(models, []byte(`{"messages":[{"role":"user","content":"hello"}]}`))
 	if len(result) != 2 {
 		t.Fatal("expected same length")
 	}
+
 	if result[0] != models[0] || result[1] != models[1] {
 		t.Fatalf("expected order preserved, got %v", result)
 	}
@@ -54,6 +56,7 @@ func TestReorderForCapabilities_VisionPromotes(t *testing.T) {
 	// deepseek-v3 has no vision; gpt-4o does
 	models := []string{"openai/deepseek-v3", "openai/gpt-4o"}
 	body := []byte(`{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,xx"}}]}]}`)
+
 	result := ReorderForCapabilities(models, body)
 	if result[0] != "openai/gpt-4o" {
 		t.Fatalf("expected gpt-4o first, got %v", result)
@@ -62,12 +65,15 @@ func TestReorderForCapabilities_VisionPromotes(t *testing.T) {
 
 func TestGetRotatedModels_Sticky(t *testing.T) {
 	ResetRotation("")
+
 	models := []string{"provider/model-a", "provider/model-b"}
 	got := make([]string, 0, 6)
+
 	for i := 0; i < 6; i++ {
 		rotated := GetRotatedModels(models, "code-xhigh", "round-robin", 2)
 		got = append(got, rotated[0])
 	}
+
 	want := []string{
 		"provider/model-a", "provider/model-a",
 		"provider/model-b", "provider/model-b",
@@ -82,9 +88,11 @@ func TestGetRotatedModels_Sticky(t *testing.T) {
 
 func TestGetRotatedModels_FallbackNoRotate(t *testing.T) {
 	ResetRotation("")
+
 	models := []string{"provider/model-a", "provider/model-b"}
 	a := GetRotatedModels(models, "c", "fallback", 2)
 	b := GetRotatedModels(models, "c", "fallback", 2)
+
 	if a[0] != models[0] || b[0] != models[0] {
 		t.Fatalf("fallback must not rotate: %v %v", a, b)
 	}
@@ -101,6 +109,7 @@ func TestDetectRequiredCapabilities_Image(t *testing.T) {
 			},
 		},
 	}
+
 	req := DetectRequiredCapabilities(body)
 	if !req["vision"] {
 		t.Fatal("expected vision")
@@ -109,6 +118,7 @@ func TestDetectRequiredCapabilities_Image(t *testing.T) {
 
 func TestFusion_NoJudgeReturnsFirstPanel(t *testing.T) {
 	var judgeCalls atomic.Int32
+
 	f := &Fusion{}
 	rr := httptest.NewRecorder()
 	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"stream":false}`)
@@ -131,16 +141,20 @@ func TestFusion_NoJudgeReturnsFirstPanel(t *testing.T) {
 			return nil
 		},
 	}
+
 	err := f.Execute(context.Background(), rr, body, []string{"p/a", "p/b"}, nil, nil, nil, opts)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
+
 	if judgeCalls.Load() != 0 {
 		t.Fatalf("expected no judge SingleModel call, got %d", judgeCalls.Load())
 	}
+
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
+
 	if !strings.Contains(rr.Body.String(), "answer-from-") {
 		t.Fatalf("expected panel brief body, got %s", rr.Body.String())
 	}
@@ -148,6 +162,7 @@ func TestFusion_NoJudgeReturnsFirstPanel(t *testing.T) {
 
 func TestFusion_WithJudgeCallsJudge(t *testing.T) {
 	var models []string
+
 	f := &Fusion{}
 	rr := httptest.NewRecorder()
 	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"stream":false}`)
@@ -167,15 +182,19 @@ func TestFusion_WithJudgeCallsJudge(t *testing.T) {
 			return nil
 		},
 	}
+
 	if err := f.Execute(context.Background(), rr, body, []string{"p/a", "p/b"}, nil, nil, nil, opts); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
+
 	foundJudge := false
+
 	for _, m := range models {
 		if m == "p/judge" {
 			foundJudge = true
 		}
 	}
+
 	if !foundJudge {
 		t.Fatalf("expected judge model call, models=%v", models)
 	}
@@ -186,10 +205,12 @@ func TestWritePanelBrief_JSON(t *testing.T) {
 	if err := writePanelBrief(rr, "hello brief", false); err != nil {
 		t.Fatal(err)
 	}
+
 	var m map[string]any
 	if json.Unmarshal(rr.Body.Bytes(), &m) != nil {
 		t.Fatalf("invalid json: %s", rr.Body.String())
 	}
+
 	if !bytes.Contains(rr.Body.Bytes(), []byte("hello brief")) {
 		t.Fatal("missing content")
 	}

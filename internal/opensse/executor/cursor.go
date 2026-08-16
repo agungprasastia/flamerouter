@@ -65,13 +65,16 @@ func BuildCursorHeaders(accessToken, machineID string, ghostMode bool) http.Head
 	h.Set("x-cursor-client-device-type", "desktop")
 	h.Set("x-cursor-config-version", randomUUID())
 	h.Set("x-cursor-timezone", "UTC")
+
 	if ghostMode {
 		h.Set("x-ghost-mode", "true")
 	} else {
 		h.Set("x-ghost-mode", "false")
 	}
+
 	h.Set("x-request-id", reqID)
 	h.Set("x-session-id", sessID)
+
 	return h
 }
 
@@ -81,6 +84,7 @@ func WrapConnectRPCFrame(payload []byte) []byte {
 	frame[0] = 0x00 // uncompressed
 	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
 	copy(frame[5:], payload)
+
 	return frame
 }
 
@@ -94,13 +98,16 @@ func BuildCursorProtobufRequest(messages []any, model string) []byte {
 		if !ok {
 			continue
 		}
+
 		roleStr, _ := msg["role"].(string)
+
 		contentStr := ""
 		switch c := msg["content"].(type) {
 		case string:
 			contentStr = c
 		case []any:
 			var parts []string
+
 			for _, p := range c {
 				if pm, ok := p.(map[string]any); ok {
 					if t, _ := pm["type"].(string); t == "text" {
@@ -108,6 +115,7 @@ func BuildCursorProtobufRequest(messages []any, model string) []byte {
 					}
 				}
 			}
+
 			contentStr = strings.Join(parts, " ")
 		}
 
@@ -132,6 +140,7 @@ func BuildCursorProtobufRequest(messages []any, model string) []byte {
 
 	// Field 5: Model
 	var modelBuf bytes.Buffer
+
 	writeProtoField(&modelBuf, 1, 2, []byte(model))
 	writeProtoField(&bodyBuf, 5, 2, modelBuf.Bytes())
 
@@ -140,12 +149,15 @@ func BuildCursorProtobufRequest(messages []any, model string) []byte {
 
 	// Top level request: Field 1 (StreamUnifiedChatRequest)
 	var topBuf bytes.Buffer
+
 	writeProtoField(&topBuf, 1, 2, bodyBuf.Bytes())
+
 	return topBuf.Bytes()
 }
 
 func writeProtoField(w *bytes.Buffer, fieldNum int, wireType int, data []byte) {
 	tag := uint64((fieldNum << 3) | wireType)
+
 	var tagBuf [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(tagBuf[:], tag)
 	w.Write(tagBuf[:n])
@@ -160,6 +172,7 @@ func writeProtoField(w *bytes.Buffer, fieldNum int, wireType int, data []byte) {
 
 func writeProtoVarintField(w *bytes.Buffer, fieldNum int, val uint64) {
 	tag := uint64((fieldNum << 3) | 0)
+
 	var tagBuf [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(tagBuf[:], tag)
 	w.Write(tagBuf[:n])
@@ -176,12 +189,15 @@ func ExtractTextFromCursorResponse(data []byte) (text string, thinking string) {
 		if pos+5 > len(data) {
 			break
 		}
+
 		flag := data[pos]
 		length := binary.BigEndian.Uint32(data[pos+1 : pos+5])
+
 		frameEnd := pos + 5 + int(length)
 		if frameEnd > len(data) {
 			break
 		}
+
 		payload := data[pos+5 : frameEnd]
 		pos = frameEnd
 
@@ -190,6 +206,7 @@ func ExtractTextFromCursorResponse(data []byte) (text string, thinking string) {
 			if err == nil {
 				decompressed, _ := io.ReadAll(gr)
 				gr.Close()
+
 				payload = decompressed
 			}
 		}
@@ -198,6 +215,7 @@ func ExtractTextFromCursorResponse(data []byte) (text string, thinking string) {
 		text += t
 		thinking += th
 	}
+
 	return text, thinking
 }
 
@@ -208,6 +226,7 @@ func parseCursorProtoPayload(payload []byte) (text string, thinking string) {
 		if n <= 0 {
 			break
 		}
+
 		p += n
 		fieldNum := tag >> 3
 		wireType := tag & 0x07
@@ -218,17 +237,21 @@ func parseCursorProtoPayload(payload []byte) (text string, thinking string) {
 			if vn <= 0 {
 				return
 			}
+
 			p += vn
 		case 2:
 			length, ln := binary.Uvarint(payload[p:])
 			if ln <= 0 {
 				return
 			}
+
 			p += ln
+
 			end := p + int(length)
 			if end > len(payload) {
 				return
 			}
+
 			fieldBytes := payload[p:end]
 			p = end
 
@@ -242,6 +265,7 @@ func parseCursorProtoPayload(payload []byte) (text string, thinking string) {
 			return
 		}
 	}
+
 	return text, thinking
 }
 
@@ -252,6 +276,7 @@ func parseStreamUnifiedChatResponse(payload []byte) (text string, thinking strin
 		if n <= 0 {
 			break
 		}
+
 		p += n
 		fieldNum := tag >> 3
 		wireType := tag & 0x07
@@ -262,17 +287,21 @@ func parseStreamUnifiedChatResponse(payload []byte) (text string, thinking strin
 			if vn <= 0 {
 				return
 			}
+
 			p += vn
 		case 2:
 			length, ln := binary.Uvarint(payload[p:])
 			if ln <= 0 {
 				return
 			}
+
 			p += ln
+
 			end := p + int(length)
 			if end > len(payload) {
 				return
 			}
+
 			fieldBytes := payload[p:end]
 			p = end
 
@@ -288,6 +317,7 @@ func parseStreamUnifiedChatResponse(payload []byte) (text string, thinking strin
 			return
 		}
 	}
+
 	return text, thinking
 }
 
@@ -298,33 +328,41 @@ func parseCursorThinkingField(payload []byte) string {
 		if n <= 0 {
 			break
 		}
+
 		p += n
 		fieldNum := tag >> 3
+
 		wireType := tag & 0x07
 		if wireType == 2 {
 			length, ln := binary.Uvarint(payload[p:])
 			if ln <= 0 {
 				break
 			}
+
 			p += ln
+
 			end := p + int(length)
 			if end > len(payload) {
 				break
 			}
+
 			if fieldNum == 1 {
 				return string(payload[p:end])
 			}
+
 			p = end
 		} else if wireType == 0 {
 			_, vn := binary.Uvarint(payload[p:])
 			if vn <= 0 {
 				break
 			}
+
 			p += vn
 		} else {
 			break
 		}
 	}
+
 	return ""
 }
 
@@ -346,16 +384,20 @@ func (e *CursorExecutor) Execute(ctx context.Context, cred Credentials, model st
 		payload, _ := json.Marshal(m)
 		h := make(http.Header)
 		h.Set("Content-Type", "application/json")
+
 		tok := cred.AccessToken
 		if tok == "" {
 			tok = cred.APIKey
 		}
+
 		if tok != "" {
 			h.Set("Authorization", "Bearer "+tok)
 		}
+
 		if stream {
 			h.Set("Accept", "text/event-stream")
 		}
+
 		return e.DoPOST(ctx, base, h, payload)
 	}
 
@@ -368,7 +410,9 @@ func (e *CursorExecutor) Execute(ctx context.Context, cred Credentials, model st
 	if token == "" {
 		token = cred.APIKey
 	}
+
 	machineID := ""
+
 	if cred.ProviderSpecificData != nil {
 		if mid, ok := cred.ProviderSpecificData["machineId"].(string); ok {
 			machineID = mid
@@ -392,6 +436,7 @@ func (e *CursorExecutor) Execute(ctx context.Context, cred Credentials, model st
 
 	if stream {
 		sseBody := wrapCursorStream(res.Body, model, cid, created)
+
 		return &Result{
 			StatusCode: 200,
 			Header: http.Header{
@@ -405,9 +450,11 @@ func (e *CursorExecutor) Execute(ctx context.Context, cred Credentials, model st
 
 	allBytes, err := io.ReadAll(res.Body)
 	res.Body.Close()
+
 	if err != nil {
 		return nil, err
 	}
+
 	text, thinking := ExtractTextFromCursorResponse(allBytes)
 
 	msg := map[string]any{
@@ -430,6 +477,7 @@ func (e *CursorExecutor) Execute(ctx context.Context, cred Credentials, model st
 		}},
 	}
 	outBytes, _ := json.Marshal(out)
+
 	return &Result{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -458,6 +506,7 @@ func wrapCursorStream(r io.ReadCloser, model, cid string, created int64) io.Read
 		})
 
 		buf := make([]byte, 64*1024)
+
 		for {
 			n, err := r.Read(buf)
 			if n > 0 {
@@ -470,6 +519,7 @@ func wrapCursorStream(r io.ReadCloser, model, cid string, created int64) io.Read
 						}},
 					})
 				}
+
 				if text != "" {
 					writeSSE(map[string]any{
 						"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
@@ -479,6 +529,7 @@ func wrapCursorStream(r io.ReadCloser, model, cid string, created int64) io.Read
 					})
 				}
 			}
+
 			if err != nil {
 				break
 			}
@@ -490,7 +541,9 @@ func wrapCursorStream(r io.ReadCloser, model, cid string, created int64) io.Read
 				"index": 0, "delta": map[string]any{}, "finish_reason": "stop",
 			}},
 		})
+
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
+
 	return pr
 }

@@ -24,6 +24,7 @@ func fetchCodexUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 	req.Header.Set("Accept", "application/json")
 
@@ -55,6 +56,7 @@ func fetchCodexUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 			plan, _ = summary["plan"].(string)
 		}
 	}
+
 	if plan == "" {
 		plan = "unknown"
 	}
@@ -63,12 +65,14 @@ func fetchCodexUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	if reached, ok := normalRL["limit_reached"].(bool); ok {
 		limReached = &reached
 	}
+
 	var revLimReached *bool
 	if reached, ok := reviewRL["limit_reached"].(bool); ok {
 		revLimReached = &reached
 	}
 
 	var resetCredits *ResetCreditInfo
+
 	if rcc, ok := data["rate_limit_reset_credits"].(map[string]any); ok {
 		avail := int(toFiniteFloat(rcc["available_count"], 0))
 		resetCredits = &ResetCreditInfo{AvailableCount: avail}
@@ -88,14 +92,17 @@ func extractCodexRateLimit(data map[string]any) map[string]any {
 	if rl, ok := data["rate_limit"].(map[string]any); ok {
 		return rl
 	}
+
 	if rl, ok := data["rate_limits"].(map[string]any); ok {
 		return rl
 	}
+
 	if byID, ok := data["rate_limits_by_limit_id"].(map[string]any); ok {
 		if c, ok := byID["codex"].(map[string]any); ok {
 			return c
 		}
 	}
+
 	return map[string]any{}
 }
 
@@ -103,9 +110,11 @@ func extractCodexReviewRateLimit(data map[string]any) map[string]any {
 	if rl, ok := data["code_review_rate_limit"].(map[string]any); ok {
 		return rl
 	}
+
 	if rl, ok := data["review_rate_limit"].(map[string]any); ok {
 		return rl
 	}
+
 	if byID, ok := data["rate_limits_by_limit_id"].(map[string]any); ok {
 		for _, k := range []string{"code_review", "codex_review", "review"} {
 			if v, ok := byID[k].(map[string]any); ok {
@@ -113,6 +122,7 @@ func extractCodexReviewRateLimit(data map[string]any) map[string]any {
 			}
 		}
 	}
+
 	if addl, ok := data["additional_rate_limits"].([]any); ok {
 		for _, item := range addl {
 			if m, ok := item.(map[string]any); ok {
@@ -123,6 +133,7 @@ func extractCodexReviewRateLimit(data map[string]any) map[string]any {
 			}
 		}
 	}
+
 	return map[string]any{}
 }
 
@@ -130,10 +141,12 @@ func appendCodexQuotaWindows(quotas map[string]QuotaItem, prefix string, rl map[
 	if len(rl) == 0 {
 		return
 	}
+
 	primary, _ := rl["primary_window"].(map[string]any)
 	if primary == nil {
 		primary, _ = rl["primary"].(map[string]any)
 	}
+
 	secondary, _ := rl["secondary_window"].(map[string]any)
 	if secondary == nil {
 		secondary, _ = rl["secondary"].(map[string]any)
@@ -144,13 +157,16 @@ func appendCodexQuotaWindows(quotas map[string]QuotaItem, prefix string, rl map[
 		if prefix != "" {
 			k = prefix + "_session"
 		}
+
 		quotas[k] = formatCodexWindow(primary)
 	}
+
 	if secondary != nil {
 		k := "weekly"
 		if prefix != "" {
 			k = prefix + "_weekly"
 		}
+
 		quotas[k] = formatCodexWindow(secondary)
 	}
 }
@@ -160,15 +176,19 @@ func formatCodexWindow(w map[string]any) QuotaItem {
 	if math.IsNaN(val) {
 		val = toFiniteFloat(w["percent_used"], 0)
 	}
+
 	used := math.Max(0, math.Min(100, val))
 	rem := math.Max(0, 100.0-used)
+
 	res := parseResetTime(w["reset_at"])
 	if res == nil {
 		res = parseResetTime(w["resets_at"])
 	}
+
 	if res == nil {
 		res = parseResetTime(w["resetAt"])
 	}
+
 	return QuotaItem{
 		Used:                used,
 		Total:               100,

@@ -1,6 +1,12 @@
 package main
 
 import (
+	"flamerouter/internal/auth"
+	"flamerouter/internal/config"
+	"flamerouter/internal/gateway"
+	"flamerouter/internal/opensse/executor"
+	"flamerouter/internal/ops"
+	"flamerouter/internal/store"
 	"fmt"
 	"io"
 	"log"
@@ -8,14 +14,7 @@ import (
 	"os"
 	"time"
 
-	"flamerouter/internal/auth"
-	"flamerouter/internal/config"
-	"flamerouter/internal/gateway"
-	"flamerouter/internal/opensse/executor"
-	"flamerouter/internal/ops"
-	"flamerouter/internal/store"
-
-	// Self-register translators + specialized executors
+	// Self-register translators + specialized executors.
 	_ "flamerouter/internal/translator/request"
 	_ "flamerouter/internal/translator/response"
 )
@@ -25,6 +24,7 @@ func main() {
 		fmt.Println("flamerouter 0.1.0-dev")
 		return
 	}
+
 	if len(os.Args) < 2 || os.Args[1] != "serve" {
 		fmt.Fprintln(os.Stderr, "usage: flamerouter <serve|version>")
 		os.Exit(2)
@@ -34,10 +34,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+
 	st, err := store.Open(cfg.DataDir)
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
+
 	defer st.Close()
 
 	keys := auth.New(cfg.APIKeySecret)

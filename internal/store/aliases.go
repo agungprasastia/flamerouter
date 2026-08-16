@@ -7,15 +7,20 @@ func (s *Store) ListAliases() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	out := make(map[string]string)
+
 	for rows.Next() {
 		var alias, target string
 		if err := rows.Scan(&alias, &target); err != nil {
 			return nil, err
 		}
+
 		out[alias] = target
 	}
+
 	return out, rows.Err()
 }
 
@@ -30,6 +35,7 @@ func (s *Store) SetAlias(alias, targetModel string) error {
 		 ON CONFLICT(alias) DO UPDATE SET target_model=excluded.target_model`,
 		alias, targetModel,
 	)
+
 	return err
 }
 
@@ -38,14 +44,18 @@ func (s *Store) GetProviderNodes() (nodes []ProviderNode, err error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	for rows.Next() {
 		var n ProviderNode
 		if err := rows.Scan(&n.ID, &n.Type, &n.Name, &n.Prefix, &n.APIType, &n.BaseURL); err != nil {
 			return nil, err
 		}
+
 		nodes = append(nodes, n)
 	}
+
 	return nodes, rows.Err()
 }
 
@@ -64,6 +74,7 @@ func (s *Store) CreateProviderNode(typ, name, prefix, apiType, baseURL string) (
 		`INSERT INTO provider_nodes(id, type, name, prefix, api_type, base_url) VALUES(?,?,?,?,?,?)`,
 		id, typ, name, prefix, apiType, baseURL,
 	)
+
 	return id, err
 }
 
@@ -75,10 +86,12 @@ func (s *Store) UpdateProviderNode(id, name, prefix, apiType, baseURL string) er
 	if err != nil {
 		return err
 	}
+
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+
 	return nil
 }
 
@@ -87,9 +100,11 @@ func (s *Store) DeleteProviderNode(id string) error {
 	if err != nil {
 		return err
 	}
+
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+
 	return nil
 }

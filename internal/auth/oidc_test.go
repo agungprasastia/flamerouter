@@ -2,25 +2,27 @@ package auth
 
 import (
 	"encoding/json"
+	"flamerouter/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
-
-	"flamerouter/internal/store"
 )
 
 func TestOIDCTest_MissingConfig(t *testing.T) {
 	dir := t.TempDir()
+
 	st, err := store.Open(filepath.Join(dir, "t"))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer st.Close()
 	h := NewOIDCHandler(NewJWTManager("test-secret"), st)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/test", nil)
 	rec := httptest.NewRecorder()
 	h.Test(rec, req)
+
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -41,14 +43,17 @@ func TestOIDCTest_DiscoveryMock(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"Invalid authorization code"}`))
 	})
+
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	dir := t.TempDir()
+
 	st, err := store.Open(filepath.Join(dir, "t"))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer st.Close()
 	_ = st.SetSetting("oidcIssuerUrl", srv.URL)
 	_ = st.SetSetting("oidcClientId", "cid")
@@ -60,13 +65,16 @@ func TestOIDCTest_DiscoveryMock(t *testing.T) {
 	req.Host = "localhost:20128"
 	rec := httptest.NewRecorder()
 	h.Test(rec, req)
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
+
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
+
 	if body["ok"] != true || body["discoveryOk"] != true {
 		t.Fatalf("body=%v", body)
 	}
@@ -74,18 +82,22 @@ func TestOIDCTest_DiscoveryMock(t *testing.T) {
 
 func TestOIDCStart_NotConfiguredRedirects(t *testing.T) {
 	dir := t.TempDir()
+
 	st, err := store.Open(filepath.Join(dir, "t"))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer st.Close()
 	h := NewOIDCHandler(NewJWTManager("test-secret"), st)
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:20128/api/auth/oidc/start", nil)
 	rec := httptest.NewRecorder()
 	h.Start(rec, req)
+
 	if rec.Code != http.StatusFound {
 		t.Fatalf("code=%d", rec.Code)
 	}
+
 	loc := rec.Header().Get("Location")
 	if loc == "" || !contains(loc, "oidc_not_configured") {
 		t.Fatalf("location=%s", loc)

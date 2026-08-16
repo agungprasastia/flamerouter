@@ -3,11 +3,10 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/store"
 	"fmt"
 	"sync"
 	"time"
-
-	"flamerouter/internal/store"
 )
 
 // Default refresh lead — matches tokenrefresh.TokenExpiryBuffer / 9router TOKEN_EXPIRY_BUFFER_MS.
@@ -32,18 +31,22 @@ func MaxRefreshAge(provider string) time.Duration {
 // lead zero defaults to DefaultRefreshLead.
 func ShouldRefresh(provider string, expiresAt, lastRefreshAt time.Time, maxRefreshAge, lead time.Duration) bool {
 	_ = provider
+
 	if lead <= 0 {
 		lead = DefaultRefreshLead
 	}
+
 	now := time.Now()
 	if !expiresAt.IsZero() && expiresAt.Sub(now) < lead {
 		return true
 	}
+
 	if maxRefreshAge > 0 {
 		if lastRefreshAt.IsZero() || now.Sub(lastRefreshAt) >= maxRefreshAge {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -52,15 +55,18 @@ func MergeRefreshed(current, next map[string]any) map[string]any {
 	if next == nil {
 		return nil
 	}
+
 	out := map[string]any{}
 	nowIso := time.Now().UTC().Format(time.RFC3339)
 
 	if v, ok := next["accessToken"].(string); ok && v != "" {
 		out["accessToken"] = v
 	}
+
 	if v, ok := next["apiKey"].(string); ok && v != "" {
 		out["apiKey"] = v
 	}
+
 	if v, ok := next["token"].(string); ok && v != "" {
 		out["token"] = v
 	}
@@ -69,6 +75,7 @@ func MergeRefreshed(current, next map[string]any) map[string]any {
 	if rt == "" {
 		rt = strAny(current, "refreshToken")
 	}
+
 	if rt != "" {
 		out["refreshToken"] = rt
 	}
@@ -77,6 +84,7 @@ func MergeRefreshed(current, next map[string]any) map[string]any {
 	if id == "" {
 		id = strAny(current, "idToken")
 	}
+
 	if id != "" {
 		out["idToken"] = id
 	}
@@ -100,6 +108,7 @@ func MergeRefreshed(current, next map[string]any) map[string]any {
 	if v, ok := next["copilotToken"]; ok {
 		out["copilotToken"] = v
 	}
+
 	if v := strAny(next, "copilotTokenExpiresAt"); v != "" {
 		out["copilotTokenExpiresAt"] = v
 	}
@@ -124,8 +133,8 @@ type TokenRefresher interface {
 // CredManager refresh-if-needed with per-connection mutex.
 type CredManager struct {
 	refresher TokenRefresher
-	mu        sync.Mutex
 	locks     map[string]*sync.Mutex
+	mu        sync.Mutex
 }
 
 func NewCredManager(r TokenRefresher) *CredManager {
@@ -138,11 +147,14 @@ func NewCredManager(r TokenRefresher) *CredManager {
 func (cm *CredManager) lockFor(id string) *sync.Mutex {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+
 	if m, ok := cm.locks[id]; ok {
 		return m
 	}
+
 	m := &sync.Mutex{}
 	cm.locks[id] = m
+
 	return m
 }
 
@@ -152,9 +164,11 @@ func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, con
 	if cm == nil || conn == nil || st == nil {
 		return conn, nil
 	}
+
 	if conn.AuthType != "oauth" && conn.RefreshToken == "" {
 		return conn, nil
 	}
+
 	if conn.RefreshToken == "" {
 		return conn, nil
 	}
@@ -162,6 +176,7 @@ func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, con
 	expiresAt := parseTime(conn.ExpiresAt)
 	lastRefresh := lastRefreshFromPSD(conn.ProviderSpecificData)
 	maxAge := MaxRefreshAge(conn.Provider)
+
 	if !ShouldRefresh(conn.Provider, expiresAt, lastRefresh, maxAge, DefaultRefreshLead) {
 		return conn, nil
 	}
@@ -175,6 +190,7 @@ func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, con
 		conn = fresh
 		expiresAt = parseTime(conn.ExpiresAt)
 		lastRefresh = lastRefreshFromPSD(conn.ProviderSpecificData)
+
 		if !ShouldRefresh(conn.Provider, expiresAt, lastRefresh, maxAge, DefaultRefreshLead) {
 			return conn, nil
 		}
@@ -188,12 +204,15 @@ func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, con
 	if err != nil {
 		return conn, err
 	}
+
 	if access == "" {
 		return conn, fmt.Errorf("empty access token after refresh")
 	}
+
 	if refresh == "" {
 		refresh = conn.RefreshToken
 	}
+
 	expStr := conn.ExpiresAt
 	if !exp.IsZero() {
 		expStr = exp.UTC().Format(time.RFC3339)
@@ -207,6 +226,7 @@ func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, con
 	if conn.ProviderSpecificData == nil {
 		conn.ProviderSpecificData = map[string]any{}
 	}
+
 	conn.ProviderSpecificData["lastRefreshAt"] = time.Now().UTC().Format(time.RFC3339)
 	if b, err := json.Marshal(conn.ProviderSpecificData); err == nil {
 		_ = st.UpdateConnectionPSD(conn.ID, string(b))
@@ -215,6 +235,7 @@ func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, con
 	conn.AccessToken = access
 	conn.RefreshToken = refresh
 	conn.ExpiresAt = expStr
+
 	return conn, nil
 }
 
@@ -222,12 +243,15 @@ func parseTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
+
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t
 	}
+
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t
 	}
+
 	return time.Time{}
 }
 
@@ -235,11 +259,13 @@ func lastRefreshFromPSD(psd map[string]any) time.Time {
 	if psd == nil {
 		return time.Time{}
 	}
+
 	for _, k := range []string{"lastRefreshAt", "lastRefresh"} {
 		if v := strAny(psd, k); v != "" {
 			return parseTime(v)
 		}
 	}
+
 	return time.Time{}
 }
 
@@ -247,10 +273,12 @@ func strAny(m map[string]any, k string) string {
 	if m == nil {
 		return ""
 	}
+
 	v, ok := m[k]
 	if !ok || v == nil {
 		return ""
 	}
+
 	switch t := v.(type) {
 	case string:
 		return t
@@ -279,8 +307,10 @@ func mergeMaps(a, b map[string]any) map[string]any {
 	for k, v := range a {
 		out[k] = v
 	}
+
 	for k, v := range b {
 		out[k] = v
 	}
+
 	return out
 }

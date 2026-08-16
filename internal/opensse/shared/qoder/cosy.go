@@ -42,6 +42,7 @@ func generateAESKey() string {
 	if len(u) > 16 {
 		return u[:16]
 	}
+
 	return u
 }
 
@@ -49,6 +50,7 @@ func generateAESKey() string {
 func pkcs7Pad(data []byte, blockSize int) []byte {
 	padding := blockSize - (len(data) % blockSize)
 	padText := bytes.Repeat([]byte{byte(padding)}, padding)
+
 	return append(data, padText...)
 }
 
@@ -154,10 +156,12 @@ func ComputeSigPath(rawURL string) string {
 	if err != nil {
 		return ""
 	}
+
 	pathname := u.Path
 	if strings.HasPrefix(pathname, "/algo") {
 		return pathname[len("/algo"):]
 	}
+
 	return pathname
 }
 
@@ -174,6 +178,7 @@ func BuildCosyHeaders(body []byte, requestURL string, creds CosyCreds) (map[stri
 	if creds.UserID == "" {
 		return nil, errors.New("cosy: user id is empty")
 	}
+
 	if creds.AuthToken == "" {
 		return nil, errors.New("cosy: auth token is empty")
 	}
@@ -193,15 +198,18 @@ func BuildCosyHeaders(body []byte, requestURL string, creds CosyCreds) (map[stri
 		CosyVersion: QODER_IDE_VERSION,
 		IDEVersion:  "",
 	}
+
 	payloadBytes, err := json.Marshal(payloadObj)
 	if err != nil {
 		return nil, fmt.Errorf("marshal payload: %w", err)
 	}
+
 	payloadB64 := base64.StdEncoding.EncodeToString(payloadBytes)
 
 	sigPath := ComputeSigPath(requestURL)
 	// Signature input: payloadB64 + "\n" + cosyKey + "\n" + timestamp + "\n" + body + "\n" + sigPath
 	var sigBuf bytes.Buffer
+
 	sigBuf.WriteString(payloadB64)
 	sigBuf.WriteByte('\n')
 	sigBuf.WriteString(encInfo.CosyKey)
@@ -224,24 +232,24 @@ func BuildCosyHeaders(body []byte, requestURL string, creds CosyCreds) (map[stri
 
 	headers := map[string]string{
 		"Authorization":          "Bearer COSY." + payloadB64 + "." + sig,
-		"Cosy-Key":              encInfo.CosyKey,
-		"Cosy-User":             creds.UserID,
-		"Cosy-Date":             timestamp,
-		"Cosy-Version":          QODER_IDE_VERSION,
-		"Cosy-Machineid":        machineID,
-		"Cosy-Machinetoken":     machineID,
-		"Cosy-Machinetype":      QODER_MACHINE_TYPE,
-		"Cosy-Machineos":        QODER_MACHINE_OS,
-		"Cosy-Clienttype":       QODER_CLIENT_TYPE,
-		"Cosy-Clientip":         "127.0.0.1",
-		"Cosy-Bodyhash":         bodyHash,
-		"Cosy-Bodylength":       bodyLength,
-		"Cosy-Sigpath":          sigPath,
-		"Cosy-Data-Policy":      QODER_DATA_POLICY,
+		"Cosy-Key":               encInfo.CosyKey,
+		"Cosy-User":              creds.UserID,
+		"Cosy-Date":              timestamp,
+		"Cosy-Version":           QODER_IDE_VERSION,
+		"Cosy-Machineid":         machineID,
+		"Cosy-Machinetoken":      machineID,
+		"Cosy-Machinetype":       QODER_MACHINE_TYPE,
+		"Cosy-Machineos":         QODER_MACHINE_OS,
+		"Cosy-Clienttype":        QODER_CLIENT_TYPE,
+		"Cosy-Clientip":          "127.0.0.1",
+		"Cosy-Bodyhash":          bodyHash,
+		"Cosy-Bodylength":        bodyLength,
+		"Cosy-Sigpath":           sigPath,
+		"Cosy-Data-Policy":       QODER_DATA_POLICY,
 		"Cosy-Organization-Id":   "",
 		"Cosy-Organization-Tags": "",
-		"Login-Version":         QODER_LOGIN_VERSION,
-		"X-Request-Id":          uuid.New().String(),
+		"Login-Version":          QODER_LOGIN_VERSION,
+		"X-Request-Id":           uuid.New().String(),
 	}
 
 	return headers, nil

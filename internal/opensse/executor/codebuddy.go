@@ -19,9 +19,7 @@ const (
 	codeBuddyIntlSystem    = "You are CodeBuddy Code."
 )
 
-var (
-	codeBuddyAgentPattern = regexp.MustCompile(`(?i)you are claude code|claude.?code.+official.+cli|anthropic.+official.+cli|anxthxropic.+official.+cli|you are (?:cursor|windsurf|cline|aider|continue|copilot|cody)|you are an? (?:ai )?(?:coding |code )?agent|cc_entrypoint\s*=\s*(?:cli|vscode|jetbrains|gui)|claude.?code.+issues|give feedback.+claude.?code|you are .{0,30}(?:powerful )?ai agent|orchestration capabilities|OhMyOpenCode|<agent-identity>|<Role>|<Behavior_Instructions>`)
-)
+var codeBuddyAgentPattern = regexp.MustCompile(`(?i)you are claude code|claude.?code.+official.+cli|anthropic.+official.+cli|anxthxropic.+official.+cli|you are (?:cursor|windsurf|cline|aider|continue|copilot|cody)|you are an? (?:ai )?(?:coding |code )?agent|cc_entrypoint\s*=\s*(?:cli|vscode|jetbrains|gui)|claude.?code.+issues|give feedback.+claude.?code|you are .{0,30}(?:powerful )?ai agent|orchestration capabilities|OhMyOpenCode|<agent-identity>|<Role>|<Behavior_Instructions>`)
 
 type CodeBuddyExecutor struct {
 	DefaultExecutor
@@ -32,12 +30,14 @@ func NewCodeBuddyExecutor(providerID string, client *http.Client) *CodeBuddyExec
 	if client == nil {
 		client = http.DefaultClient
 	}
+
 	e := NewDefaultForProvider(client, providerID)
 	if providerID == "codebuddy-intl" {
 		e.baseURL = "https://www.codebuddy.ai/v2"
 	} else {
 		e.baseURL = "https://copilot.tencent.com/v2"
 	}
+
 	return &CodeBuddyExecutor{
 		DefaultExecutor: *e,
 		providerID:      providerID,
@@ -48,11 +48,13 @@ func flattenCodeBuddyContent(content any) string {
 	if content == nil {
 		return ""
 	}
+
 	switch v := content.(type) {
 	case string:
 		return v
 	case []any:
 		var parts []string
+
 		for _, b := range v {
 			if m, ok := b.(map[string]any); ok {
 				if t, ok := m["text"].(string); ok && t != "" {
@@ -60,6 +62,7 @@ func flattenCodeBuddyContent(content any) string {
 				}
 			}
 		}
+
 		return strings.Join(parts, "\n")
 	default:
 		return fmt.Sprint(v)
@@ -71,12 +74,14 @@ func transformCodeBuddyCN(body map[string]any) map[string]any {
 
 	if rawMsgs, ok := body["messages"].([]any); ok {
 		var newMsgs []any
+
 		for _, item := range rawMsgs {
 			msg, ok := item.(map[string]any)
 			if !ok {
 				newMsgs = append(newMsgs, item)
 				continue
 			}
+
 			role, _ := msg["role"].(string)
 			if role != "system" {
 				newMsgs = append(newMsgs, msg)
@@ -94,16 +99,19 @@ func transformCodeBuddyCN(body map[string]any) map[string]any {
 				for k, v := range msg {
 					cloned[k] = v
 				}
+
 				if _, ok := msg["content"].(string); ok {
 					cloned["content"] = codeBuddyNeutralPrompt
 				} else {
 					cloned["content"] = []any{map[string]any{"type": "text", "text": codeBuddyNeutralPrompt}}
 				}
+
 				newMsgs = append(newMsgs, cloned)
 			} else {
 				newMsgs = append(newMsgs, msg)
 			}
 		}
+
 		body["messages"] = newMsgs
 	}
 
@@ -141,27 +149,33 @@ func transformCodeBuddyIntl(body map[string]any) map[string]any {
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 		if role == "system" || role == "developer" {
 			continue
 		}
+
 		if role == "user" {
 			if contentStr, ok := msg["content"].(string); ok {
 				cloned := make(map[string]any, len(msg))
 				for k, v := range msg {
 					cloned[k] = v
 				}
+
 				cloned["content"] = []any{
 					map[string]any{"type": "text", "text": contentStr},
 				}
 				newMessages = append(newMessages, cloned)
+
 				continue
 			}
 		}
+
 		newMessages = append(newMessages, msg)
 	}
 
 	body["messages"] = newMessages
+
 	return body
 }
 

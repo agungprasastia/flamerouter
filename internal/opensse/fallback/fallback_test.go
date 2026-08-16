@@ -9,11 +9,14 @@ import (
 func setupTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	dir := t.TempDir()
+
 	st, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { st.Close() })
+
 	return st
 }
 
@@ -24,10 +27,12 @@ func TestMarkUnavailable(t *testing.T) {
 	f := fallback.New(st)
 
 	_, _ = f.MarkUnavailable("conn1", 429, "rate limit exceeded", 0)
+
 	state := f.GetState("conn1")
 	if state.BackoffLevel != 1 {
 		t.Fatalf("expected backoff level 1, got %d", state.BackoffLevel)
 	}
+
 	if state.UnavailableUntil == "" {
 		t.Fatal("expected unavailable until to be set")
 	}
@@ -53,6 +58,7 @@ func TestMarkUnavailable_Transient(t *testing.T) {
 	f := fallback.New(st)
 
 	_, _ = f.MarkUnavailable("conn1", 500, "internal error", 0)
+
 	state := f.GetState("conn1")
 	if state.BackoffLevel != 0 {
 		t.Fatalf("expected backoff level 0 for transient, got %d", state.BackoffLevel)
@@ -65,6 +71,7 @@ func TestClearError(t *testing.T) {
 
 	_, _ = f.MarkUnavailable("conn1", 429, "rate limit", 0)
 	f.ClearError("conn1")
+
 	state := f.GetState("conn1")
 	if state.BackoffLevel != 0 {
 		t.Fatalf("expected backoff level 0 after clear, got %d", state.BackoffLevel)
@@ -82,6 +89,7 @@ func TestSelectAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if conn == nil {
 		t.Fatal("expected a connection")
 	}
@@ -99,9 +107,11 @@ func TestSelectAccount_ExcludesUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if conn == nil {
 		t.Fatal("expected a connection after excluding")
 	}
+
 	if conn.ID == id1 {
 		t.Fatal("should not return excluded connection")
 	}
@@ -118,6 +128,7 @@ func TestSelectAccountWithStrategy_FillFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if c1 == nil {
 		t.Fatal("expected connection")
 	}
@@ -126,6 +137,7 @@ func TestSelectAccountWithStrategy_FillFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if c2.ID != c1.ID {
 		t.Fatalf("fill-first should stick to first available, got %s then %s", c1.ID, c2.ID)
 	}
@@ -134,9 +146,11 @@ func TestSelectAccountWithStrategy_FillFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if c3.ID != c1.ID {
 		t.Fatalf("default strategy should match fill-first")
 	}
+
 	_ = id1
 	_ = id2
 }
@@ -150,23 +164,28 @@ func TestSelectAccountWithStrategy_RoundRobin(t *testing.T) {
 	sticky := 2
 
 	var ids []string
+
 	for i := 0; i < 4; i++ {
 		c, err := f.SelectAccountWithStrategy("openai", "round-robin", sticky, exclude)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if c == nil {
 			t.Fatal("expected connection")
 		}
+
 		ids = append(ids, c.ID)
 	}
 	// sticky=2: A,A,B,B (or B,B,A,A depending first pick)
 	if ids[0] != ids[1] {
 		t.Fatalf("sticky: first two should match, got %v", ids)
 	}
+
 	if ids[2] != ids[3] {
 		t.Fatalf("sticky: last two should match, got %v", ids)
 	}
+
 	if ids[0] == ids[2] {
 		t.Fatalf("should rotate after sticky limit, got %v", ids)
 	}

@@ -3,19 +3,18 @@ package testutil
 import (
 	"bytes"
 	"context"
+	"flamerouter/internal/opensse/executor"
 	"io"
 	"maps"
 	"net/http"
 	"sync"
-
-	"flamerouter/internal/opensse/executor"
 )
 
 type Response struct {
-	StatusCode int
 	Header     http.Header
 	Body       []byte
 	StreamBody []byte
+	StatusCode int
 }
 
 type Call struct {
@@ -26,10 +25,10 @@ type Call struct {
 }
 
 type FakeExecutor struct {
-	mu        sync.Mutex
 	responses []Response
 	errors    []error
 	calls     []Call
+	mu        sync.Mutex
 }
 
 var _ executor.Executor = (*FakeExecutor)(nil)
@@ -63,6 +62,7 @@ func (f *FakeExecutor) Calls() []Call {
 			Stream:      call.Stream,
 		}
 	}
+
 	return calls
 }
 
@@ -79,6 +79,7 @@ func (f *FakeExecutor) Execute(_ context.Context, credentials executor.Credentia
 	if len(f.errors) > 0 {
 		err := f.errors[0]
 		f.errors = f.errors[1:]
+
 		return nil, err
 	}
 
@@ -87,10 +88,12 @@ func (f *FakeExecutor) Execute(_ context.Context, credentials executor.Credentia
 		response = f.responses[0]
 		f.responses = f.responses[1:]
 	}
+
 	bodyBytes := response.Body
 	if stream && response.StreamBody != nil {
 		bodyBytes = response.StreamBody
 	}
+
 	return &executor.Result{
 		StatusCode: response.StatusCode,
 		Header:     response.Header.Clone(),
@@ -104,5 +107,6 @@ func cloneCredentials(credentials executor.Credentials) executor.Credentials {
 		clone.ProviderSpecificData = make(map[string]any, len(credentials.ProviderSpecificData))
 		maps.Copy(clone.ProviderSpecificData, credentials.ProviderSpecificData)
 	}
+
 	return clone
 }

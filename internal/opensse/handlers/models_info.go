@@ -1,9 +1,8 @@
 package handlers
 
 import (
-	"strings"
-
 	"flamerouter/internal/provider"
+	"strings"
 )
 
 func lookupModelInfo(fullID, requestedKind string) map[string]any {
@@ -11,6 +10,7 @@ func lookupModelInfo(fullID, requestedKind string) map[string]any {
 	if slash < 0 {
 		return nil
 	}
+
 	alias := fullID[:slash]
 	modelID := fullID[slash+1:]
 
@@ -18,17 +18,21 @@ func lookupModelInfo(fullID, requestedKind string) map[string]any {
 	if p == nil {
 		p = provider.GetProvider(alias)
 	}
+
 	if p == nil {
 		return nil
 	}
+
 	outAlias := p.Alias
 	if outAlias == "" {
 		outAlias = p.ID
 	}
+
 	for _, m := range p.Models {
 		if m.ID != modelID {
 			continue
 		}
+
 		mk := modelKind(m)
 		if requestedKind != "" && mk != requestedKind && requestedKind != mk {
 			// allow slug forms
@@ -36,6 +40,7 @@ func lookupModelInfo(fullID, requestedKind string) map[string]any {
 				continue
 			}
 		}
+
 		info := map[string]any{
 			"id":       outAlias + "/" + m.ID,
 			"name":     m.Name,
@@ -46,12 +51,16 @@ func lookupModelInfo(fullID, requestedKind string) map[string]any {
 		if m.Params != nil {
 			info["params"] = m.Params
 		}
+
 		if m.Dimensions > 0 {
 			info["dimensions"] = m.Dimensions
 		}
+
 		caps := provider.GetCapabilities(m.ID)
 		info["capabilities"] = caps
+
 		return info
 	}
+
 	return nil
 }

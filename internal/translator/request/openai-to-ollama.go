@@ -21,6 +21,7 @@ func openaiToOllamaRequest(model string, body map[string]any, stream bool, crede
 		if _, ok := result["options"]; !ok {
 			result["options"] = map[string]any{}
 		}
+
 		result["options"].(map[string]any)["temperature"] = temp
 	}
 
@@ -28,6 +29,7 @@ func openaiToOllamaRequest(model string, body map[string]any, stream bool, crede
 		if _, ok := result["options"]; !ok {
 			result["options"] = map[string]any{}
 		}
+
 		result["options"].(map[string]any)["num_predict"] = int(mt)
 	}
 
@@ -35,6 +37,7 @@ func openaiToOllamaRequest(model string, body map[string]any, stream bool, crede
 		if _, ok := result["options"]; !ok {
 			result["options"] = map[string]any{}
 		}
+
 		result["options"].(map[string]any)["top_p"] = tp
 	}
 
@@ -56,23 +59,28 @@ func normalizeOllamaMessages(body map[string]any) []any {
 	}
 
 	toolCallMap := make(map[string]string)
+
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		if msg["role"] != schema.RoleAssistant {
 			continue
 		}
+
 		if tc, ok := msg["tool_calls"].([]any); ok {
 			for _, tcRaw := range tc {
 				toolCall, ok := tcRaw.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				fn, _ := toolCall["function"].(map[string]any)
 				name, _ := fn["name"].(string)
 				id, _ := toolCall["id"].(string)
+
 				if id != "" && name != "" {
 					toolCallMap[id] = name
 				}
@@ -81,25 +89,30 @@ func normalizeOllamaMessages(body map[string]any) []any {
 	}
 
 	var result []any
+
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 
 		if role == schema.RoleTool {
 			content := normalizeOllamaContent(msg["content"])
 			tcid, _ := msg["tool_call_id"].(string)
+
 			toolName := toolCallMap[tcid]
 			if toolName == "" {
 				toolName = "unknown_tool"
 			}
+
 			result = append(result, map[string]any{
 				"role":      schema.RoleTool,
 				"tool_name": toolName,
 				"content":   content,
 			})
+
 			continue
 		}
 
@@ -109,20 +122,26 @@ func normalizeOllamaMessages(body map[string]any) []any {
 				"role":    schema.RoleAssistant,
 				"content": content,
 			}
+
 			if tc, ok := msg["tool_calls"].([]any); ok {
 				var ollamaToolCalls []any
+
 				for _, tcRaw := range tc {
 					toolCall, ok := tcRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					fn, _ := toolCall["function"].(map[string]any)
 					name, _ := fn["name"].(string)
 					argsStr, _ := fn["arguments"].(string)
+
 					var args map[string]any
+
 					if argsStr != "" {
 						concerns.SafeParseJSON(argsStr, &args)
 					}
+
 					ollamaToolCalls = append(ollamaToolCalls, map[string]any{
 						"type": schema.OpenaiBlockFunction,
 						"function": map[string]any{
@@ -131,17 +150,22 @@ func normalizeOllamaMessages(body map[string]any) []any {
 						},
 					})
 				}
+
 				out["tool_calls"] = ollamaToolCalls
 			}
+
 			result = append(result, out)
+
 			continue
 		}
 
 		content := normalizeOllamaContent(msg["content"])
 		images := extractOllamaImages(msg["content"])
+
 		if content == "" && role != schema.RoleAssistant {
 			continue
 		}
+
 		out := map[string]any{
 			"role":    role,
 			"content": content,
@@ -149,6 +173,7 @@ func normalizeOllamaMessages(body map[string]any) []any {
 		if len(images) > 0 {
 			out["images"] = images
 		}
+
 		result = append(result, out)
 	}
 
@@ -159,30 +184,38 @@ func normalizeOllamaContent(content any) string {
 	if s, ok := content.(string); ok {
 		return s
 	}
+
 	if arr, ok := content.([]any); ok {
 		var parts []string
+
 		for _, blockRaw := range arr {
 			block, ok := blockRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			if block["type"] == schema.OpenaiBlockText {
 				if text, ok := block["text"].(string); ok {
 					parts = append(parts, text)
 				}
 			}
 		}
+
 		if len(parts) > 0 {
 			result := ""
+
 			for i, p := range parts {
 				if i > 0 {
 					result += "\n"
 				}
+
 				result += p
 			}
+
 			return result
 		}
 	}
+
 	return ""
 }
 
@@ -191,27 +224,34 @@ func extractOllamaImages(content any) []string {
 	if !ok {
 		return nil
 	}
+
 	var images []string
+
 	for _, blockRaw := range arr {
 		block, ok := blockRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		if block["type"] != schema.OpenaiBlockImageUrl {
 			continue
 		}
+
 		var url string
 		if iu, ok := block["image_url"].(map[string]any); ok {
 			url, _ = iu["url"].(string)
 		}
+
 		if url == "" {
 			continue
 		}
+
 		mime, data, err := concerns.ParseDataUri(url)
 		if err == nil && mime != "" {
 			_ = data
 			images = append(images, string(data))
 		}
 	}
+
 	return images
 }

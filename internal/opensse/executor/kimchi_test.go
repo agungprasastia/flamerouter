@@ -53,12 +53,15 @@ func TestKimchi_TransformRequest(t *testing.T) {
 	if _, hasSys := res["system"]; hasSys {
 		t.Fatalf("expected top-level system to be deleted")
 	}
+
 	if _, hasAV := res["anthropic_version"]; hasAV {
 		t.Fatalf("expected anthropic_version to be dropped")
 	}
+
 	if _, hasTh := res["thinking"]; hasTh {
 		t.Fatalf("expected thinking to be dropped for claude model")
 	}
+
 	if _, hasRE := res["reasoning_effort"]; hasRE {
 		t.Fatalf("expected reasoning_effort to be dropped for claude model")
 	}
@@ -74,11 +77,14 @@ func TestKimchi_TransformRequest(t *testing.T) {
 	if _, hasCC := userMsg["cache_control"]; hasCC {
 		t.Fatalf("expected msg cache_control dropped")
 	}
+
 	parts := userMsg["content"].([]any)
+
 	part0 := parts[0].(map[string]any)
 	if _, hasCC := part0["cache_control"]; hasCC {
 		t.Fatalf("expected content cache_control dropped")
 	}
+
 	if _, hasSig := part0["signature"]; hasSig {
 		t.Fatalf("expected signature dropped")
 	}
@@ -94,6 +100,7 @@ func TestKimchi_TransformRequest(t *testing.T) {
 	}
 
 	tools := res["tools"].([]any)
+
 	tool0 := tools[0].(map[string]any)
 	if _, hasCC := tool0["cache_control"]; hasCC {
 		t.Fatalf("expected tool cache_control dropped")
@@ -102,8 +109,10 @@ func TestKimchi_TransformRequest(t *testing.T) {
 
 func TestKimchi_ExecuteMock(t *testing.T) {
 	var receivedBody map[string]any
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
 	}))
@@ -131,12 +140,15 @@ func TestKimchi_ExecuteMock(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", res.StatusCode)
 	}
+
 	if _, hasCM := receivedBody["client_metadata"]; hasCM {
 		t.Fatalf("expected client_metadata dropped")
 	}
+
 	msgs, ok := receivedBody["messages"].([]any)
 	if !ok || len(msgs) < 2 {
 		t.Fatalf("expected system message prepended to messages, got %v", receivedBody["messages"])
 	}
+
 	_, _ = io.ReadAll(res.Body)
 }

@@ -34,9 +34,11 @@ func createIFlowSignature(userAgent, sessionID string, timestamp int64, apiKey s
 	if apiKey == "" {
 		return ""
 	}
+
 	payload := fmt.Sprintf("%s:%s:%d", userAgent, sessionID, timestamp)
 	mac := hmac.New(sha256.New, []byte(apiKey))
 	mac.Write([]byte(payload))
+
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -44,15 +46,18 @@ func (e *IFlowExecutor) buildHeaders(cred Credentials, stream bool) http.Header 
 	sessionID := "session-" + uuid.NewString()
 	timestamp := time.Now().UnixMilli()
 	ua := iflowUserAgent
+
 	if e.Headers != nil {
 		if v := e.Headers["User-Agent"]; v != "" {
 			ua = v
 		}
 	}
+
 	apiKey := cred.APIKey
 	if apiKey == "" {
 		apiKey = cred.AccessToken
 	}
+
 	sig := createIFlowSignature(ua, sessionID, timestamp, apiKey)
 
 	h := make(http.Header)
@@ -61,12 +66,15 @@ func (e *IFlowExecutor) buildHeaders(cred Credentials, stream bool) http.Header 
 	h.Set("session-id", sessionID)
 	h.Set("x-iflow-timestamp", strconv.FormatInt(timestamp, 10))
 	h.Set("x-iflow-signature", sig)
+
 	if apiKey != "" {
 		h.Set("Authorization", "Bearer "+apiKey)
 	}
+
 	if stream {
 		h.Set("Accept", "text/event-stream")
 	}
+
 	return h
 }
 
@@ -78,6 +86,7 @@ func (e *IFlowExecutor) transform(body map[string]any, stream bool) map[string]a
 			}
 		}
 	}
+
 	return body
 }
 
@@ -86,13 +95,16 @@ func (e *IFlowExecutor) Execute(ctx context.Context, cred Credentials, model str
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	m["model"] = model
 	m["stream"] = stream
 	m = e.transform(m, stream)
+
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return nil, err
 	}
+
 	url := e.BaseURL
 	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" {
 		url = base
@@ -100,5 +112,6 @@ func (e *IFlowExecutor) Execute(ctx context.Context, cred Credentials, model str
 			url = base + "/chat/completions"
 		}
 	}
+
 	return e.DoPOST(ctx, url, e.buildHeaders(cred, stream), payload)
 }

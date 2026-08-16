@@ -13,17 +13,20 @@ func init() {
 
 func claudeToOpenAIRequest(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any {
 	result := map[string]any{
-		"model":   model,
+		"model":    model,
 		"messages": []any{},
-		"stream":  stream,
+		"stream":   stream,
 	}
 	if mt, ok := body["max_tokens"].(float64); ok && mt > 0 {
 		result["max_tokens"] = int(mt)
 	}
+
 	if temp, ok := body["temperature"]; ok {
 		result["temperature"] = temp
 	}
+
 	var systemParts []string
+
 	if sys, ok := body["system"]; ok {
 		switch v := sys.(type) {
 		case string:
@@ -38,17 +41,27 @@ func claudeToOpenAIRequest(model string, body map[string]any, stream bool, crede
 			}
 		}
 	}
+
 	messages := []any{}
+	if len(systemParts) > 0 {
+		messages = append(messages, map[string]any{
+			"role":    "system",
+			"content": strings.Join(systemParts, "\n\n"),
+		})
+	}
+
 	if bodyMessages, ok := body["messages"].([]any); ok {
 		for _, msgRaw := range bodyMessages {
 			msg, _ := msgRaw.(map[string]any)
 			if msg == nil {
 				continue
 			}
+
 			converted := convertClaudeMessage(msg)
 			if converted == nil {
 				continue
 			}
+
 			if arr, ok := converted.([]any); ok {
 				messages = append(messages, arr...)
 			} else {
@@ -56,15 +69,19 @@ func claudeToOpenAIRequest(model string, body map[string]any, stream bool, crede
 			}
 		}
 	}
+
 	fixMissingToolResponsesOpenAI(messages)
 	result["messages"] = messages
+
 	if tools, ok := body["tools"].([]any); ok {
 		var openaiTools []any
+
 		for _, toolRaw := range tools {
 			tool, _ := toolRaw.(map[string]any)
 			if tool == nil {
 				continue
 			}
+
 			openaiTools = append(openaiTools, map[string]any{
 				"type": "function",
 				"function": map[string]any{
@@ -74,16 +91,20 @@ func claudeToOpenAIRequest(model string, body map[string]any, stream bool, crede
 				},
 			})
 		}
+
 		if len(openaiTools) > 0 {
 			result["tools"] = openaiTools
 		}
 	}
+
 	if tc, ok := body["tool_choice"]; ok {
 		result["tool_choice"] = convertToolChoice(tc)
 	}
+
 	if re, ok := body["reasoning_effort"]; ok {
 		result["reasoning_effort"] = re
 	}
+
 	return result
 }
 
@@ -94,28 +115,37 @@ func convertClaudeMessage(msg map[string]any) any {
 		if text != "" {
 			return map[string]any{"role": "user", "content": "<instructions>\n" + text + "\n</instructions>"}
 		}
+
 		return nil
 	}
+
 	openaiRole := "user"
 	if role == "assistant" {
 		openaiRole = "assistant"
 	}
+
 	content, ok := msg["content"].(string)
 	if ok {
 		return map[string]any{"role": openaiRole, "content": content}
 	}
+
 	contentArr, ok := msg["content"].([]any)
 	if !ok {
 		return nil
 	}
+
 	var parts []any
+
 	var toolCalls []any
+
 	var toolResults []any
+
 	for _, blockRaw := range contentArr {
 		block, _ := blockRaw.(map[string]any)
 		if block == nil {
 			continue
 		}
+
 		btype, _ := block["type"].(string)
 		switch btype {
 		case "text":
@@ -158,6 +188,7 @@ func convertClaudeMessage(msg map[string]any) any {
 					}
 				}
 			}
+
 			toolResults = append(toolResults, map[string]any{
 				"role":         "tool",
 				"tool_call_id": block["tool_use_id"],
@@ -165,26 +196,34 @@ func convertClaudeMessage(msg map[string]any) any {
 			})
 		}
 	}
+
 	if len(toolResults) > 0 {
 		if len(parts) > 0 {
 			toolResults = append(toolResults, map[string]any{"role": "user", "content": collapseTextParts(parts)})
 		}
+
 		return toolResults
 	}
+
 	if len(toolCalls) > 0 {
 		result := map[string]any{"role": "assistant"}
 		if len(parts) > 0 {
 			result["content"] = collapseTextParts(parts)
 		}
+
 		result["tool_calls"] = toolCalls
+
 		return result
 	}
+
 	if len(parts) > 0 {
 		return map[string]any{"role": openaiRole, "content": collapseTextParts(parts)}
 	}
+
 	if len(contentArr) == 0 {
 		return map[string]any{"role": openaiRole, "content": ""}
 	}
+
 	return nil
 }
 
@@ -192,13 +231,16 @@ func convertToolChoice(choice any) any {
 	if choice == nil {
 		return "auto"
 	}
+
 	if s, ok := choice.(string); ok {
 		return s
 	}
+
 	m, ok := choice.(map[string]any)
 	if !ok {
 		return "auto"
 	}
+
 	ttype, _ := m["type"].(string)
 	switch ttype {
 	case "auto":
@@ -210,6 +252,7 @@ func convertToolChoice(choice any) any {
 			return map[string]any{"type": "function", "function": map[string]any{"name": name}}
 		}
 	}
+
 	return "auto"
 }
 
@@ -219,41 +262,52 @@ func fixMissingToolResponsesOpenAI(messages []any) {
 		if msg == nil {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 		if role != "assistant" {
 			continue
 		}
+
 		toolCalls, ok := msg["tool_calls"].([]any)
 		if !ok || len(toolCalls) == 0 {
 			continue
 		}
+
 		var ids []string
+
 		for _, tcRaw := range toolCalls {
 			tc, _ := tcRaw.(map[string]any)
 			if tc == nil {
 				continue
 			}
+
 			if id, ok := tc["id"].(string); ok && id != "" {
 				ids = append(ids, id)
 			}
 		}
+
 		respondedIds := make(map[string]bool)
 		insertPos := i + 1
+
 		for j := i + 1; j < len(messages); j++ {
 			nextMsg, _ := messages[j].(map[string]any)
 			if nextMsg == nil {
 				break
 			}
+
 			nextRole, _ := nextMsg["role"].(string)
 			if nextRole != "tool" {
 				break
 			}
+
 			if tcid, ok := nextMsg["tool_call_id"].(string); ok && tcid != "" {
 				respondedIds[tcid] = true
 				insertPos = j + 1
 			}
 		}
+
 		var missing []any
+
 		for _, id := range ids {
 			if !respondedIds[id] {
 				missing = append(missing, map[string]any{
@@ -263,14 +317,17 @@ func fixMissingToolResponsesOpenAI(messages []any) {
 				})
 			}
 		}
+
 		if len(missing) > 0 {
 			newMsgs := make([]any, 0, len(messages)+len(missing))
 			newMsgs = append(newMsgs, messages[:insertPos]...)
 			newMsgs = append(newMsgs, missing...)
 			newMsgs = append(newMsgs, messages[insertPos:]...)
+
 			for idx := range messages {
 				messages[idx] = nil
 			}
+
 			for idx, v := range newMsgs {
 				if idx < len(messages) {
 					messages[idx] = v
@@ -278,6 +335,7 @@ func fixMissingToolResponsesOpenAI(messages []any) {
 					messages = append(messages, v)
 				}
 			}
+
 			i = insertPos + len(missing) - 1
 		}
 	}
@@ -289,6 +347,7 @@ func extractTextContent(content any) string {
 		return v
 	case []any:
 		var texts []string
+
 		for _, item := range v {
 			if m, ok := item.(map[string]any); ok {
 				if t, ok := m["text"].(string); ok {
@@ -296,13 +355,16 @@ func extractTextContent(content any) string {
 				}
 			}
 		}
+
 		return strings.Join(texts, "\n")
 	}
+
 	return ""
 }
 
 func collapseTextParts(parts []any) string {
 	var texts []string
+
 	for _, p := range parts {
 		if m, ok := p.(map[string]any); ok {
 			if t, ok := m["text"].(string); ok && t != "" {
@@ -310,6 +372,7 @@ func collapseTextParts(parts []any) string {
 			}
 		}
 	}
+
 	return strings.Join(texts, "\n")
 }
 
@@ -318,5 +381,6 @@ func marshalJSON(v any) string {
 	if err != nil {
 		return "{}"
 	}
+
 	return string(b)
 }

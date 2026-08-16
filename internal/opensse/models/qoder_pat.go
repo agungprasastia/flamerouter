@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flamerouter/internal/opensse/shared/qoder"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
 	"time"
-
-	"flamerouter/internal/opensse/shared/qoder"
 )
 
 const (
@@ -19,9 +18,9 @@ const (
 )
 
 type patCacheItem struct {
+	expiresAt   time.Time
 	accessToken string
 	userId      string
-	expiresAt   time.Time
 }
 
 var (
@@ -41,10 +40,12 @@ func exchangeJobToken(ctx context.Context, client *http.Client, pat string) (str
 	defer cancel()
 
 	payload, _ := json.Marshal(map[string]string{"personal_token": pat})
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, qoder.QODER_JOB_TOKEN_EXCHANGE_URL, bytes.NewReader(payload))
 	if err != nil {
 		return "", time.Time{}, err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "qodercli/1.0.0")
@@ -66,11 +67,13 @@ func exchangeJobToken(ctx context.Context, client *http.Client, pat string) (str
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return "", time.Time{}, err
 	}
+
 	if data.Token == "" {
 		return "", time.Time{}, fmt.Errorf("qoder PAT exchange returned empty job token")
 	}
 
 	expiresAt := time.Now().Add(patDefaultTTL)
+
 	if data.ExpiresAt != "" {
 		if t, err := time.Parse(time.RFC3339, data.ExpiresAt); err == nil {
 			expiresAt = t
@@ -90,6 +93,7 @@ func fetchUserIDForJobToken(ctx context.Context, client *http.Client, jobToken s
 	if err != nil {
 		return ""
 	}
+
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", jobToken))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "qodercli/1.0.0")
@@ -108,11 +112,13 @@ func fetchUserIDForJobToken(ctx context.Context, client *http.Client, jobToken s
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
 		return ""
 	}
+
 	for _, k := range []string{"id", "userId", "user_id"} {
 		if s, ok := m[k].(string); ok && s != "" {
 			return s
 		}
 	}
+
 	return ""
 }
 
@@ -134,6 +140,7 @@ func ResolvePatCredential(ctx context.Context, client *http.Client, pat string) 
 	if err != nil {
 		return "", "", err
 	}
+
 	userID := fetchUserIDForJobToken(ctx, client, jobToken)
 
 	patMu.Lock()

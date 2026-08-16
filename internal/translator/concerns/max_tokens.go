@@ -10,7 +10,9 @@ func AdjustMaxTokens(body map[string]any, ceiling int) int {
 	if ceiling <= 0 {
 		ceiling = DefaultMaxTokens
 	}
+
 	maxTokens := DefaultMaxTokens
+
 	if body != nil {
 		switch v := body["max_tokens"].(type) {
 		case float64:
@@ -30,6 +32,7 @@ func AdjustMaxTokens(body map[string]any, ceiling int) int {
 				maxTokens = DefaultMinTokens
 			}
 		}
+
 		if thinking, ok := body["thinking"].(map[string]any); ok {
 			var budget int
 			switch b := thinking["budget_tokens"].(type) {
@@ -38,6 +41,7 @@ func AdjustMaxTokens(body map[string]any, ceiling int) int {
 			case int:
 				budget = b
 			}
+
 			if budget > 0 && maxTokens <= budget {
 				maxTokens = budget + 1024
 			}
@@ -47,5 +51,6 @@ func AdjustMaxTokens(body map[string]any, ceiling int) int {
 	if maxTokens > ceiling {
 		maxTokens = ceiling
 	}
+
 	return maxTokens
 }

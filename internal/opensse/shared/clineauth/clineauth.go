@@ -20,6 +20,7 @@ func GetClineAccessToken(token string) string {
 	if trimmed == "" {
 		return ""
 	}
+
 	if strings.HasPrefix(trimmed, "workos:") {
 		return trimmed
 	}
@@ -29,8 +30,10 @@ func GetClineAccessToken(token string) string {
 		if strings.HasPrefix(raw, "workos:") {
 			return raw
 		}
+
 		return "workos:" + raw
 	}
+
 	return "workos:" + trimmed
 }
 
@@ -40,6 +43,7 @@ func GetClineAuthorizationHeader(token string) string {
 	if accessToken == "" {
 		return ""
 	}
+
 	return "Bearer " + accessToken
 }
 
@@ -60,13 +64,13 @@ func BuildClineHeaders(token string, rawHeaders map[string]string) map[string]st
 	}
 
 	headers := map[string]string{
-		"HTTP-Referer":    refererURL,
-		"X-Title":         titleHeader,
-		"User-Agent":      "Cline/1.0",
-		"X-PLATFORM":      plat,
-		"X-CLIENT-TYPE":   clientType,
-		"X-CORE-VERSION":  defaultAppVersion,
-		"X-IS-MULTIROOT":  "false",
+		"HTTP-Referer":   refererURL,
+		"X-Title":        titleHeader,
+		"User-Agent":     "Cline/1.0",
+		"X-PLATFORM":     plat,
+		"X-CLIENT-TYPE":  clientType,
+		"X-CORE-VERSION": defaultAppVersion,
+		"X-IS-MULTIROOT": "false",
 	}
 
 	for k, v := range rawHeaders {

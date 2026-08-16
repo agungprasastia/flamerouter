@@ -1,9 +1,8 @@
 package model_test
 
 import (
-	"testing"
-
 	"flamerouter/internal/opensse/model"
+	"testing"
 )
 
 func TestParseModel_ProviderSlash(t *testing.T) {
@@ -32,6 +31,7 @@ func TestResolveProviderAlias(t *testing.T) {
 	if model.ResolveProviderAlias("or", aliases) != "openrouter" {
 		t.Fatal()
 	}
+
 	if model.ResolveProviderAlias("unknown", aliases) != "unknown" {
 		t.Fatal()
 	}

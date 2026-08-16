@@ -14,6 +14,7 @@ func CountTokens(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"input_tokens": estimateAnthropicInputTokens(body),
@@ -22,11 +23,13 @@ func CountTokens(w http.ResponseWriter, r *http.Request) {
 
 func estimateAnthropicInputTokens(body map[string]any) int {
 	total := countValueChars(body["system"]) + countValueChars(body["tools"])
+
 	if msgs, ok := body["messages"].([]any); ok {
 		for _, m := range msgs {
 			total += countMessageChars(m)
 		}
 	}
+
 	return int(math.Ceil(float64(total) / 4))
 }
 
@@ -35,6 +38,7 @@ func countMessageChars(message any) int {
 	if !ok {
 		return 0
 	}
+
 	content := msg["content"]
 	switch c := content.(type) {
 	case string:
@@ -44,6 +48,7 @@ func countMessageChars(message any) int {
 		for _, b := range c {
 			n += countContentBlockChars(b)
 		}
+
 		return n
 	default:
 		return countValueChars(content)
@@ -54,13 +59,16 @@ func countContentBlockChars(block any) int {
 	if block == nil {
 		return 0
 	}
+
 	if s, ok := block.(string); ok {
 		return len(s)
 	}
+
 	m, ok := block.(map[string]any)
 	if !ok {
 		return countValueChars(block)
 	}
+
 	switch m["type"] {
 	case "text":
 		return countValueChars(m["text"])
@@ -79,6 +87,7 @@ func countValueChars(value any) int {
 	if value == nil {
 		return 0
 	}
+
 	switch v := value.(type) {
 	case string:
 		return len(v)
@@ -90,12 +99,14 @@ func countValueChars(value any) int {
 		for _, item := range v {
 			n += countValueChars(item)
 		}
+
 		return n
 	case map[string]any:
 		n := 0
 		for k, item := range v {
 			n += len(k) + countValueChars(item)
 		}
+
 		return n
 	default:
 		b, _ := json.Marshal(v)

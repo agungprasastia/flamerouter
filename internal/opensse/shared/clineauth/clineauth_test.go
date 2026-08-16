@@ -97,24 +97,31 @@ func TestBuildClineHeaders(t *testing.T) {
 		if h["HTTP-Referer"] != "https://cline.bot" {
 			t.Fatalf("HTTP-Referer = %q", h["HTTP-Referer"])
 		}
+
 		if h["X-Title"] != "Cline" {
 			t.Fatalf("X-Title = %q", h["X-Title"])
 		}
+
 		if h["User-Agent"] != "Cline/1.0" {
 			t.Fatalf("User-Agent = %q", h["User-Agent"])
 		}
+
 		if h["X-PLATFORM"] != plat {
 			t.Fatalf("X-PLATFORM = %q, want %q", h["X-PLATFORM"], plat)
 		}
+
 		if h["X-CLIENT-TYPE"] != "vscode" {
 			t.Fatalf("X-CLIENT-TYPE = %q", h["X-CLIENT-TYPE"])
 		}
+
 		if h["X-CORE-VERSION"] != "3.0.0" {
 			t.Fatalf("X-CORE-VERSION = %q", h["X-CORE-VERSION"])
 		}
+
 		if h["X-IS-MULTIROOT"] != "false" {
 			t.Fatalf("X-IS-MULTIROOT = %q", h["X-IS-MULTIROOT"])
 		}
+
 		if _, ok := h["Authorization"]; ok {
 			t.Fatalf("unexpected Authorization header")
 		}
@@ -132,16 +139,20 @@ func TestBuildClineHeaders(t *testing.T) {
 			"User-Agent":     "CustomCline/2.0",
 			"X-Custom-Extra": "value123",
 		}
+
 		h := BuildClineHeaders("workos:secret", raw)
 		if h["User-Agent"] != "CustomCline/2.0" {
 			t.Fatalf("User-Agent = %q, want CustomCline/2.0", h["User-Agent"])
 		}
+
 		if h["X-Custom-Extra"] != "value123" {
 			t.Fatalf("X-Custom-Extra = %q", h["X-Custom-Extra"])
 		}
+
 		if h["Authorization"] != "Bearer workos:secret" {
 			t.Fatalf("Authorization = %q", h["Authorization"])
 		}
+
 		if h["X-Title"] != "Cline" {
 			t.Fatalf("X-Title = %q", h["X-Title"])
 		}

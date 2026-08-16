@@ -26,16 +26,19 @@ func (e *VertexExecutor) projectID(cred Credentials) string {
 			if p, ok := sa["project_id"].(string); ok {
 				return p
 			}
+
 			if p, ok := sa["quota_project_id"].(string); ok {
 				return p
 			}
 		}
 	}
+
 	return ""
 }
 
 func (e *VertexExecutor) buildURL(model string, stream bool, cred Credentials) string {
 	project := e.projectID(cred)
+
 	rawKey := ""
 	if !strings.HasPrefix(strings.TrimSpace(cred.APIKey), "{") && cred.AccessToken == "" {
 		rawKey = cred.APIKey
@@ -45,19 +48,23 @@ func (e *VertexExecutor) buildURL(model string, stream bool, cred Credentials) s
 		if project == "" {
 			project = "unknown"
 		}
+
 		url := fmt.Sprintf("https://aiplatform.googleapis.com/v1/projects/%s/locations/global/endpoints/openapi/chat/completions", project)
 		if rawKey != "" {
 			url += "?key=" + rawKey
 		}
+
 		return url
 	}
 
 	// Gemini via Vertex
 	location := "us-central1"
+
 	action := "generateContent"
 	if stream {
 		action = "streamGenerateContent?alt=sse"
 	}
+
 	if project == "" {
 		// publishers path with API key
 		url := fmt.Sprintf("https://aiplatform.googleapis.com/v1/publishers/google/models/%s:%s", model, action)
@@ -68,8 +75,10 @@ func (e *VertexExecutor) buildURL(model string, stream bool, cred Credentials) s
 				url += "?key=" + rawKey
 			}
 		}
+
 		return url
 	}
+
 	url := fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:%s",
 		location, project, location, model, action)
 	if rawKey != "" {
@@ -79,22 +88,24 @@ func (e *VertexExecutor) buildURL(model string, stream bool, cred Credentials) s
 			url += "?key=" + rawKey
 		}
 	}
+
 	return url
 }
 
 func (e *VertexExecutor) buildHeaders(cred Credentials, stream bool) http.Header {
 	h := make(http.Header)
 	h.Set("Content-Type", "application/json")
+
 	tok := cred.AccessToken
 	// SA JSON is not a bearer token; AccessToken should be minted by tokenrefresh
 	if tok != "" {
 		h.Set("Authorization", "Bearer "+tok)
-	} else if cred.APIKey != "" && !strings.HasPrefix(strings.TrimSpace(cred.APIKey), "{") {
-		// raw API key goes in query string
 	}
+
 	if stream {
 		h.Set("Accept", "text/event-stream")
 	}
+
 	return h
 }
 
@@ -103,17 +114,21 @@ func (e *VertexExecutor) Execute(ctx context.Context, cred Credentials, model st
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	if e.partner {
 		m["model"] = model
 		m["stream"] = stream
 	}
+
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return nil, err
 	}
+
 	url := e.buildURL(model, stream, cred)
 	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" && strings.Contains(base, "aiplatform") {
 		url = base
 	}
+
 	return e.DoPOST(ctx, url, e.buildHeaders(cred, stream), payload)
 }

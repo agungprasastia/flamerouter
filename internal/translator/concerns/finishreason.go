@@ -33,6 +33,7 @@ func ToOpenAIFinish(reason, format string) string {
 			if reason == "" {
 				return schema.OpenaiFinishStop
 			}
+
 			return reason
 		}
 	case "gemini":
@@ -60,6 +61,7 @@ func ToOpenAIFinish(reason, format string) string {
 		if reason == "" {
 			return schema.OpenaiFinishStop
 		}
+
 		return reason
 	}
 }

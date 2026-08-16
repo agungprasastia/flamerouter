@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flamerouter/internal/opensse/fallback"
+	"flamerouter/internal/opensse/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"flamerouter/internal/opensse/fallback"
-	"flamerouter/internal/opensse/testutil"
 )
 
 func TestGeminiV1BetaListModels(t *testing.T) {
@@ -25,6 +24,7 @@ func TestGeminiV1BetaListModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GeminiV1Beta: %v", err)
 	}
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -33,6 +33,7 @@ func TestGeminiV1BetaListModels(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
 		t.Fatalf("json: %v", err)
 	}
+
 	models, ok := res["models"].([]any)
 	if !ok || len(models) == 0 {
 		t.Fatalf("missing models array: %v", res)
@@ -63,6 +64,7 @@ func TestGeminiV1BetaGenerateContentConvert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GeminiV1Beta err: %v", err)
 	}
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -71,6 +73,7 @@ func TestGeminiV1BetaGenerateContentConvert(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(calls))
 	}
+
 	if calls[0].Model != "gpt-4o" {
 		t.Fatalf("model = %q, want gpt-4o", calls[0].Model)
 	}
@@ -100,6 +103,7 @@ func TestVercelAIChatNonStreamTransformsToOllama(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VercelAIChat: %v", err)
 	}
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -108,13 +112,16 @@ func TestVercelAIChatNonStreamTransformsToOllama(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
 		t.Fatalf("json: %v", err)
 	}
+
 	if res["done"] != true {
 		t.Fatalf("done != true: %v", res)
 	}
+
 	msg, ok := res["message"].(map[string]any)
 	if !ok || msg["content"] != "vercel result" {
 		t.Fatalf("unexpected message: %v", res)
 	}
+
 	if res["prompt_eval_count"] != float64(12) || res["eval_count"] != float64(8) {
 		t.Fatalf("usage not mapped: %v", res)
 	}
@@ -141,9 +148,11 @@ func TestVercelAIChatStreamingPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VercelAIChat stream: %v", err)
 	}
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
+
 	if !strings.Contains(rec.Body.String(), "data:") {
 		t.Fatalf("expected stream data: %s", rec.Body.String())
 	}

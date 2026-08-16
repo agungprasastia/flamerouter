@@ -3,14 +3,13 @@ package models
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/opensse/shared/qoder"
+	"flamerouter/internal/store"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
-
-	"flamerouter/internal/opensse/shared/qoder"
-	"flamerouter/internal/store"
 )
 
 const (
@@ -31,18 +30,19 @@ func (r *QoderResolver) client() *http.Client {
 	if r.Client != nil {
 		return r.Client
 	}
+
 	return http.DefaultClient
 }
 
 type qoderChatEntry struct {
+	Enable          *bool  `json:"enable"`
 	Key             string `json:"key"`
 	DisplayName     string `json:"display_name"`
-	Enable          *bool  `json:"enable"`
+	Description     string `json:"description"`
 	MaxInputTokens  int    `json:"max_input_tokens"`
 	MaxOutputTokens int    `json:"max_output_tokens"`
 	IsVL            bool   `json:"is_vl"`
 	IsReasoning     bool   `json:"is_reasoning"`
-	Description     string `json:"description"`
 }
 
 type qoderModelListResponse struct {
@@ -67,8 +67,10 @@ func (r *QoderResolver) fetchRaw(ctx context.Context, creds qoder.CosyCreds) ([]
 	if err != nil {
 		return nil, 0, err
 	}
+
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Encoding", "identity")
+
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -88,6 +90,7 @@ func (r *QoderResolver) fetchRaw(ctx context.Context, creds qoder.CosyCreds) ([]
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("decode qoder models response: %w", err)
 	}
+
 	return parsed.Chat, resp.StatusCode, nil
 }
 
@@ -98,6 +101,7 @@ func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]
 	}
 
 	userID := ""
+
 	if conn.ProviderSpecificData != nil {
 		if u, ok := conn.ProviderSpecificData["userId"].(string); ok {
 			userID = u
@@ -109,7 +113,9 @@ func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]
 		if err != nil {
 			return nil, err
 		}
+
 		authToken = jt
+
 		if uid != "" {
 			userID = uid
 		}
@@ -121,10 +127,12 @@ func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]
 
 	machineID := ""
 	email := ""
+
 	if conn.ProviderSpecificData != nil {
 		if mid, ok := conn.ProviderSpecificData["machineId"].(string); ok {
 			machineID = mid
 		}
+
 		if em, ok := conn.ProviderSpecificData["email"].(string); ok {
 			email = em
 		}
@@ -144,12 +152,15 @@ func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]
 	}
 
 	seen := make(map[string]bool)
+
 	var out []DynamicModel
+
 	for _, entry := range raw {
 		key := strings.TrimSpace(entry.Key)
 		if key == "" || seen[key] {
 			continue
 		}
+
 		seen[key] = true
 
 		if entry.Enable != nil && !*entry.Enable {
@@ -176,5 +187,6 @@ func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]
 			Description:     entry.Description,
 		})
 	}
+
 	return out, nil
 }

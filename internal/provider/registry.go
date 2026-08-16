@@ -84,13 +84,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.anthropic.com/v1/messages",
-			Format:       "claude",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://api.anthropic.com/v1/messages",
+			Format:      "claude",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"anthropic-version": "2023-06-01",
-				"Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+				"Anthropic-Beta":    "claude-code-20250219,interleaved-thinking-2025-05-14",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -117,11 +117,11 @@ var Registry = []Provider{
 			DeprecNotice: "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.",
 		},
 		Transport: Transport{
-			BaseURL:      "",
-			Format:       "antigravity",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "",
+			Format:      "antigravity",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"User-Agent": "antigravity/ide/2.1.1 darwin/arm64",
 			},
 			Auth:         nil,
@@ -350,25 +350,25 @@ var Registry = []Provider{
 			DeprecNotice: "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.anthropic.com/v1/messages",
-			Format:       "claude",
-			ForceStream:  false,
-			URLSuffix:    "?beta=true",
-			Headers:      map[string]string{
-				"Anthropic-Version": "2023-06-01",
-				"Anthropic-Beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28",
+			BaseURL:     "https://api.anthropic.com/v1/messages",
+			Format:      "claude",
+			ForceStream: false,
+			URLSuffix:   "?beta=true",
+			Headers: map[string]string{
+				"Anthropic-Version":                         "2023-06-01",
+				"Anthropic-Beta":                            "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28",
 				"Anthropic-Dangerous-Direct-Browser-Access": "true",
-				"User-Agent": "claude-cli/2.1.92 (external, sdk-cli)",
-				"X-App": "cli",
-				"X-Stainless-Helper-Method": "stream",
-				"X-Stainless-Retry-Count": "0",
-				"X-Stainless-Runtime-Version": "v24.14.0",
-				"X-Stainless-Package-Version": "0.80.0",
-				"X-Stainless-Runtime": "node",
-				"X-Stainless-Lang": "js",
-				"X-Stainless-Arch": "arm64",
-				"X-Stainless-Os": "MacOS",
-				"X-Stainless-Timeout": "600",
+				"User-Agent":                                "claude-cli/2.1.92 (external, sdk-cli)",
+				"X-App":                                     "cli",
+				"X-Stainless-Helper-Method":                 "stream",
+				"X-Stainless-Retry-Count":                   "0",
+				"X-Stainless-Runtime-Version":               "v24.14.0",
+				"X-Stainless-Package-Version":               "0.80.0",
+				"X-Stainless-Runtime":                       "node",
+				"X-Stainless-Lang":                          "js",
+				"X-Stainless-Arch":                          "arm64",
+				"X-Stainless-Os":                            "MacOS",
+				"X-Stainless-Timeout":                       "600",
 			},
 			Auth:         &AuthConfig{APIKey: &AuthStyle{Header: "x-api-key", Scheme: "raw"}, OAuth: &AuthStyle{Header: "Authorization", Scheme: "bearer"}},
 			ClientID:     "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
@@ -396,13 +396,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.cline.bot/api/v1/chat/completions",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://api.cline.bot/api/v1/chat/completions",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"HTTP-Referer": "https://cline.bot",
-				"X-Title": "Cline",
+				"X-Title":      "Cline",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -434,13 +434,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.cline.bot/api/v1/chat/completions",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://api.cline.bot/api/v1/chat/completions",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"HTTP-Referer": "https://cline.bot",
-				"X-Title": "Cline",
+				"X-Title":      "Cline",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -525,16 +525,16 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://copilot.tencent.com/v2/chat/completions",
-			Format:       "openai",
-			ForceStream:  true,
-			URLSuffix:    "",
-			Headers:      map[string]string{
-				"User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
-				"X-Product": "SaaS",
-				"X-IDE-Type": "CLI",
-				"X-IDE-Name": "CLI",
-				"x-requested-with": "XMLHttpRequest",
+			BaseURL:     "https://copilot.tencent.com/v2/chat/completions",
+			Format:      "openai",
+			ForceStream: true,
+			URLSuffix:   "",
+			Headers: map[string]string{
+				"User-Agent":          "CLI/2.108.1 CodeBuddy/2.108.1",
+				"X-Product":           "SaaS",
+				"X-IDE-Type":          "CLI",
+				"X-IDE-Name":          "CLI",
+				"x-requested-with":    "XMLHttpRequest",
 				"x-codebuddy-request": "1",
 			},
 			Auth:         nil,
@@ -574,11 +574,11 @@ var Registry = []Provider{
 			DeprecNotice: "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.",
 		},
 		Transport: Transport{
-			BaseURL:      "https://chatgpt.com/backend-api/codex/responses",
-			Format:       "openai-responses",
-			ForceStream:  true,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://chatgpt.com/backend-api/codex/responses",
+			Format:      "openai-responses",
+			ForceStream: true,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"originator": "codex_cli_rs",
 				"User-Agent": "codex_cli_rs/0.136.0",
 			},
@@ -651,13 +651,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.commandcode.ai/alpha/generate",
-			Format:       "commandcode",
-			ForceStream:  true,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://api.commandcode.ai/alpha/generate",
+			Format:      "commandcode",
+			ForceStream: true,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"x-command-code-version": "0.25.7",
-				"x-cli-environment": "cli",
+				"x-cli-environment":      "cli",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -692,15 +692,15 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api2.cursor.sh",
-			Format:       "cursor",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
-				"connect-accept-encoding": "gzip",
+			BaseURL:     "https://api2.cursor.sh",
+			Format:      "cursor",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
+				"connect-accept-encoding":  "gzip",
 				"connect-protocol-version": "1",
-				"Content-Type": "application/connect+proto",
-				"User-Agent": "connect-es/1.6.1",
+				"Content-Type":             "application/connect+proto",
+				"User-Agent":               "connect-es/1.6.1",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -953,21 +953,21 @@ var Registry = []Provider{
 			DeprecNotice: "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.githubcopilot.com/chat/completions",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
-				"copilot-integration-id": "vscode-chat",
-				"editor-version": "vscode/1.110.0",
-				"editor-plugin-version": "copilot-chat/0.38.0",
-				"user-agent": "GitHubCopilotChat/0.38.0",
-				"openai-intent": "conversation-panel",
-				"x-github-api-version": "2025-04-01",
+			BaseURL:     "https://api.githubcopilot.com/chat/completions",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
+				"copilot-integration-id":              "vscode-chat",
+				"editor-version":                      "vscode/1.110.0",
+				"editor-plugin-version":               "copilot-chat/0.38.0",
+				"user-agent":                          "GitHubCopilotChat/0.38.0",
+				"openai-intent":                       "conversation-panel",
+				"x-github-api-version":                "2025-04-01",
 				"x-vscode-user-agent-library-version": "electron-fetch",
-				"X-Initiator": "user",
-				"Accept": "application/json",
-				"Content-Type": "application/json",
+				"X-Initiator":                         "user",
+				"Accept":                              "application/json",
+				"Content-Type":                        "application/json",
 			},
 			Auth:         nil,
 			ClientID:     "Iv1.b507a08c87ecfe98",
@@ -1070,13 +1070,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.z.ai/api/anthropic/v1/messages",
-			Format:       "claude",
-			ForceStream:  false,
-			URLSuffix:    "?beta=true",
-			Headers:      map[string]string{
+			BaseURL:     "https://api.z.ai/api/anthropic/v1/messages",
+			Format:      "claude",
+			ForceStream: false,
+			URLSuffix:   "?beta=true",
+			Headers: map[string]string{
 				"Anthropic-Version": "2023-06-01",
-				"Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+				"Anthropic-Beta":    "claude-code-20250219,interleaved-thinking-2025-05-14",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -1106,14 +1106,14 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://cli-chat-proxy.grok.com/v1/responses",
-			Format:       "openai-responses",
-			ForceStream:  true,
-			URLSuffix:    "",
-			Headers:      map[string]string{
-				"User-Agent": "grok-shell/0.2.99 (linux; x86_64)",
+			BaseURL:     "https://cli-chat-proxy.grok.com/v1/responses",
+			Format:      "openai-responses",
+			ForceStream: true,
+			URLSuffix:   "",
+			Headers: map[string]string{
+				"User-Agent":               "grok-shell/0.2.99 (linux; x86_64)",
 				"x-grok-client-identifier": "grok-shell",
-				"x-grok-client-version": "0.2.99",
+				"x-grok-client-version":    "0.2.99",
 			},
 			Auth:         nil,
 			ClientID:     "b1a00492-073a-47ea-816f-4c329264a828",
@@ -1250,11 +1250,11 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://apis.iflow.cn/v1/chat/completions",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://apis.iflow.cn/v1/chat/completions",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"User-Agent": "iFlow-Cli",
 			},
 			Auth:         nil,
@@ -1320,11 +1320,11 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://llm.kimchi.dev/openai/v1/chat/completions",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://llm.kimchi.dev/openai/v1/chat/completions",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"User-Agent": "kimchi/0.1.50",
 			},
 			Auth:         nil,
@@ -1357,13 +1357,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.kimi.com/coding/v1/messages",
-			Format:       "claude",
-			ForceStream:  false,
-			URLSuffix:    "?beta=true",
-			Headers:      map[string]string{
+			BaseURL:     "https://api.kimi.com/coding/v1/messages",
+			Format:      "claude",
+			ForceStream: false,
+			URLSuffix:   "?beta=true",
+			Headers: map[string]string{
 				"Anthropic-Version": "2023-06-01",
-				"Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+				"Anthropic-Beta":    "claude-code-20250219,interleaved-thinking-2025-05-14",
 			},
 			Auth:         nil,
 			ClientID:     "17e5f671-d194-4dfb-9706-5516cb48c098",
@@ -1397,14 +1397,14 @@ var Registry = []Provider{
 			DeprecNotice: "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.",
 		},
 		Transport: Transport{
-			BaseURL:      "https://runtime.us-east-1.kiro.dev/generateAssistantResponse",
-			Format:       "kiro",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
-				"Content-Type": "application/json",
-				"Accept": "application/vnd.amazon.eventstream",
-				"User-Agent": "AWS-SDK-JS/3.0.0 kiro-ide/1.0.0",
+			BaseURL:     "https://runtime.us-east-1.kiro.dev/generateAssistantResponse",
+			Format:      "kiro",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
+				"Content-Type":     "application/json",
+				"Accept":           "application/vnd.amazon.eventstream",
+				"User-Agent":       "AWS-SDK-JS/3.0.0 kiro-ide/1.0.0",
 				"X-Amz-User-Agent": "aws-sdk-js/3.0.0 kiro-ide/1.0.0",
 			},
 			Auth:         nil,
@@ -1499,13 +1499,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.minimaxi.com/anthropic/v1/messages",
-			Format:       "claude",
-			ForceStream:  false,
-			URLSuffix:    "?beta=true",
-			Headers:      map[string]string{
+			BaseURL:     "https://api.minimaxi.com/anthropic/v1/messages",
+			Format:      "claude",
+			ForceStream: false,
+			URLSuffix:   "?beta=true",
+			Headers: map[string]string{
 				"Anthropic-Version": "2023-06-01",
-				"Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+				"Anthropic-Beta":    "claude-code-20250219,interleaved-thinking-2025-05-14",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -1541,13 +1541,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.minimax.io/anthropic/v1/messages",
-			Format:       "claude",
-			ForceStream:  false,
-			URLSuffix:    "?beta=true",
-			Headers:      map[string]string{
+			BaseURL:     "https://api.minimax.io/anthropic/v1/messages",
+			Format:      "claude",
+			ForceStream: false,
+			URLSuffix:   "?beta=true",
+			Headers: map[string]string{
 				"Anthropic-Version": "2023-06-01",
-				"Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+				"Anthropic-Beta":    "claude-code-20250219,interleaved-thinking-2025-05-14",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -1900,11 +1900,11 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://opencode.ai",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://opencode.ai",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"x-opencode-client": "desktop",
 			},
 			Auth:         nil,
@@ -1928,13 +1928,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://openrouter.ai/api/v1/chat/completions",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://openrouter.ai/api/v1/chat/completions",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"HTTP-Referer": "https://endpoint-proxy.local",
-				"X-Title": "Endpoint Proxy",
+				"X-Title":      "Endpoint Proxy",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -2490,16 +2490,16 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://www.codebuddy.ai/v2/chat/completions",
-			Format:       "openai",
-			ForceStream:  true,
-			URLSuffix:    "",
-			Headers:      map[string]string{
-				"User-Agent": "IDE/2.108.1 CodeBuddy/2.108.1",
-				"X-Product": "SaaS",
-				"X-IDE-Type": "IDE",
-				"X-IDE-Name": "IDE",
-				"x-requested-with": "XMLHttpRequest",
+			BaseURL:     "https://www.codebuddy.ai/v2/chat/completions",
+			Format:      "openai",
+			ForceStream: true,
+			URLSuffix:   "",
+			Headers: map[string]string{
+				"User-Agent":          "IDE/2.108.1 CodeBuddy/2.108.1",
+				"X-Product":           "SaaS",
+				"X-IDE-Type":          "IDE",
+				"X-IDE-Name":          "IDE",
+				"x-requested-with":    "XMLHttpRequest",
 				"x-codebuddy-request": "1",
 			},
 			Auth:         nil,
@@ -2523,11 +2523,11 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://cloud.zed.dev/completions",
-			Format:       "openai",
-			ForceStream:  true,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://cloud.zed.dev/completions",
+			Format:      "openai",
+			ForceStream: true,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"content-type": "application/json",
 			},
 			Auth:         nil,
@@ -2551,10 +2551,10 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://core-normal.trae.ai/api/remote/v1",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
+			BaseURL:     "https://core-normal.trae.ai/api/remote/v1",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
 			Headers: map[string]string{
 				"X-Trae-Client-Type":     "web",
 				"X-Preferenced-Language": "en",
@@ -2591,10 +2591,10 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://server.codeium.com/exa.language_server_pb.LanguageServerService/GetChatMessage",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
+			BaseURL:     "https://server.codeium.com/exa.language_server_pb.LanguageServerService/GetChatMessage",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
 			Headers: map[string]string{
 				"Content-Type": "application/grpc-web+proto",
 				"Accept":       "application/grpc-web+proto",
@@ -2670,13 +2670,13 @@ var Registry = []Provider{
 			DeprecNotice: "",
 		},
 		Transport: Transport{
-			BaseURL:      "https://api.airforce/v1/chat/completions",
-			Format:       "openai",
-			ForceStream:  false,
-			URLSuffix:    "",
-			Headers:      map[string]string{
+			BaseURL:     "https://api.airforce/v1/chat/completions",
+			Format:      "openai",
+			ForceStream: false,
+			URLSuffix:   "",
+			Headers: map[string]string{
 				"HTTP-Referer": "https://endpoint-proxy.local",
-				"X-Title": "Endpoint Proxy",
+				"X-Title":      "Endpoint Proxy",
 			},
 			Auth:         nil,
 			ClientID:     "",
@@ -4701,10 +4701,12 @@ func init() {
 	for i := range Registry {
 		p := &Registry[i]
 		providerMap[p.ID] = p
+
 		if p.Alias != "" {
 			providerAliasMap[p.Alias] = p.ID
 		}
 	}
+
 	providerAliasMap["oa"] = "openai"
 	providerAliasMap["cc"] = "claude"
 	providerAliasMap["ag"] = "antigravity"
@@ -4739,6 +4741,7 @@ func GetProvider(id string) *Provider {
 	if p, ok := providerMap[id]; ok {
 		return p
 	}
+
 	return nil
 }
 
@@ -4746,11 +4749,13 @@ func GetProviderByAlias(alias string) *Provider {
 	if id, ok := providerAliasMap[alias]; ok {
 		return GetProvider(id)
 	}
+
 	for _, p := range Registry {
 		if p.Alias == alias {
 			return &p
 		}
 	}
+
 	return nil
 }
 
@@ -4758,9 +4763,11 @@ func ResolveAlias(aliasOrID string) string {
 	if id, ok := providerAliasMap[aliasOrID]; ok {
 		return id
 	}
+
 	if p := GetProvider(aliasOrID); p != nil {
 		return p.ID
 	}
+
 	return aliasOrID
 }
 
@@ -4769,6 +4776,7 @@ func ProviderAliases() map[string]string {
 	for k, v := range providerAliasMap {
 		res[k] = v
 	}
+
 	return res
 }
 

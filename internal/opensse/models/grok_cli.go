@@ -3,15 +3,14 @@ package models
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/store"
+	"flamerouter/internal/tokenrefresh"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"flamerouter/internal/store"
-	"flamerouter/internal/tokenrefresh"
 )
 
 const (
@@ -38,15 +37,18 @@ func (r *GrokCliResolver) client() *http.Client {
 	if r.Client != nil {
 		return r.Client
 	}
+
 	return http.DefaultClient
 }
 
 func (r *GrokCliResolver) buildHeaders(conn *store.Connection) http.Header {
 	h := make(http.Header)
+
 	tok := conn.AccessToken
 	if tok == "" {
 		tok = conn.APIKey
 	}
+
 	h.Set("Authorization", fmt.Sprintf("Bearer %s", tok))
 	h.Set("Accept", "application/json")
 	h.Set("User-Agent", grokCliUserAgent)
@@ -59,12 +61,14 @@ func (r *GrokCliResolver) buildHeaders(conn *store.Connection) http.Header {
 		if email, ok := conn.ProviderSpecificData["email"].(string); ok && email != "" {
 			h.Set("x-email", email)
 		}
+
 		if uid, ok := conn.ProviderSpecificData["userId"].(string); ok && uid != "" {
 			h.Set("x-userid", uid)
 		} else if pid, ok := conn.ProviderSpecificData["principalId"].(string); ok && pid != "" {
 			h.Set("x-userid", pid)
 		}
 	}
+
 	return h
 }
 
@@ -75,6 +79,7 @@ func parseGrokCliRawJSON(data []byte) ([]DynamicModel, error) {
 	}
 
 	var items []map[string]any
+
 	switch v := raw.(type) {
 	case []any:
 		for _, item := range v {
@@ -109,6 +114,7 @@ func parseGrokCliRawJSON(data []byte) ([]DynamicModel, error) {
 					if _, hasID := m["id"]; !hasID {
 						m["id"] = k
 					}
+
 					items = append(items, m)
 				} else if s, ok := val.(string); ok {
 					items = append(items, map[string]any{"id": s, "name": k})
@@ -118,21 +124,27 @@ func parseGrokCliRawJSON(data []byte) ([]DynamicModel, error) {
 	}
 
 	seen := make(map[string]bool)
+
 	var out []DynamicModel
+
 	for _, item := range items {
 		id := ""
+
 		for _, k := range []string{"id", "model_id", "modelId", "model", "slug", "name"} {
 			if s, ok := item[k].(string); ok && strings.TrimSpace(s) != "" {
 				id = strings.TrimSpace(s)
 				break
 			}
 		}
+
 		if id == "" || seen[id] {
 			continue
 		}
+
 		seen[id] = true
 
 		name := id
+
 		for _, k := range []string{"display_name", "displayName", "name"} {
 			if s, ok := item[k].(string); ok && strings.TrimSpace(s) != "" {
 				name = strings.TrimSpace(s)
@@ -141,6 +153,7 @@ func parseGrokCliRawJSON(data []byte) ([]DynamicModel, error) {
 		}
 
 		ctxLen := 0
+
 		for _, k := range []string{"context_length", "contextLength", "context_window", "contextWindow"} {
 			if num, ok := item[k].(float64); ok && num > 0 {
 				ctxLen = int(num)
@@ -154,6 +167,7 @@ func parseGrokCliRawJSON(data []byte) ([]DynamicModel, error) {
 		}
 
 		maxOut := 0
+
 		for _, k := range []string{"max_output_tokens", "maxOutputTokens"} {
 			if num, ok := item[k].(float64); ok && num > 0 {
 				maxOut = int(num)
@@ -170,6 +184,7 @@ func parseGrokCliRawJSON(data []byte) ([]DynamicModel, error) {
 			if ctxLen == 0 {
 				ctxLen = 500000
 			}
+
 			if maxOut == 0 {
 				maxOut = 64000
 			}
@@ -182,6 +197,7 @@ func parseGrokCliRawJSON(data []byte) ([]DynamicModel, error) {
 			MaxOutputTokens: maxOut,
 		})
 	}
+
 	return out, nil
 }
 
@@ -193,6 +209,7 @@ func (r *GrokCliResolver) fetchRaw(ctx context.Context, conn *store.Connection) 
 	if err != nil {
 		return nil, 0, err
 	}
+
 	req.Header = r.buildHeaders(conn)
 
 	resp, err := r.client().Do(req)
@@ -205,11 +222,13 @@ func (r *GrokCliResolver) fetchRaw(ctx context.Context, conn *store.Connection) 
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, resp.StatusCode, fmt.Errorf("grok-cli /models returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	models, err := parseGrokCliRawJSON(bodyBytes)
+
 	return models, resp.StatusCode, err
 }
 
@@ -224,18 +243,23 @@ func (r *GrokCliResolver) Resolve(ctx context.Context, conn *store.Connection) (
 		if rm == nil {
 			rm = tokenrefresh.NewRefreshManager()
 		}
+
 		refreshed, refErr := rm.Refresh(ctx, "grok-cli", conn.RefreshToken)
 		if refErr == nil && refreshed != nil && refreshed.AccessToken != "" {
 			connCopy := *conn
 			connCopy.AccessToken = refreshed.AccessToken
+
 			if refreshed.RefreshToken != "" {
 				connCopy.RefreshToken = refreshed.RefreshToken
 			}
+
 			models, _, err = r.fetchRaw(ctx, &connCopy)
 		}
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	return models, nil
 }

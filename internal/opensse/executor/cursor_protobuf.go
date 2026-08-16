@@ -9,10 +9,12 @@ func EncodeCursorProtobuf(body []byte) []byte {
 	length := len(body)
 	buf := make([]byte, 0, 1+binary.MaxVarintLen64+length)
 	buf = append(buf, tag)
+
 	var lenBuf [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(lenBuf[:], uint64(length))
 	buf = append(buf, lenBuf[:n]...)
 	buf = append(buf, body...)
+
 	return buf
 }
 
@@ -23,16 +25,21 @@ func DecodeCursorProtobuf(data []byte) []byte {
 	}
 	// skip tag
 	i := 1
+
 	length, n := binary.Uvarint(data[i:])
 	if n <= 0 {
 		return nil
 	}
+
 	i += n
+
 	end := i + int(length)
 	if end > len(data) {
 		return nil
 	}
+
 	out := make([]byte, length)
 	copy(out, data[i:end])
+
 	return out
 }

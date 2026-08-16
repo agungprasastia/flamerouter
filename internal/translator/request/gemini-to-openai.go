@@ -14,34 +14,43 @@ func init() {
 
 func geminiToOpenAIRequest(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any {
 	result := map[string]any{
-		"model":   model,
+		"model":    model,
 		"messages": []any{},
-		"stream":  stream,
+		"stream":   stream,
 	}
+
 	if gc, ok := body["generationConfig"].(map[string]any); ok {
 		if mt, ok := gc["maxOutputTokens"].(float64); ok && mt > 0 {
 			result["max_tokens"] = int(mt)
 		}
+
 		if temp, ok := gc["temperature"]; ok {
 			result["temperature"] = temp
 		}
 	}
+
 	contents, _ := body["contents"].([]any)
+
 	var systemParts []string
+
 	var messages []any
+
 	for _, cRaw := range contents {
 		c, _ := cRaw.(map[string]any)
 		if c == nil {
 			continue
 		}
+
 		role, _ := c["role"].(string)
 		parts, _ := c["parts"].([]any)
+
 		if role == "user" {
 			for _, pRaw := range parts {
 				p, _ := pRaw.(map[string]any)
 				if p == nil {
 					continue
 				}
+
 				if text, ok := p["text"].(string); ok {
 					if strings.HasPrefix(text, "<system>") {
 						systemParts = append(systemParts, text)
@@ -49,9 +58,11 @@ func geminiToOpenAIRequest(model string, body map[string]any, stream bool, crede
 						messages = append(messages, map[string]any{"role": "user", "content": text})
 					}
 				}
+
 				if id, ok := p["inlineData"].(map[string]any); ok {
 					mime, _ := id["mimeType"].(string)
 					data, _ := id["data"].(string)
+
 					if mime != "" && data != "" {
 						messages = append(messages, map[string]any{
 							"role": "user",
@@ -71,9 +82,11 @@ func geminiToOpenAIRequest(model string, body map[string]any, stream bool, crede
 				if p == nil {
 					continue
 				}
+
 				if text, ok := p["text"].(string); ok {
 					messages = append(messages, map[string]any{"role": "assistant", "content": text})
 				}
+
 				if fc, ok := p["functionCall"].(map[string]any); ok {
 					name, _ := fc["name"].(string)
 					args, _ := json.Marshal(fc["args"])
@@ -96,6 +109,7 @@ func geminiToOpenAIRequest(model string, body map[string]any, stream bool, crede
 				if p == nil {
 					continue
 				}
+
 				if fr, ok := p["functionResponse"].(map[string]any); ok {
 					name, _ := fr["name"].(string)
 					resp, _ := json.Marshal(fr["response"])
@@ -108,11 +122,12 @@ func geminiToOpenAIRequest(model string, body map[string]any, stream bool, crede
 			}
 		}
 	}
+
 	if len(systemParts) > 0 {
 		messages = append([]any{map[string]any{"role": "system", "content": strings.Join(systemParts, "\n")}}, messages...)
 	}
+
 	result["messages"] = messages
+
 	return result
 }
-
-

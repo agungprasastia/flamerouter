@@ -3,12 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"time"
-
 	"flamerouter/internal/opensse/models"
 	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
+	"net/http"
+	"time"
 )
 
 const llmKind = "llm"
@@ -48,6 +47,7 @@ func ModelsByKind(w http.ResponseWriter, r *http.Request, st *store.Store, kind 
 		jsonError(w, http.StatusNotFound, "Unknown model kind: "+kind+". Supported: image, tts, stt, embedding, image-to-text, web, video")
 		return
 	}
+
 	writeModelList(w, st, filter, false)
 }
 
@@ -59,12 +59,15 @@ func ModelsInfo(w http.ResponseWriter, r *http.Request, st *store.Store) {
 		writeModelList(w, st, []string{llmKind}, true)
 		return
 	}
+
 	kindQ := r.URL.Query().Get("kind")
+
 	info := lookupModelInfo(id, kindQ)
 	if info == nil {
 		jsonError(w, http.StatusNotFound, "Model not found: "+id)
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(info)
 	_ = st
@@ -72,6 +75,7 @@ func ModelsInfo(w http.ResponseWriter, r *http.Request, st *store.Store) {
 
 func writeModelList(w http.ResponseWriter, st *store.Store, kindFilter []string, withCaps bool) {
 	data := buildModelList(st, kindFilter, withCaps)
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"object": "list",
@@ -81,6 +85,7 @@ func writeModelList(w http.ResponseWriter, st *store.Store, kindFilter []string,
 
 func buildModelList(st *store.Store, kindFilter []string, withCaps bool) []map[string]any {
 	var out []map[string]any
+
 	seen := map[string]bool{}
 
 	// combos first (owned_by combo) — always llm
@@ -90,7 +95,9 @@ func buildModelList(st *store.Store, kindFilter []string, withCaps bool) []map[s
 				if seen[c.Name] {
 					continue
 				}
+
 				seen[c.Name] = true
+
 				out = append(out, map[string]any{
 					"id":       c.Name,
 					"object":   "model",
@@ -101,6 +108,7 @@ func buildModelList(st *store.Store, kindFilter []string, withCaps bool) []map[s
 	}
 
 	activeProviders := activeProviderSet(st)
+
 	for _, p := range provider.ListProviders() {
 		if !providerMatchesKinds(p, kindFilter) {
 			continue
@@ -109,25 +117,32 @@ func buildModelList(st *store.Store, kindFilter []string, withCaps bool) []map[s
 		if len(activeProviders) > 0 && !activeProviders[p.ID] {
 			continue
 		}
+
 		alias := p.Alias
 		if alias == "" {
 			alias = p.ID
 		}
 
 		resolvedDynamic := false
+
 		if st != nil && kindIn(kindFilter, llmKind) {
 			if conns, err := st.ListActiveByProvider(p.ID); err == nil && len(conns) > 0 {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				dynModels, dynErr := models.DefaultEngine.ResolveModels(ctx, &conns[0])
+
 				cancel()
+
 				if dynErr == nil && len(dynModels) > 0 {
 					resolvedDynamic = true
+
 					for _, dm := range dynModels {
 						id := alias + "/" + dm.ID
 						if seen[id] {
 							continue
 						}
+
 						seen[id] = true
+
 						entry := map[string]any{
 							"id":       id,
 							"object":   "model",
@@ -138,12 +153,15 @@ func buildModelList(st *store.Store, kindFilter []string, withCaps bool) []map[s
 						} else if withCaps || true {
 							entry["capabilities"] = provider.GetCapabilities(dm.ID)
 						}
+
 						if dm.ContextLength > 0 {
 							entry["context_length"] = dm.ContextLength
 						}
+
 						if dm.MaxOutputTokens > 0 {
 							entry["max_completion_tokens"] = dm.MaxOutputTokens
 						}
+
 						out = append(out, entry)
 					}
 				}
@@ -156,27 +174,33 @@ func buildModelList(st *store.Store, kindFilter []string, withCaps bool) []map[s
 				if !kindIn(kindFilter, mk) && !(mk == "imageToText" && kindIn(kindFilter, llmKind)) {
 					continue
 				}
+
 				id := alias + "/" + m.ID
 				if seen[id] {
 					continue
 				}
+
 				seen[id] = true
 				entry := map[string]any{
 					"id":       id,
 					"object":   "model",
 					"owned_by": alias,
 				}
+
 				if withCaps || mk == llmKind {
 					caps := provider.GetCapabilities(m.ID)
 					entry["capabilities"] = caps
 				}
+
 				out = append(out, entry)
 			}
 		}
 	}
+
 	if out == nil {
 		out = []map[string]any{}
 	}
+
 	return out
 }
 
@@ -185,12 +209,14 @@ func activeProviderSet(st *store.Store) map[string]bool {
 	if st == nil {
 		return set
 	}
+
 	for _, p := range provider.ListProviders() {
 		conns, err := st.ListActiveByProvider(p.ID)
 		if err == nil && len(conns) > 0 {
 			set[p.ID] = true
 		}
 	}
+
 	return set
 }
 
@@ -199,6 +225,7 @@ func providerMatchesKinds(p provider.Provider, kindFilter []string) bool {
 	if len(kinds) == 0 {
 		kinds = []string{llmKind}
 	}
+
 	for _, k := range kinds {
 		if kindIn(kindFilter, k) {
 			return true
@@ -210,6 +237,7 @@ func providerMatchesKinds(p provider.Provider, kindFilter []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -217,6 +245,7 @@ func modelKind(m provider.Model) string {
 	if m.Kind == "" {
 		return llmKind
 	}
+
 	switch m.Kind {
 	case "imageToText", "image-to-text":
 		return "imageToText"
@@ -231,5 +260,6 @@ func kindIn(filter []string, k string) bool {
 			return true
 		}
 	}
+
 	return false
 }

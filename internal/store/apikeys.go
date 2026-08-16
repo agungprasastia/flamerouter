@@ -10,6 +10,7 @@ import (
 func newID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
+
 	return hex.EncodeToString(b)
 }
 
@@ -20,6 +21,7 @@ func (s *Store) CreateAPIKey(name, keyID, keyHash, machineID string) (string, er
 		 VALUES(?,?,?,?,?,1,?)`,
 		id, name, keyID, keyHash, machineID, time.Now().UTC().Format(time.RFC3339),
 	)
+
 	return id, err
 }
 
@@ -31,16 +33,21 @@ func (s *Store) LookupActiveByKeyID(keyID string) (keyHash, machineID string, ok
 	if err == sql.ErrNoRows {
 		return "", "", false, nil
 	}
+
 	if err != nil {
 		return "", "", false, err
 	}
+
 	return keyHash, machineID, true, nil
 }
 
 type APIKey struct {
-	ID, Name, KeyID, MachineID string
-	IsActive                   bool
-	CreatedAt                  string
+	ID        string
+	Name      string
+	KeyID     string
+	MachineID string
+	CreatedAt string
+	IsActive  bool
 }
 
 func (s *Store) ListAPIKeys() ([]APIKey, error) {
@@ -50,17 +57,23 @@ func (s *Store) ListAPIKeys() ([]APIKey, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	var out []APIKey
+
 	for rows.Next() {
 		var k APIKey
+
 		var active int
 		if err := rows.Scan(&k.ID, &k.Name, &k.KeyID, &k.MachineID, &active, &k.CreatedAt); err != nil {
 			return nil, err
 		}
+
 		k.IsActive = active != 0
 		out = append(out, k)
 	}
+
 	return out, rows.Err()
 }
 
@@ -69,10 +82,12 @@ func (s *Store) UpdateAPIKey(id string, isActive bool) error {
 	if err != nil {
 		return err
 	}
+
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+
 	return nil
 }
 
@@ -81,9 +96,11 @@ func (s *Store) DeleteAPIKey(id string) error {
 	if err != nil {
 		return err
 	}
+
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+
 	return nil
 }

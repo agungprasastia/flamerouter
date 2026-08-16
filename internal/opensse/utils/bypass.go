@@ -17,13 +17,16 @@ func ShouldBypass(body []byte, client string) bool {
 	if len(body) == 0 {
 		return false
 	}
+
 	if client != "claude-code" && client != "claude" {
 		return false
 	}
+
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return false
 	}
+
 	msgs, _ := req["messages"].([]any)
 	if len(msgs) == 0 {
 		return false
@@ -39,6 +42,7 @@ func ShouldBypass(body []byte, client string) bool {
 					}
 				}
 			}
+
 			if messageText(last) == "{" {
 				return true
 			}
@@ -64,15 +68,18 @@ func ShouldBypass(body []byte, client string) bool {
 
 	// Pattern 4: skip patterns in user text
 	var userParts []string
+
 	for _, m := range msgs {
 		msg, _ := m.(map[string]any)
 		if msg == nil {
 			continue
 		}
+
 		if role, _ := msg["role"].(string); role == "user" {
 			userParts = append(userParts, messageText(msg))
 		}
 	}
+
 	userText := strings.Join(userParts, " ")
 	for _, p := range skipPatterns {
 		if strings.Contains(userText, p) {
@@ -82,51 +89,57 @@ func ShouldBypass(body []byte, client string) bool {
 
 	// Pattern 5: CC naming (isNewTopic in system)
 	systemText := collectSystemText(req, msgs)
-	if strings.Contains(systemText, "isNewTopic") {
-		return true
-	}
-	return false
+	return strings.Contains(systemText, "isNewTopic")
 }
 
 func messageText(msg map[string]any) string {
 	if msg == nil {
 		return ""
 	}
+
 	switch c := msg["content"].(type) {
 	case string:
 		return c
 	case []any:
 		var b strings.Builder
+
 		for _, item := range c {
 			block, _ := item.(map[string]any)
 			if block == nil {
 				continue
 			}
+
 			if t, _ := block["type"].(string); t == "text" || t == "" {
 				if text, _ := block["text"].(string); text != "" {
 					if b.Len() > 0 {
 						b.WriteByte(' ')
 					}
+
 					b.WriteString(text)
 				}
 			}
 		}
+
 		return b.String()
 	}
+
 	return ""
 }
 
 func collectSystemText(req map[string]any, msgs []any) string {
 	var parts []string
+
 	for _, m := range msgs {
 		msg, _ := m.(map[string]any)
 		if msg == nil {
 			continue
 		}
+
 		if role, _ := msg["role"].(string); role == "system" {
 			parts = append(parts, messageText(msg))
 		}
 	}
+
 	switch s := req["system"].(type) {
 	case string:
 		parts = append(parts, s)
@@ -136,6 +149,7 @@ func collectSystemText(req map[string]any, msgs []any) string {
 			if block == nil {
 				continue
 			}
+
 			if t, _ := block["type"].(string); t == "text" || t == "" {
 				if text, _ := block["text"].(string); text != "" {
 					parts = append(parts, text)
@@ -143,5 +157,6 @@ func collectSystemText(req map[string]any, msgs []any) string {
 			}
 		}
 	}
+
 	return strings.Join(parts, " ")
 }

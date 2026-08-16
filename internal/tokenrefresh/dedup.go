@@ -9,10 +9,9 @@ import (
 const DefaultRefreshResultTTL = 10 * time.Second
 
 type call struct {
-	wg     sync.WaitGroup
-	val    *RefreshResult
-	err    error
-	shared bool
+	err error
+	val *RefreshResult
+	wg  sync.WaitGroup
 }
 
 type cacheEntry struct {
@@ -23,10 +22,10 @@ type cacheEntry struct {
 
 // DedupGroup handles in-flight deduplication and short-lived caching for token refreshes.
 type DedupGroup struct {
-	mu      sync.Mutex
 	cache   map[string]*cacheEntry
-	ttl     time.Duration
 	timeNow func() time.Time
+	ttl     time.Duration
+	mu      sync.Mutex
 }
 
 // NewDedupGroup creates a new DedupGroup with given TTL.
@@ -34,6 +33,7 @@ func NewDedupGroup(ttl time.Duration) *DedupGroup {
 	if ttl <= 0 {
 		ttl = DefaultRefreshResultTTL
 	}
+
 	return &DedupGroup{
 		cache:   make(map[string]*cacheEntry),
 		ttl:     ttl,
@@ -49,18 +49,21 @@ func (g *DedupGroup) Do(ctx context.Context, key string, fn func() (*RefreshResu
 
 	g.mu.Lock()
 	now := g.timeNow()
+
 	if entry, ok := g.cache[key]; ok {
 		// If there is an in-flight call
 		if entry.call != nil {
 			c := entry.call
 			g.mu.Unlock()
 			c.wg.Wait()
+
 			return c.val, c.err
 		}
 		// If cached result is still valid
 		if now.Before(entry.expiresAt) {
 			val := entry.result
 			g.mu.Unlock()
+
 			return val, nil
 		}
 		// Expired
@@ -79,6 +82,7 @@ func (g *DedupGroup) Do(ctx context.Context, key string, fn func() (*RefreshResu
 	g.mu.Lock()
 	c.val = res
 	c.err = err
+
 	if err == nil && res != nil && res.Error == "" {
 		// Cache success result
 		g.cache[key] = &cacheEntry{
@@ -89,6 +93,7 @@ func (g *DedupGroup) Do(ctx context.Context, key string, fn func() (*RefreshResu
 		// Do not cache errors
 		delete(g.cache, key)
 	}
+
 	c.wg.Done()
 	g.mu.Unlock()
 

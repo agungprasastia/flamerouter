@@ -2,9 +2,8 @@ package clitools
 
 import (
 	"encoding/json"
-	"fmt"
-
 	"flamerouter/internal/store"
+	"fmt"
 )
 
 // Manager manages CLI tool configurations stored in the kv table.
@@ -22,16 +21,20 @@ func (m *Manager) GetSettings(toolID string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if val == "" {
 		return map[string]any{}, nil
 	}
+
 	var out map[string]any
 	if err := json.Unmarshal([]byte(val), &out); err != nil {
 		return nil, err
 	}
+
 	if out == nil {
 		out = map[string]any{}
 	}
+
 	return out, nil
 }
 
@@ -41,26 +44,32 @@ func (m *Manager) PatchSettings(toolID string, patch map[string]any) error {
 	if err != nil {
 		return err
 	}
+
 	for k, v := range patch {
 		cur[k] = v
 	}
+
 	b, err := json.Marshal(cur)
 	if err != nil {
 		return err
 	}
+
 	return m.st.KVSet("cli-tools", toolID, string(b))
 }
 
 // AllStatuses returns status for all known CLI tools.
 func (m *Manager) AllStatuses() map[string]any {
 	out := make(map[string]any, len(KnownTools))
+
 	for _, id := range KnownTools {
 		settings, err := m.GetSettings(id)
 		if err != nil {
 			out[id] = map[string]any{"configured": false, "error": err.Error()}
 			continue
 		}
+
 		configured := len(settings) > 0
+
 		if v, ok := settings["enabled"]; ok {
 			switch t := v.(type) {
 			case bool:
@@ -69,11 +78,13 @@ func (m *Manager) AllStatuses() map[string]any {
 				configured = t == "true" || t == "1" || configured
 			}
 		}
+
 		out[id] = map[string]any{
 			"configured": configured,
 			"settings":   settings,
 		}
 	}
+
 	return out
 }
 
@@ -84,6 +95,7 @@ func Known(toolID string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 

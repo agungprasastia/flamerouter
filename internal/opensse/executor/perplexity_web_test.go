@@ -3,17 +3,17 @@ package executor_test
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/opensse/executor"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"flamerouter/internal/opensse/executor"
 )
 
 func TestPerplexityWebExecutor_ExecutionAndStreaming(t *testing.T) {
 	var gotPayload map[string]any
+
 	var gotCookie string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +51,7 @@ data: {"backend_uuid":"uuid-12345","blocks":[{"intended_usage":"markdown","markd
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
 	}
+
 	if !strings.Contains(gotCookie, "__Secure-next-auth.session-token=session-token-xyz") {
 		t.Errorf("got cookie %q, want session token", gotCookie)
 	}
@@ -61,9 +62,11 @@ data: {"backend_uuid":"uuid-12345","blocks":[{"intended_usage":"markdown","markd
 	if !strings.Contains(outStr, "Searching: golang test") {
 		t.Errorf("stream missing thinking reasoning_content: %s", outStr)
 	}
+
 	if !strings.Contains(outStr, "Hello from Perplexity") {
 		t.Errorf("stream missing content: %s", outStr)
 	}
+
 	if !strings.Contains(outStr, "[DONE]") {
 		t.Errorf("stream missing [DONE]: %s", outStr)
 	}
@@ -99,11 +102,14 @@ func TestPerplexityWebExecutor_NonStreaming(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {
 		t.Fatal(err)
 	}
+
 	choices, _ := respObj["choices"].([]any)
 	if len(choices) == 0 {
 		t.Fatal("empty choices")
 	}
+
 	first, _ := choices[0].(map[string]any)
+
 	msg, _ := first["message"].(map[string]any)
 	if msg["content"] != "Direct answer" {
 		t.Errorf("content = %v, want Direct answer", msg["content"])

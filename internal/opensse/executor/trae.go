@@ -42,9 +42,11 @@ func (e *TraeExecutor) base(cred Credentials) string {
 	if b == "" {
 		b = e.BaseURL
 	}
+
 	if b == "" {
 		b = traeDefaultBaseURL
 	}
+
 	return b
 }
 
@@ -53,13 +55,16 @@ func (e *TraeExecutor) buildHeaders(cred Credentials, stream bool) http.Header {
 	if token == "" {
 		token = cred.APIKey
 	}
+
 	psd := cred.ProviderSpecificData
 	appLang := "en"
 	userRegion := "US"
+
 	if psd != nil {
 		if l, ok := psd["appLanguage"].(string); ok && l != "" {
 			appLang = l
 		}
+
 		if r, ok := psd["userRegion"].(string); ok && r != "" {
 			userRegion = r
 		}
@@ -73,11 +78,13 @@ func (e *TraeExecutor) buildHeaders(cred Credentials, stream bool) http.Header {
 	h.Set("x-user-region", userRegion)
 	h.Set("Referer", "https://solo.trae.ai/")
 	h.Set("User-Agent", traeUserAgent)
+
 	if stream {
 		h.Set("Accept", "text/event-stream")
 	} else {
 		h.Set("Accept", "application/json")
 	}
+
 	return h
 }
 
@@ -92,30 +99,37 @@ func resolveTraeMode(model string) traeModeInfo {
 	if m == "work" || m == "auto-work" || m == "solo-work" {
 		return traeModeInfo{mode: "work", strategy: "auto", modelName: ""}
 	}
+
 	auto := m == "" || m == "auto"
 	strategy := "manual"
 	modelName := model
+
 	if auto {
 		strategy = "auto"
 		modelName = ""
 	}
+
 	return traeModeInfo{mode: "code", strategy: strategy, modelName: modelName}
 }
 
 func flattenTraeQuery(messages []any) string {
 	var parts []string
+
 	for _, mRaw := range messages {
 		msg, ok := mRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
+
 		content := ""
 		switch c := msg["content"].(type) {
 		case string:
 			content = c
 		case []any:
 			var sub []string
+
 			for _, p := range c {
 				if s, ok := p.(string); ok {
 					sub = append(sub, s)
@@ -125,8 +139,10 @@ func flattenTraeQuery(messages []any) string {
 					}
 				}
 			}
+
 			content = strings.Join(sub, "")
 		}
+
 		if role == "system" {
 			parts = append(parts, fmt.Sprintf("[System]\n%s", content))
 		} else if role == "assistant" {
@@ -135,6 +151,7 @@ func flattenTraeQuery(messages []any) string {
 			parts = append(parts, content)
 		}
 	}
+
 	typedBlocks := []map[string]any{
 		{
 			"type": "text",
@@ -144,6 +161,7 @@ func flattenTraeQuery(messages []any) string {
 		},
 	}
 	b, _ := json.Marshal(typedBlocks)
+
 	return string(b)
 }
 
@@ -163,54 +181,64 @@ func buildTraeCommonParams(psd map[string]any, mode string) string {
 		if v, ok := psd["appLanguage"].(string); ok && v != "" {
 			appLang = v
 		}
+
 		if v, ok := psd["appVersion"].(string); ok && v != "" {
 			appVer = v
 		}
+
 		if v, ok := psd["webId"].(string); ok {
 			webID = v
 		}
+
 		if v, ok := psd["userIdentity"].(string); ok && v != "" {
 			userIdentity = v
 		}
+
 		if v, ok := psd["bizUserId"].(string); ok {
 			bizUserID = v
 		}
+
 		if v, ok := psd["userUniqueId"].(string); ok {
 			userUniqueID = v
 		}
+
 		if v, ok := psd["scope"].(string); ok && v != "" {
 			scope = v
 		}
+
 		if v, ok := psd["tenant"].(string); ok && v != "" {
 			tenant = v
 		}
+
 		if v, ok := psd["region"].(string); ok && v != "" {
 			region = v
 		}
+
 		if v, ok := psd["aiRegion"].(string); ok && v != "" {
 			aiRegion = v
 		}
 	}
 
 	cp := map[string]any{
-		"language":         "en-us",
-		"app_language":     appLang,
-		"quality":          "stable",
-		"app_version":      appVer,
-		"web_id":           webID,
-		"user_identity":    userIdentity,
-		"is_freshman":      "0",
-		"biz_user_id":      bizUserID,
-		"user_unique_id":   userUniqueID,
-		"scope":            scope,
-		"tenant":           tenant,
-		"region":           region,
-		"aiRegion":         aiRegion,
-		"is_privacy_mode":  0,
-		"privacy_mode":     "off",
-		"solo_chat_mode":   mode,
+		"language":        "en-us",
+		"app_language":    appLang,
+		"quality":         "stable",
+		"app_version":     appVer,
+		"web_id":          webID,
+		"user_identity":   userIdentity,
+		"is_freshman":     "0",
+		"biz_user_id":     bizUserID,
+		"user_unique_id":  userUniqueID,
+		"scope":           scope,
+		"tenant":          tenant,
+		"region":          region,
+		"aiRegion":        aiRegion,
+		"is_privacy_mode": 0,
+		"privacy_mode":    "off",
+		"solo_chat_mode":  mode,
 	}
 	b, _ := json.Marshal(cp)
+
 	return string(b)
 }
 
@@ -239,10 +267,12 @@ func (e *TraeExecutor) createSession(ctx context.Context, headers http.Header, q
 	}
 
 	url := e.base(cred) + "/chat_sessions"
+
 	res, err := e.DoPOST(ctx, url, headers, reqBytes)
 	if err != nil {
 		return "", "", err
 	}
+
 	defer res.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(res.Body)
@@ -251,19 +281,22 @@ func (e *TraeExecutor) createSession(ctx context.Context, headers http.Header, q
 	}
 
 	var jsonResp struct {
-		Code int `json:"code"`
 		Data struct {
 			ChatSessionID string `json:"chat_session_id"`
 			MessageID     string `json:"message_id"`
 		} `json:"data"`
 		Message string `json:"message"`
+		Code    int    `json:"code"`
 	}
+
 	if err := json.Unmarshal(bodyBytes, &jsonResp); err != nil {
 		return "", "", err
 	}
+
 	if jsonResp.Code != 0 {
 		return "", "", fmt.Errorf("trae create_session code=%d: %s", jsonResp.Code, jsonResp.Message)
 	}
+
 	return jsonResp.Data.ChatSessionID, jsonResp.Data.MessageID, nil
 }
 
@@ -272,10 +305,12 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	messages, _ := m["messages"].([]any)
 	query := flattenTraeQuery(messages)
 
 	headers := e.buildHeaders(cred, stream)
+
 	sessionID, messageID, err := e.createSession(ctx, headers, query, model, cred)
 	if err != nil {
 		return jsonErr(502, err.Error(), "api_error", ""), nil
@@ -288,6 +323,7 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 	if err != nil {
 		return nil, err
 	}
+
 	for k, vals := range headers {
 		for _, v := range vals {
 			req.Header.Add(k, v)
@@ -296,10 +332,12 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 
 	res, err := e.client().Do(req)
 	if err != nil {
-		return jsonErr(502, "events stream failed: "+err.Error(), "api_error", ""), nil
+		return nil, err
 	}
+
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		DrainBody(res.Body)
+		_ = res.Body.Close()
 		return jsonErr(res.StatusCode, fmt.Sprintf("events stream HTTP %d", res.StatusCode), "api_error", ""), nil
 	}
 
@@ -308,6 +346,7 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 
 	if stream {
 		sseBody := wrapTraeEventStream(res.Body, model, cid, created)
+
 		return &Result{
 			StatusCode: 200,
 			Header: http.Header{
@@ -323,6 +362,7 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 	if err != nil {
 		return jsonErr(502, err.Error(), "api_error", ""), nil
 	}
+
 	return &Result{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -331,8 +371,8 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 }
 
 type traePlanState struct {
-	order    []string
 	thoughts map[string]string
+	order    []string
 	sent     int
 }
 
@@ -341,23 +381,29 @@ func (s *traePlanState) renderNewText(data map[string]any) string {
 	if pid == "" {
 		return ""
 	}
+
 	if s.thoughts == nil {
 		s.thoughts = make(map[string]string)
 	}
+
 	if _, exists := s.thoughts[pid]; !exists {
 		s.order = append(s.order, pid)
 	}
+
 	t, _ := data["thought"].(string)
 	if len(t) >= len(s.thoughts[pid]) {
 		s.thoughts[pid] = t
 	}
+
 	var sb strings.Builder
 	for _, id := range s.order {
 		sb.WriteString(s.thoughts[id])
 	}
+
 	full := sb.String()
 	piece := full[s.sent:]
 	s.sent = len(full)
+
 	return piece
 }
 
@@ -382,9 +428,13 @@ func wrapTraeEventStream(r io.ReadCloser, model, cid string, created int64) io.R
 		})
 
 		sc := bufio.NewScanner(r)
+
 		var currentEvent string
+
 		state := &traePlanState{thoughts: make(map[string]string)}
+
 		var usage map[string]any
+
 		var errorEvent map[string]any
 
 		for sc.Scan() {
@@ -393,7 +443,9 @@ func wrapTraeEventStream(r io.ReadCloser, model, cid string, created int64) io.R
 				currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 			} else if strings.HasPrefix(line, "data:") {
 				payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+
 				var data map[string]any
+
 				if err := json.Unmarshal([]byte(payload), &data); err != nil {
 					data = map[string]any{"_raw": payload}
 				}
@@ -402,9 +454,11 @@ func wrapTraeEventStream(r io.ReadCloser, model, cid string, created int64) io.R
 					errorEvent = data
 					break
 				}
+
 				if currentEvent == "token_usage" {
 					usage = data
 				}
+
 				if currentEvent == "plan_item" {
 					piece := state.renderNewText(data)
 					if piece != "" {
@@ -416,6 +470,7 @@ func wrapTraeEventStream(r io.ReadCloser, model, cid string, created int64) io.R
 						})
 					}
 				}
+
 				if currentEvent == "done" {
 					break
 				}
@@ -447,11 +502,13 @@ func wrapTraeEventStream(r io.ReadCloser, model, cid string, created int64) io.R
 					"total_tokens":      usage["total_tokens"],
 				}
 			}
+
 			writeSSE(choiceChunk)
 		}
 
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
+
 	return pr
 }
 
@@ -459,9 +516,13 @@ func collectTraeNonStreaming(r io.ReadCloser, model, cid string, created int64) 
 	defer r.Close()
 
 	sc := bufio.NewScanner(r)
+
 	var currentEvent string
+
 	state := &traePlanState{thoughts: make(map[string]string)}
+
 	var usage map[string]any
+
 	var errorEvent map[string]any
 
 	for sc.Scan() {
@@ -470,7 +531,9 @@ func collectTraeNonStreaming(r io.ReadCloser, model, cid string, created int64) 
 			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 		} else if strings.HasPrefix(line, "data:") {
 			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+
 			var data map[string]any
+
 			if err := json.Unmarshal([]byte(payload), &data); err != nil {
 				data = map[string]any{"_raw": payload}
 			}
@@ -479,12 +542,15 @@ func collectTraeNonStreaming(r io.ReadCloser, model, cid string, created int64) 
 				errorEvent = data
 				break
 			}
+
 			if currentEvent == "token_usage" {
 				usage = data
 			}
+
 			if currentEvent == "plan_item" {
 				state.renderNewText(data)
 			}
+
 			if currentEvent == "done" {
 				break
 			}
@@ -501,6 +567,7 @@ func collectTraeNonStreaming(r io.ReadCloser, model, cid string, created int64) 
 	for _, id := range state.order {
 		sb.WriteString(state.thoughts[id])
 	}
+
 	content := sb.String()
 
 	out := map[string]any{
@@ -521,5 +588,6 @@ func collectTraeNonStreaming(r io.ReadCloser, model, cid string, created int64) 
 			"total_tokens":      usage["total_tokens"],
 		}
 	}
+
 	return json.Marshal(out)
 }

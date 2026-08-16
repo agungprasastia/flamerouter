@@ -16,6 +16,7 @@ func TestProxyDeployValidationAndDryRun(t *testing.T) {
 		bytes.NewBufferString(`{"accountId":"a"}`))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("cf missing %d %s", rr.Code, rr.Body.String())
 	}
@@ -25,11 +26,14 @@ func TestProxyDeployValidationAndDryRun(t *testing.T) {
 		bytes.NewBufferString(`{"dryRun":true,"projectName":"relay-test"}`))
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusOK {
 		t.Fatalf("cf dry %d %s", rr.Code, rr.Body.String())
 	}
+
 	var out map[string]any
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+
 	if out["script"] == nil || out["script"] == "" {
 		t.Fatalf("script missing: %+v", out)
 	}
@@ -39,6 +43,7 @@ func TestProxyDeployValidationAndDryRun(t *testing.T) {
 		bytes.NewBufferString(`{"denoToken":"t"}`))
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("deno org %d", rr.Code)
 	}
@@ -48,6 +53,7 @@ func TestProxyDeployValidationAndDryRun(t *testing.T) {
 		bytes.NewBufferString(`{}`))
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("vercel token %d", rr.Code)
 	}
@@ -57,6 +63,7 @@ func TestProxyDeployValidationAndDryRun(t *testing.T) {
 		bytes.NewBufferString(`{"dryRun":true}`))
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusOK {
 		t.Fatalf("vercel dry %d %s", rr.Code, rr.Body.String())
 	}

@@ -9,10 +9,10 @@ var GlobalPxpipeTransform PxpipeTransform
 
 // PxpipeSummary stats for logging.
 type PxpipeSummary struct {
-	Applied       bool
 	Reason        string
 	OriginalChars int
 	ImageCount    int
+	Applied       bool
 }
 
 // CompressWithPxpipe applies pxpipe if installed and format is claude. Fail-open.
@@ -20,22 +20,29 @@ func CompressWithPxpipe(body map[string]any, enabled bool, format, model string,
 	if !enabled {
 		return nil, &PxpipeSummary{Reason: "disabled"}
 	}
+
 	if GlobalPxpipeTransform == nil {
 		return nil, &PxpipeSummary{Reason: "not_installed"}
 	}
+
 	if body == nil {
 		return nil, &PxpipeSummary{Reason: "missing_body"}
 	}
+
 	if format != "claude" {
 		return nil, &PxpipeSummary{Reason: "unsupported_format"}
 	}
+
 	if minChars <= 0 {
 		minChars = 25000
 	}
+
 	defer func() { recover() }()
+
 	out, ok := GlobalPxpipeTransform(body, model, minChars)
 	if !ok || out == nil {
 		return nil, &PxpipeSummary{Reason: "passthrough"}
 	}
+
 	return out, &PxpipeSummary{Applied: true, Reason: "applied"}
 }

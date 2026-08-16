@@ -1,13 +1,12 @@
 package gateway
 
 import (
+	"flamerouter/internal/config"
+	"flamerouter/internal/ops"
 	"net/http"
 	"runtime"
 	"strings"
 	"sync"
-
-	"flamerouter/internal/config"
-	"flamerouter/internal/ops"
 )
 
 var (
@@ -25,10 +24,11 @@ func SetHTTPServer(srv *http.Server) {
 func getHTTPServer() *http.Server {
 	httpServerMu.RLock()
 	defer httpServerMu.RUnlock()
+
 	return httpServer
 }
 
-// GET /api/version
+// GET /api/version.
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	current, latest, available, err := ops.CheckVersion()
 	out := map[string]any{
@@ -37,6 +37,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"os":      runtime.GOOS,
 		"arch":    runtime.GOARCH,
 	}
+
 	if err == nil {
 		out["current"] = current
 		out["latest"] = latest
@@ -45,15 +46,17 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		out["current"] = ops.Version
 		out["updateCheckError"] = err.Error()
 	}
+
 	writeJSONOK(w, out)
 }
 
-// POST /api/version/update
+// POST /api/version/update.
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if err := ops.SelfUpdate(); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	writeJSONOK(w, map[string]string{"status": "updated"})
 }
 
@@ -67,7 +70,9 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	writeJSONOK(w, map[string]string{"status": "shutting down"})
+
 	go func() {
 		_ = ops.Shutdown(getHTTPServer())
 	}()

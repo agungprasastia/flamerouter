@@ -40,15 +40,18 @@ func resolveDevinBin() string {
 	if bin := strings.TrimSpace(os.Getenv("CLI_DEVIN_BIN")); bin != "" {
 		return bin
 	}
+
 	home, _ := os.UserHomeDir()
 	isWin := runtime.GOOS == "windows"
 
 	var candidates []string
+
 	if isWin {
 		localAppData := os.Getenv("LOCALAPPDATA")
 		if localAppData == "" {
 			localAppData = filepath.Join(home, "AppData", "Local")
 		}
+
 		candidates = []string{
 			filepath.Join(localAppData, "devin", "cli", "bin", "devin.exe"),
 			filepath.Join(home, ".local", "bin", "devin.exe"),
@@ -75,26 +78,31 @@ func resolveDevinBin() string {
 	if isWin {
 		return "devin.exe"
 	}
+
 	return "devin"
 }
 
 func buildDevinPromptText(messages []any) string {
 	var lines []string
+
 	for _, mRaw := range messages {
 		msg, ok := mRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 		if role == "" {
 			role = "user"
 		}
+
 		text := ""
 		switch c := msg["content"].(type) {
 		case string:
 			text = c
 		case []any:
 			var parts []string
+
 			for _, p := range c {
 				if pm, ok := p.(map[string]any); ok {
 					if t, _ := pm["type"].(string); t == "text" {
@@ -107,23 +115,28 @@ func buildDevinPromptText(messages []any) string {
 					}
 				}
 			}
+
 			text = strings.Join(parts, "")
 		}
 
 		if toolCalls, ok := msg["tool_calls"].([]any); ok && len(toolCalls) > 0 {
 			var tcParts []string
+
 			for _, tcRaw := range toolCalls {
 				if tc, ok := tcRaw.(map[string]any); ok {
 					fn, _ := tc["function"].(map[string]any)
 					name := ""
 					args := ""
+
 					if fn != nil {
 						name, _ = fn["name"].(string)
 						args, _ = fn["arguments"].(string)
 					}
+
 					tcParts = append(tcParts, fmt.Sprintf("[Tool call %s id=%v]\n%s", name, tc["id"], args))
 				}
 			}
+
 			text = strings.Join(append([]string{text}, tcParts...), "\n\n")
 		}
 
@@ -141,9 +154,11 @@ func buildDevinPromptText(messages []any) string {
 			lines = append(lines, "[User]\n"+text)
 		}
 	}
+
 	if len(lines) == 0 {
 		return "(empty)"
 	}
+
 	return strings.Join(lines, "\n\n")
 }
 
@@ -157,26 +172,31 @@ func (e *DevinCliExecutor) Execute(ctx context.Context, cred Credentials, model 
 	if len(messages) == 0 {
 		messages, _ = m["input"].([]any)
 	}
+
 	promptText := buildDevinPromptText(messages)
 	devinBin := resolveDevinBin()
 
 	agentType := strings.TrimSpace(os.Getenv("CLI_DEVIN_AGENT_TYPE"))
 	args := []string{"acp"}
+
 	if agentType != "" {
 		args = append(args, "--agent-type", agentType)
 	}
 
 	cmd := exec.CommandContext(ctx, devinBin, args...)
+
 	permMode := os.Getenv("DEVIN_PERMISSION_MODE")
 	if permMode == "" {
 		permMode = "bypass"
 	}
+
 	cmd.Env = append(os.Environ(), "DEVIN_PERMISSION_MODE="+permMode)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -191,6 +211,7 @@ func (e *DevinCliExecutor) Execute(ctx context.Context, cred Credentials, model 
 
 	if stream {
 		sseBody := wrapDevinACPStream(cmd, stdin, stdout, model, cid, created, promptText)
+
 		return &Result{
 			StatusCode: 200,
 			Header: http.Header{
@@ -206,6 +227,7 @@ func (e *DevinCliExecutor) Execute(ctx context.Context, cred Credentials, model 
 	if err != nil {
 		return jsonErr(502, err.Error(), "devin_cli_error", ""), nil
 	}
+
 	return &Result{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -229,14 +251,17 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 	pr, pw := io.Pipe()
 	go func() {
 		var closeOnce sync.Once
+
 		cleanup := func() {
 			closeOnce.Do(func() {
 				_ = stdin.Close()
 				_ = stdout.Close()
 				_ = pw.Close()
+
 				if cmd.Process != nil {
 					_ = cmd.Process.Kill()
 				}
+
 				_ = cmd.Wait()
 			})
 		}
@@ -253,7 +278,9 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 		sendRPC := func(method string, params any) int {
 			id := idCounter
 			idCounter++
+
 			sendJSONRPC(stdin, method, params, id)
+
 			return id
 		}
 
@@ -265,8 +292,11 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 		})
 
 		sc := bufio.NewScanner(stdout)
+
 		var initDone, sessionCreated, roleEmitted bool
+
 		var sessionID string
+
 		var totalText string
 
 		for sc.Scan() {
@@ -274,6 +304,7 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 			if line == "" {
 				continue
 			}
+
 			var msg map[string]any
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				continue
@@ -282,11 +313,13 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 			// initialize response
 			if !initDone && msg["result"] != nil && msg["method"] == nil {
 				initDone = true
+
 				sendRPC("session/new", map[string]any{
 					"cwd":        os.TempDir(),
 					"mcpServers": []any{},
 					"model":      model,
 				})
+
 				continue
 			}
 
@@ -295,24 +328,29 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 				if res, ok := msg["result"].(map[string]any); ok {
 					sessionID, _ = res["sessionId"].(string)
 				}
+
 				if sessionID == "" {
 					writeSSE(map[string]any{"error": map[string]any{"message": "session/new returned no sessionId", "type": "devin_cli_error"}})
 					break
 				}
+
 				sessionCreated = true
+
 				sendRPC("session/prompt", map[string]any{
 					"sessionId": sessionID,
 					"prompt":    []any{map[string]any{"type": "text", "text": promptText}},
 				})
+
 				continue
 			}
 
 			// auto-approve permission requests
 			if meth, _ := msg["method"].(string); meth == "session/request_permission" {
-				reqID, _ := msg["id"]
+				reqID := msg["id"]
 				params, _ := msg["params"].(map[string]any)
 				options, _ := params["options"].([]any)
 				optID := "allow"
+
 				if len(options) > 0 {
 					if first, ok := options[0].(map[string]any); ok {
 						if idStr, ok := first["optionId"].(string); ok {
@@ -320,6 +358,7 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 						}
 					}
 				}
+
 				resp := map[string]any{
 					"jsonrpc": "2.0",
 					"id":      reqID,
@@ -327,6 +366,7 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 				}
 				b, _ := json.Marshal(resp)
 				_, _ = stdin.Write(append(b, '\n'))
+
 				continue
 			}
 
@@ -339,9 +379,11 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 			if meth, _ := msg["method"].(string); meth == "session/update" || meth == "$/update" {
 				params, _ := msg["params"].(map[string]any)
 				update, _ := params["update"].(map[string]any)
+
 				if update == nil {
 					update = params
 				}
+
 				upType, _ := update["sessionUpdate"].(string)
 				if upType == "" {
 					upType, _ = update["type"].(string)
@@ -365,8 +407,10 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 									"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil,
 								}},
 							})
+
 							roleEmitted = true
 						}
+
 						totalText += deltaText
 						writeSSE(map[string]any{
 							"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
@@ -397,8 +441,10 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 				"total_tokens":      (len(promptText) + len(totalText) + 3) / 4,
 			},
 		})
+
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
+
 	return pr
 }
 
@@ -406,9 +452,11 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 	defer func() {
 		_ = stdin.Close()
 		_ = stdout.Close()
+
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
+
 		_ = cmd.Wait()
 	}()
 
@@ -416,7 +464,9 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 	sendRPC := func(method string, params any) int {
 		id := idCounter
 		idCounter++
+
 		sendJSONRPC(stdin, method, params, id)
+
 		return id
 	}
 
@@ -427,8 +477,11 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 	})
 
 	sc := bufio.NewScanner(stdout)
+
 	var initDone, sessionCreated bool
+
 	var sessionID string
+
 	var totalText string
 
 	for sc.Scan() {
@@ -436,6 +489,7 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 		if line == "" {
 			continue
 		}
+
 		var msg map[string]any
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			continue
@@ -443,11 +497,13 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 
 		if !initDone && msg["result"] != nil && msg["method"] == nil {
 			initDone = true
+
 			sendRPC("session/new", map[string]any{
 				"cwd":        os.TempDir(),
 				"mcpServers": []any{},
 				"model":      model,
 			})
+
 			continue
 		}
 
@@ -455,14 +511,18 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 			if res, ok := msg["result"].(map[string]any); ok {
 				sessionID, _ = res["sessionId"].(string)
 			}
+
 			if sessionID == "" {
 				return nil, fmt.Errorf("session/new returned no sessionId")
 			}
+
 			sessionCreated = true
+
 			sendRPC("session/prompt", map[string]any{
 				"sessionId": sessionID,
 				"prompt":    []any{map[string]any{"type": "text", "text": promptText}},
 			})
+
 			continue
 		}
 
@@ -473,9 +533,11 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 		if meth, _ := msg["method"].(string); meth == "session/update" || meth == "$/update" {
 			params, _ := msg["params"].(map[string]any)
 			update, _ := params["update"].(map[string]any)
+
 			if update == nil {
 				update = params
 			}
+
 			upType, _ := update["sessionUpdate"].(string)
 			if upType == "" {
 				upType, _ = update["type"].(string)
@@ -518,5 +580,6 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 			"total_tokens":      (len(promptText) + len(totalText) + 3) / 4,
 		},
 	}
+
 	return json.Marshal(out)
 }

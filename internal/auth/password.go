@@ -15,6 +15,7 @@ func HashPassword(password string) (hash, salt string) {
 	salt = hex.EncodeToString(saltBytes)
 	h := sha256.Sum256([]byte(salt + password))
 	hash = hex.EncodeToString(h[:])
+
 	return
 }
 
@@ -22,5 +23,6 @@ func HashPassword(password string) (hash, salt string) {
 func VerifyPassword(password, hash, salt string) bool {
 	h := sha256.Sum256([]byte(salt + password))
 	got := hex.EncodeToString(h[:])
+
 	return subtle.ConstantTimeCompare([]byte(got), []byte(hash)) == 1
 }

@@ -20,14 +20,18 @@ func (e *QwenExecutor) buildURL(cred Credentials) string {
 	if ru := strPSD(cred, "resourceUrl"); ru != "" {
 		host := strings.TrimPrefix(strings.TrimPrefix(ru, "https://"), "http://")
 		host = strings.TrimRight(host, "/")
+
 		return "https://" + host + "/v1/chat/completions"
 	}
+
 	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" {
 		if !strings.Contains(base, "/chat/completions") {
 			return base + "/v1/chat/completions"
 		}
+
 		return base
 	}
+
 	return "https://portal.qwen.ai/v1/chat/completions"
 }
 
@@ -49,11 +53,13 @@ func (e *QwenExecutor) transform(body map[string]any) map[string]any {
 	if body["enable_thinking"] == true {
 		thinkingActive = true
 	}
+
 	if t, ok := body["thinking"].(map[string]any); ok {
 		if tt, _ := t["type"].(string); tt == "enabled" {
 			thinkingActive = true
 		}
 	}
+
 	if thinkingActive {
 		tc := body["tool_choice"]
 		if tc == "required" {
@@ -62,6 +68,7 @@ func (e *QwenExecutor) transform(body map[string]any) map[string]any {
 			body["tool_choice"] = "auto"
 		}
 	}
+
 	return body
 }
 
@@ -70,22 +77,28 @@ func (e *QwenExecutor) Execute(ctx context.Context, cred Credentials, model stri
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	m["model"] = model
 	m["stream"] = stream
 	m = e.transform(m)
+
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return nil, err
 	}
+
 	h := make(http.Header)
 	h.Set("Content-Type", "application/json")
+
 	tok := cred.APIKey
 	if tok == "" {
 		tok = cred.AccessToken
 	}
+
 	if tok != "" {
 		h.Set("Authorization", "Bearer "+tok)
 	}
+
 	h.Set("User-Agent", qwenUserAgent)
 	h.Set("X-DashScope-AuthType", "qwen-oauth")
 	h.Set("X-DashScope-CacheControl", "enable")
@@ -98,10 +111,12 @@ func (e *QwenExecutor) Execute(ctx context.Context, cred Credentials, model stri
 	h.Set("X-Stainless-Runtime", "node")
 	h.Set("X-Stainless-Runtime-Version", "v18.19.1")
 	h.Set("Connection", "keep-alive")
+
 	if stream {
 		h.Set("Accept", "text/event-stream")
 	} else {
 		h.Set("Accept", "application/json")
 	}
+
 	return e.DoPOST(ctx, e.buildURL(cred), h, payload)
 }

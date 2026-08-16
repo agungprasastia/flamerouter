@@ -7,10 +7,10 @@ import (
 
 // RateLimiter tracks login attempts per IP with sliding window.
 type RateLimiter struct {
-	mu          sync.Mutex
 	attempts    map[string][]time.Time
 	maxAttempts int
 	window      time.Duration
+	mu          sync.Mutex
 }
 
 func NewRateLimiter(maxAttempts int, window time.Duration) *RateLimiter {
@@ -25,15 +25,20 @@ func NewRateLimiter(maxAttempts int, window time.Duration) *RateLimiter {
 func (rl *RateLimiter) Allow(ip string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
+
 	now := time.Now()
 	cutoff := now.Add(-rl.window)
+
 	var recent []time.Time
+
 	for _, t := range rl.attempts[ip] {
 		if t.After(cutoff) {
 			recent = append(recent, t)
 		}
 	}
+
 	rl.attempts[ip] = recent
+
 	return len(recent) < rl.maxAttempts
 }
 

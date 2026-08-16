@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	maxRestarts     = 5
-	restartResetMs  = 5 * time.Minute
+	maxRestarts    = 5
+	restartResetMs = 5 * time.Minute
 )
 
 var restartDelays = []time.Duration{
@@ -21,13 +21,13 @@ var restartDelays = []time.Duration{
 
 // Restarter auto-restarts MITM server up to maxRestarts with backoff.
 type Restarter struct {
-	mu          sync.Mutex
-	count       int
-	lastStart   time.Time
-	restarting  bool
-	enabled     bool
-	addr        string
-	startFn     func(addr string) error
+	lastStart  time.Time
+	startFn    func(addr string) error
+	addr       string
+	count      int
+	mu         sync.Mutex
+	restarting bool
+	enabled    bool
 }
 
 func NewRestarter(startFn func(addr string) error) *Restarter {
@@ -62,16 +62,21 @@ func (r *Restarter) ScheduleRestart() {
 		r.mu.Unlock()
 		return
 	}
+
 	r.restarting = true
 	if time.Since(r.lastStart) >= restartResetMs {
 		r.count = 0
 	}
+
 	if r.count >= maxRestarts {
 		log.Printf("[mitm] max restart attempts reached (%d)", maxRestarts)
+
 		r.restarting = false
 		r.mu.Unlock()
+
 		return
 	}
+
 	attempt := r.count
 	delay := restartDelays[min(attempt, len(restartDelays)-1)]
 	r.count++
@@ -81,29 +86,36 @@ func (r *Restarter) ScheduleRestart() {
 	r.mu.Unlock()
 
 	log.Printf("[mitm] restarting in %v (%d/%d)", delay, n, maxRestarts)
+
 	go func() {
 		time.Sleep(delay)
 		r.mu.Lock()
 		if !r.enabled {
 			r.restarting = false
 			r.mu.Unlock()
+
 			return
 		}
 		r.mu.Unlock()
+
 		if startFn == nil || addr == "" {
 			r.mu.Lock()
 			r.restarting = false
 			r.mu.Unlock()
+
 			return
 		}
+
 		if err := startFn(addr); err != nil {
 			log.Printf("[mitm] restart attempt %d failed: %v", n, err)
 			r.mu.Lock()
 			r.restarting = false
 			r.mu.Unlock()
 			r.ScheduleRestart()
+
 			return
 		}
+
 		r.mu.Lock()
 		r.count = 0
 		r.lastStart = time.Now()
@@ -117,5 +129,6 @@ func min(a, b int) int {
 	if a < b {
 		return a
 	}
+
 	return b
 }

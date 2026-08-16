@@ -5,8 +5,8 @@ import "sync"
 // DNSOverride maps hostnames to local IPs for MITM interception.
 // ponytail: in-memory only; OS hosts-file install later if needed.
 type DNSOverride struct {
+	host map[string]string
 	mu   sync.RWMutex
-	host map[string]string // hostname -> IP
 }
 
 func NewDNSOverride() *DNSOverride {
@@ -23,6 +23,7 @@ func (d *DNSOverride) Get(hostname string) (string, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	ip, ok := d.host[hostname]
+
 	return ip, ok
 }
 

@@ -12,6 +12,7 @@ func clampCallId(id string) string {
 	if len(id) > maxCallIDLen {
 		return id[:maxCallIDLen]
 	}
+
 	return id
 }
 
@@ -29,6 +30,7 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 	for k, v := range body {
 		result[k] = v
 	}
+
 	result["messages"] = []any{}
 
 	if instructions, ok := body["instructions"].(string); ok && instructions != "" {
@@ -41,7 +43,9 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 	}
 
 	var currentAssistantMsg map[string]any
+
 	var pendingToolResults []any
+
 	var pendingReasoning string
 
 	inputItems, ok := body["input"].([]any)
@@ -70,6 +74,7 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 				result["messages"] = messages
 				currentAssistantMsg = nil
 			}
+
 			if len(pendingToolResults) > 0 {
 				messages := result["messages"].([]any)
 				messages = append(messages, pendingToolResults...)
@@ -79,12 +84,15 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 
 			role, _ := item["role"].(string)
 			contentArr, _ := item["content"].([]any)
+
 			var newContent []any
+
 			for _, cRaw := range contentArr {
 				c, ok := cRaw.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				cType, _ := c["type"].(string)
 				switch cType {
 				case schema.ResponsesItemInputText:
@@ -100,10 +108,12 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 					if url == "" {
 						url, _ = c["file_id"].(string)
 					}
+
 					detail, _ := c["detail"].(string)
 					if detail == "" {
 						detail = "auto"
 					}
+
 					newContent = append(newContent, map[string]any{
 						"type": schema.OpenaiBlockImageUrl,
 						"image_url": map[string]any{
@@ -121,6 +131,7 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 				msg["reasoning_content"] = pendingReasoning
 				pendingReasoning = ""
 			}
+
 			messages := result["messages"].([]any)
 			messages = append(messages, msg)
 			result["messages"] = messages
@@ -137,10 +148,12 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 					pendingReasoning = ""
 				}
 			}
+
 			name, _ := item["name"].(string)
 			if name == "" {
 				continue
 			}
+
 			callID, _ := item["call_id"].(string)
 			args, _ := item["arguments"].(string)
 			tc := map[string]any{
@@ -162,17 +175,21 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 				result["messages"] = messages
 				currentAssistantMsg = nil
 			}
+
 			if len(pendingToolResults) > 0 {
 				messages := result["messages"].([]any)
 				messages = append(messages, pendingToolResults...)
 				result["messages"] = messages
 				pendingToolResults = nil
 			}
+
 			callID, _ := item["call_id"].(string)
+
 			output, _ := item["output"].(string)
 			if output == "" {
 				output = "{}"
 			}
+
 			messages := result["messages"].([]any)
 			messages = append(messages, map[string]any{
 				"role":         schema.RoleTool,
@@ -184,6 +201,7 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 		case schema.ResponsesItemReasoning:
 			if summary, ok := item["summary"].([]any); ok {
 				var txt string
+
 				for _, s := range summary {
 					if sm, ok := s.(map[string]any); ok {
 						if t, ok := sm["text"].(string); ok {
@@ -191,6 +209,7 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 						}
 					}
 				}
+
 				if txt != "" {
 					if pendingReasoning != "" {
 						pendingReasoning += "\n" + txt
@@ -207,6 +226,7 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 		messages = append(messages, currentAssistantMsg)
 		result["messages"] = messages
 	}
+
 	if len(pendingToolResults) > 0 {
 		messages := result["messages"].([]any)
 		messages = append(messages, pendingToolResults...)
@@ -215,33 +235,40 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 
 	if tools, ok := body["tools"].([]any); ok {
 		var resultTools []any
+
 		for _, toolRaw := range tools {
 			tool, ok := toolRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			if _, ok := tool["function"].(map[string]any); ok {
 				resultTools = append(resultTools, toolRaw)
 				continue
 			}
+
 			name, _ := tool["name"].(string)
 			if name == "" {
 				continue
 			}
+
 			desc, _ := tool["description"].(string)
+
 			params, _ := tool["parameters"].(map[string]any)
 			if params == nil {
 				params = map[string]any{"type": "object", "properties": map[string]any{}}
 			}
+
 			resultTools = append(resultTools, map[string]any{
 				"type": schema.OpenaiBlockFunction,
 				"function": map[string]any{
-					"name":       name,
+					"name":        name,
 					"description": desc,
-					"parameters": params,
+					"parameters":  params,
 				},
 			})
 		}
+
 		result["tools"] = resultTools
 	}
 
@@ -249,6 +276,7 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 		if _, exists := result["max_tokens"]; !exists {
 			result["max_tokens"] = mot
 		}
+
 		delete(result, "max_output_tokens")
 	}
 
@@ -269,35 +297,42 @@ func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bo
 		for k, v := range body {
 			result[k] = v
 		}
+
 		result["model"] = model
 		result["stream"] = true
+
 		return result
 	}
 
 	result := map[string]any{
-		"model":   model,
-		"input":   []any{},
-		"stream":  true,
-		"store":   false,
+		"model":  model,
+		"input":  []any{},
+		"stream": true,
+		"store":  false,
 	}
 
 	messages, _ := body["messages"].([]any)
+
 	var hasSystem bool
+
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
-		content, _ := msg["content"]
+		content := msg["content"]
 
 		if role == schema.RoleSystem || role == schema.RoleDeveloper {
 			if !hasSystem {
 				if s, ok := content.(string); ok {
 					result["instructions"] = s
 				}
+
 				hasSystem = true
 			}
+
 			continue
 		}
 
@@ -317,6 +352,7 @@ func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bo
 					if !ok {
 						continue
 					}
+
 					btype, _ := block["type"].(string)
 					switch btype {
 					case schema.OpenaiBlockText:
@@ -328,6 +364,7 @@ func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bo
 						if iu, ok := block["image_url"].(map[string]any); ok {
 							url, _ = iu["url"].(string)
 						}
+
 						contentItems = append(contentItems, map[string]any{
 							"type":      schema.ResponsesItemInputImage,
 							"image_url": url,
@@ -337,10 +374,12 @@ func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bo
 						if text == "" {
 							text, _ = block["content"].(string)
 						}
+
 						if text == "" {
 							textBytes, _ := json.Marshal(block)
 							text = string(textBytes)
 						}
+
 						contentItems = append(contentItems, map[string]any{"type": contentType, "text": text})
 					}
 				}
@@ -360,11 +399,13 @@ func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bo
 		if role == schema.RoleAssistant {
 			if tcArr, ok := msg["tool_calls"].([]any); ok {
 				inputArr := result["input"].([]any)
+
 				for _, tcRaw := range tcArr {
 					tc, ok := tcRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					fn, _ := tc["function"].(map[string]any)
 					name, _ := fn["name"].(string)
 					args, _ := fn["arguments"].(string)
@@ -376,16 +417,19 @@ func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bo
 						"arguments": args,
 					})
 				}
+
 				result["input"] = inputArr
 			}
 		}
 
 		if role == schema.RoleTool {
 			tcID, _ := msg["tool_call_id"].(string)
+
 			var output string
 			if s, ok := content.(string); ok {
 				output = s
 			}
+
 			inputArr := result["input"].([]any)
 			inputArr = append(inputArr, map[string]any{
 				"type":    schema.ResponsesItemFunctionCallOutput,
@@ -402,19 +446,23 @@ func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bo
 
 	if tools, ok := body["tools"].([]any); ok {
 		var resultTools []any
+
 		for _, toolRaw := range tools {
 			tool, ok := toolRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			if t, ok := tool["type"].(string); ok && t == schema.OpenaiBlockFunction {
 				if fn, ok := tool["function"].(map[string]any); ok {
 					name, _ := fn["name"].(string)
 					desc, _ := fn["description"].(string)
+
 					params, _ := fn["parameters"].(map[string]any)
 					if params == nil {
 						params = map[string]any{"type": "object", "properties": map[string]any{}}
 					}
+
 					resultTools = append(resultTools, map[string]any{
 						"type":        schema.OpenaiBlockFunction,
 						"name":        name,
@@ -424,18 +472,22 @@ func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bo
 				}
 			}
 		}
+
 		result["tools"] = resultTools
 	}
 
 	if temp, ok := body["temperature"].(float64); ok {
 		result["temperature"] = temp
 	}
+
 	if mt, ok := body["max_tokens"].(float64); ok {
 		result["max_tokens"] = mt
 	}
+
 	if tp, ok := body["top_p"].(float64); ok {
 		result["top_p"] = tp
 	}
+
 	if re, ok := body["reasoning_effort"].(string); ok {
 		result["reasoning"] = map[string]any{"effort": re, "summary": "auto"}
 	}

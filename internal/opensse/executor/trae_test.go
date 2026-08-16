@@ -3,17 +3,17 @@ package executor_test
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/opensse/executor"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"flamerouter/internal/opensse/executor"
 )
 
 func TestTraeExecutor_ExecutionAndStreaming(t *testing.T) {
 	var gotAuth string
+
 	var gotCreateSessionBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,9 +28,10 @@ func TestTraeExecutor_ExecutionAndStreaming(t *testing.T) {
 				"code": 0,
 				"data": map[string]any{
 					"chat_session_id": "session-trae-123",
-					"message_id":     "msg-trae-456",
+					"message_id":      "msg-trae-456",
 				},
 			})
+
 			return
 		}
 
@@ -49,6 +50,7 @@ event: done
 data: {}
 
 `))
+
 			return
 		}
 
@@ -77,15 +79,18 @@ data: {}
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
 	}
+
 	if gotAuth != "Cloud-IDE-JWT jwt-token-999" {
 		t.Errorf("got auth %q", gotAuth)
 	}
 
 	outBytes, _ := io.ReadAll(res.Body)
+
 	outStr := string(outBytes)
 	if !strings.Contains(outStr, "Hello ") || !strings.Contains(outStr, "from Trae SOLO") {
 		t.Errorf("stream missing content: %s", outStr)
 	}
+
 	if !strings.Contains(outStr, "[DONE]") {
 		t.Errorf("stream missing [DONE]: %s", outStr)
 	}
@@ -99,9 +104,10 @@ func TestTraeExecutor_NonStreaming(t *testing.T) {
 				"code": 0,
 				"data": map[string]any{
 					"chat_session_id": "session-1",
-					"message_id":     "msg-1",
+					"message_id":      "msg-1",
 				},
 			})
+
 			return
 		}
 
@@ -113,6 +119,7 @@ data: {"id":"item1","thought":"Unary Trae result"}
 event: done
 data: {}
 `))
+
 			return
 		}
 	}))
@@ -136,11 +143,14 @@ data: {}
 	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {
 		t.Fatal(err)
 	}
+
 	choices, _ := respObj["choices"].([]any)
 	if len(choices) == 0 {
 		t.Fatal("empty choices")
 	}
+
 	first, _ := choices[0].(map[string]any)
+
 	msg, _ := first["message"].(map[string]any)
 	if msg["content"] != "Unary Trae result" {
 		t.Errorf("content = %v, want Unary Trae result", msg["content"])

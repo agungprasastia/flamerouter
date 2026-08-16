@@ -17,6 +17,7 @@ func CollapseTextParts(content any) any {
 	}
 
 	var texts []string
+
 	for _, part := range parts {
 		if block, ok := part.(map[string]any); ok {
 			if t, ok := block["type"].(string); ok && t == "text" {
@@ -29,12 +30,15 @@ func CollapseTextParts(content any) any {
 
 	if len(texts) == len(parts) && len(texts) > 0 {
 		result := ""
+
 		for i, t := range texts {
 			if i > 0 {
 				result += "\n"
 			}
+
 			result += t
 		}
+
 		return result
 	}
 
@@ -59,7 +63,9 @@ func DedupeToolUseBlocks(messages []any) []any {
 		}
 
 		seen := make(map[string]bool)
+
 		var deduped []any
+
 		for _, block := range blocks {
 			b, ok := block.(map[string]any)
 			if !ok {
@@ -74,13 +80,16 @@ func DedupeToolUseBlocks(messages []any) []any {
 					if seen[id] {
 						continue
 					}
+
 					seen[id] = true
 				}
 			}
+
 			deduped = append(deduped, block)
 		}
 
 		messages[i].(map[string]any)["content"] = deduped
 	}
+
 	return messages
 }

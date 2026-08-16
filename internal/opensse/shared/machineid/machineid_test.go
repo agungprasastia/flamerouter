@@ -21,6 +21,7 @@ func TestGetConsistentMachineID(t *testing.T) {
 	if len(id3) != 16 {
 		t.Fatalf("expected length 16, got %d (%q)", len(id3), id3)
 	}
+
 	if id1 == id3 {
 		t.Fatalf("expected different IDs for different salts, got %q == %q", id1, id3)
 	}
@@ -37,6 +38,7 @@ func TestGetRawMachineID(t *testing.T) {
 	if raw == "" {
 		t.Fatal("expected non-empty raw machine ID")
 	}
+
 	raw2 := getRawMachineID()
 	if raw != raw2 {
 		t.Fatalf("expected raw machine ID to be cached and identical, got %q != %q", raw, raw2)

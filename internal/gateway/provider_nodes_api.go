@@ -3,10 +3,9 @@ package gateway
 import (
 	"database/sql"
 	"encoding/json"
+	"flamerouter/internal/store"
 	"net/http"
 	"strings"
-
-	"flamerouter/internal/store"
 )
 
 func (s *Server) handleListProviderNodes(w http.ResponseWriter, r *http.Request) {
@@ -15,9 +14,11 @@ func (s *Server) handleListProviderNodes(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+
 	if nodes == nil {
 		nodes = []store.ProviderNode{}
 	}
+
 	list := make([]map[string]any, 0, len(nodes))
 	for _, n := range nodes {
 		list = append(list, map[string]any{
@@ -25,6 +26,7 @@ func (s *Server) handleListProviderNodes(w http.ResponseWriter, r *http.Request)
 			"prefix": n.Prefix, "apiType": n.APIType, "baseUrl": n.BaseURL,
 		})
 	}
+
 	writeJSONOK(w, map[string]any{"nodes": list})
 }
 
@@ -36,34 +38,43 @@ func (s *Server) handleCreateProviderNode(w http.ResponseWriter, r *http.Request
 		BaseURL string `json:"baseUrl"`
 		Type    string `json:"type"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+
 	req.Name = strings.TrimSpace(req.Name)
 	req.Prefix = strings.TrimSpace(req.Prefix)
 	req.BaseURL = strings.TrimSpace(req.BaseURL)
+
 	if req.Name == "" {
 		writeErr(w, http.StatusBadRequest, "Name is required")
 		return
 	}
+
 	if req.Prefix == "" {
 		writeErr(w, http.StatusBadRequest, "Prefix is required")
 		return
 	}
+
 	if req.Type == "" {
 		req.Type = "openai-compatible"
 	}
+
 	if req.BaseURL == "" {
 		req.BaseURL = "https://api.openai.com/v1"
 	}
+
 	req.BaseURL = strings.TrimRight(req.BaseURL, "/")
 	if req.Type == "anthropic-compatible" && strings.HasSuffix(req.BaseURL, "/messages") {
 		req.BaseURL = strings.TrimSuffix(req.BaseURL, "/messages")
 	}
+
 	if req.Type == "custom-embedding" && strings.HasSuffix(req.BaseURL, "/embeddings") {
 		req.BaseURL = strings.TrimSuffix(req.BaseURL, "/embeddings")
 	}
+
 	if req.Type == "openai-compatible" && req.APIType != "chat" && req.APIType != "responses" {
 		if req.APIType == "" {
 			req.APIType = "chat"
@@ -72,11 +83,13 @@ func (s *Server) handleCreateProviderNode(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+
 	id, err := s.st.CreateProviderNode(req.Type, req.Name, req.Prefix, req.APIType, req.BaseURL)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"node": map[string]any{
 			"id": id, "type": req.Type, "name": req.Name,
@@ -87,32 +100,39 @@ func (s *Server) handleCreateProviderNode(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleUpdateProviderNode(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
 	var req struct {
 		Name    string `json:"name"`
 		Prefix  string `json:"prefix"`
 		APIType string `json:"apiType"`
 		BaseURL string `json:"baseUrl"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+
 	req.Name = strings.TrimSpace(req.Name)
 	req.Prefix = strings.TrimSpace(req.Prefix)
 	req.BaseURL = strings.TrimSpace(req.BaseURL)
+
 	if req.Name == "" || req.Prefix == "" || req.BaseURL == "" {
 		writeErr(w, http.StatusBadRequest, "name, prefix, baseUrl required")
 		return
 	}
+
 	err := s.st.UpdateProviderNode(id, req.Name, req.Prefix, req.APIType, req.BaseURL)
 	if err == sql.ErrNoRows {
 		writeErr(w, http.StatusNotFound, "Provider node not found")
 		return
 	}
+
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+
 	writeJSONOK(w, map[string]any{
 		"node": map[string]any{
 			"id": id, "name": req.Name, "prefix": req.Prefix,
@@ -123,15 +143,18 @@ func (s *Server) handleUpdateProviderNode(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleDeleteProviderNode(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
 	err := s.st.DeleteProviderNode(id)
 	if err == sql.ErrNoRows {
 		writeErr(w, http.StatusNotFound, "Provider node not found")
 		return
 	}
+
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+
 	writeJSONOK(w, map[string]any{"success": true})
 }
 
@@ -140,13 +163,16 @@ func (s *Server) handleValidateProviderNode(w http.ResponseWriter, r *http.Reque
 		Name   string `json:"name"`
 		Prefix string `json:"prefix"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+
 	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Prefix) == "" {
 		writeJSONOK(w, map[string]any{"valid": false, "error": "name and prefix required"})
 		return
 	}
+
 	writeJSONOK(w, map[string]any{"valid": true})
 }

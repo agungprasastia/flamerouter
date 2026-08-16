@@ -3,11 +3,10 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/store"
+	"net/http"
 )
 
 func ImageGeneration(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
@@ -16,19 +15,24 @@ func ImageGeneration(ctx context.Context, w http.ResponseWriter, body []byte, st
 		jsonError(w, http.StatusBadRequest, "invalid json")
 		return err
 	}
+
 	prompt, _ := m["prompt"].(string)
 	if prompt == "" {
 		jsonError(w, http.StatusBadRequest, "missing required field: prompt")
 		return nil
 	}
+
 	modelStr, _ := m["model"].(string)
+
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
 	if errMsg != "" {
 		jsonError(w, http.StatusBadRequest, errMsg)
 		return nil
 	}
+
 	_ = providerID
 	cred := mediaCredentials(conn)
+
 	ensureModelField(m, modelName)
 	payload, _ := json.Marshal(m)
 
@@ -42,8 +46,10 @@ func ImageGeneration(ctx context.Context, w http.ResponseWriter, body []byte, st
 			return err
 		}
 	}
+
 	if res.StatusCode < 400 {
 		fb.ClearError(conn.ID)
 	}
+
 	return writeResult(w, res, true)
 }

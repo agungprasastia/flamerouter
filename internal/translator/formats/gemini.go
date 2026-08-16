@@ -4,12 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"flamerouter/internal/translator/concerns"
+	"flamerouter/internal/translator/schema"
 	"fmt"
 	"strings"
 	"time"
-
-	"flamerouter/internal/translator/concerns"
-	"flamerouter/internal/translator/schema"
 )
 
 var UnsupportedSchemaConstraints = []string{
@@ -45,6 +44,7 @@ func ConvertOpenAIContentToParts(content any) []any {
 			if !ok {
 				continue
 			}
+
 			t, _ := item["type"].(string)
 			switch t {
 			case schema.OpenaiBlockText:
@@ -69,14 +69,17 @@ func ConvertOpenAIContentToParts(content any) []any {
 			case schema.OpenaiBlockInputAudio:
 				if ia, ok := item["input_audio"].(map[string]any); ok {
 					data, _ := ia["data"].(string)
+
 					format, _ := ia["format"].(string)
 					if format == "" {
 						format = "wav"
 					}
+
 					mime := "audio/" + format
 					if format == "mp3" {
 						mime = "audio/mpeg"
 					}
+
 					parts = append(parts, map[string]any{
 						"inlineData": map[string]any{"mime_type": mime, "data": data},
 					})
@@ -106,6 +109,7 @@ func ConvertOpenAIContentToParts(content any) []any {
 			}
 		}
 	}
+
 	return parts
 }
 
@@ -119,19 +123,23 @@ func ExtractTextContent(content any, separator string) string {
 		return c
 	case []any:
 		var parts []string
+
 		for _, itemRaw := range c {
 			item, ok := itemRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			if t, _ := item["type"].(string); t == schema.OpenaiBlockText {
 				if text, ok := item["text"].(string); ok {
 					parts = append(parts, text)
 				}
 			}
 		}
+
 		return strings.Join(parts, separator)
 	}
+
 	return ""
 }
 
@@ -150,6 +158,7 @@ func GenerateProjectId() string {
 	rand.Read(b)
 	adj := adjectives[int(b[0])%len(adjectives)]
 	noun := nouns[int(b[1])%len(nouns)]
+
 	return fmt.Sprintf("%s-%s-%s", adj, noun, hex.EncodeToString(b)[:5])
 }
 
@@ -158,6 +167,7 @@ func randomUUID() string {
 	rand.Read(b)
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
+
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
@@ -169,6 +179,7 @@ func removeUnsupportedKeywords(obj any, keywords map[string]bool) {
 				delete(v, k)
 				continue
 			}
+
 			removeUnsupportedKeywords(v[k], keywords)
 		}
 	case []any:
@@ -187,6 +198,7 @@ func convertConstToEnum(obj any) {
 				delete(v, "const")
 			}
 		}
+
 		for _, child := range v {
 			convertConstToEnum(child)
 		}
@@ -205,11 +217,13 @@ func convertEnumValuesToStrings(obj any) {
 			for i, e := range enum {
 				strs[i] = fmt.Sprint(e)
 			}
+
 			v["enum"] = strs
 			if _, has := v["type"]; !has {
 				v["type"] = "string"
 			}
 		}
+
 		for _, child := range v {
 			convertEnumValuesToStrings(child)
 		}
@@ -225,22 +239,28 @@ func mergeAllOf(obj any) {
 	case map[string]any:
 		if allOf, ok := v["allOf"].([]any); ok {
 			mergedProps := map[string]any{}
+
 			var mergedReq []any
+
 			for _, itemRaw := range allOf {
 				item, ok := itemRaw.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				if props, ok := item["properties"].(map[string]any); ok {
 					for k, p := range props {
 						mergedProps[k] = p
 					}
 				}
+
 				if req, ok := item["required"].([]any); ok {
 					mergedReq = append(mergedReq, req...)
 				}
 			}
+
 			delete(v, "allOf")
+
 			if len(mergedProps) > 0 {
 				if existing, ok := v["properties"].(map[string]any); ok {
 					for k, p := range mergedProps {
@@ -250,6 +270,7 @@ func mergeAllOf(obj any) {
 					v["properties"] = mergedProps
 				}
 			}
+
 			if len(mergedReq) > 0 {
 				if existing, ok := v["required"].([]any); ok {
 					v["required"] = append(existing, mergedReq...)
@@ -258,6 +279,7 @@ func mergeAllOf(obj any) {
 				}
 			}
 		}
+
 		for _, child := range v {
 			mergeAllOf(child)
 		}
@@ -270,13 +292,16 @@ func mergeAllOf(obj any) {
 
 func selectBest(items []any) int {
 	bestIdx, bestScore := 0, -1
+
 	for i, itemRaw := range items {
 		item, ok := itemRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		score := 0
 		t, _ := item["type"].(string)
+
 		if t == "object" || item["properties"] != nil {
 			score = 3
 		} else if t == "array" || item["items"] != nil {
@@ -284,11 +309,13 @@ func selectBest(items []any) int {
 		} else if t != "" && t != "null" {
 			score = 1
 		}
+
 		if score > bestScore {
 			bestScore = score
 			bestIdx = i
 		}
 	}
+
 	return bestIdx
 }
 
@@ -298,25 +325,32 @@ func flattenAnyOfOneOf(obj any) {
 		for _, key := range []string{"anyOf", "oneOf"} {
 			if arr, ok := v[key].([]any); ok && len(arr) > 0 {
 				var nonNull []any
+
 				for _, s := range arr {
 					m, ok := s.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					if t, _ := m["type"].(string); t == "null" {
 						continue
 					}
+
 					nonNull = append(nonNull, s)
 				}
+
 				if len(nonNull) > 0 {
 					selected, _ := nonNull[selectBest(nonNull)].(map[string]any)
+
 					delete(v, key)
+
 					for k, val := range selected {
 						v[k] = val
 					}
 				}
 			}
 		}
+
 		for _, child := range v {
 			flattenAnyOfOneOf(child)
 		}
@@ -332,17 +366,20 @@ func flattenTypeArrays(obj any) {
 	case map[string]any:
 		if types, ok := v["type"].([]any); ok {
 			var nonNull []string
+
 			for _, t := range types {
 				if s, ok := t.(string); ok && s != "null" {
 					nonNull = append(nonNull, s)
 				}
 			}
+
 			if len(nonNull) > 0 {
 				v["type"] = nonNull[0]
 			} else {
 				v["type"] = "string"
 			}
 		}
+
 		for _, child := range v {
 			flattenTypeArrays(child)
 		}
@@ -361,6 +398,7 @@ func ensureObjectType(obj any) {
 				v["type"] = "object"
 			}
 		}
+
 		for _, child := range v {
 			ensureObjectType(child)
 		}
@@ -377,6 +415,7 @@ func cleanupRequired(obj any) {
 		if req, ok := v["required"].([]any); ok {
 			if props, ok := v["properties"].(map[string]any); ok {
 				var valid []any
+
 				for _, r := range req {
 					if s, ok := r.(string); ok {
 						if _, has := props[s]; has {
@@ -384,6 +423,7 @@ func cleanupRequired(obj any) {
 						}
 					}
 				}
+
 				if len(valid) == 0 {
 					delete(v, "required")
 				} else {
@@ -391,6 +431,7 @@ func cleanupRequired(obj any) {
 				}
 			}
 		}
+
 		for _, child := range v {
 			cleanupRequired(child)
 		}
@@ -406,7 +447,7 @@ func addPlaceholders(obj any) {
 	case map[string]any:
 		if t, _ := v["type"].(string); t == "object" {
 			props, _ := v["properties"].(map[string]any)
-			if props == nil || len(props) == 0 {
+			if len(props) == 0 {
 				v["properties"] = map[string]any{
 					"reason": map[string]any{
 						"type":        "string",
@@ -416,6 +457,7 @@ func addPlaceholders(obj any) {
 				v["required"] = []any{"reason"}
 			}
 		}
+
 		for _, child := range v {
 			addPlaceholders(child)
 		}
@@ -431,22 +473,27 @@ func CleanJSONSchemaForAntigravity(schema any) any {
 	if schema == nil {
 		return schema
 	}
+
 	m, ok := schema.(map[string]any)
 	if !ok {
 		return schema
 	}
+
 	convertConstToEnum(m)
 	convertEnumValuesToStrings(m)
 	mergeAllOf(m)
 	flattenAnyOfOneOf(m)
 	flattenTypeArrays(m)
 	ensureObjectType(m)
+
 	kw := map[string]bool{}
 	for _, k := range UnsupportedSchemaConstraints {
 		kw[k] = true
 	}
+
 	removeUnsupportedKeywords(m, kw)
 	cleanupRequired(m)
 	addPlaceholders(m)
+
 	return m
 }

@@ -7,32 +7,35 @@ import (
 )
 
 type Connection struct {
+	ProviderSpecificData map[string]any
+	RateLimitedUntil     string
+	LastError            string
+	Name                 string
+	LastUsedAt           string `json:"last_used_at"`
+	BaseURL              string
+	APIKey               string
+	AuthType             string
+	TestStatus           string
+	ExpiresAt            string
+	RefreshToken         string
+	AccessToken          string
 	ID                   string
 	Provider             string
-	AuthType             string
-	Name                 string
+	ConsecutiveUseCount  int `json:"consecutive_use_count"`
 	Priority             int
 	IsActive             bool
-	APIKey               string
-	AccessToken          string
-	RefreshToken         string
-	ExpiresAt            string
-	TestStatus           string
-	LastError            string
-	RateLimitedUntil     string
-	ProviderSpecificData map[string]any
-	BaseURL              string
-	// Strategy fields; DB columns land in Task 8 migration — runtime RR uses in-memory state.
-	ConsecutiveUseCount int    `json:"consecutive_use_count"`
-	LastUsedAt          string `json:"last_used_at"`
 }
 
 func scanConnection(rows interface {
 	Scan(dest ...any) error
-}) (Connection, error) {
+},
+) (Connection, error) {
 	var c Connection
+
 	var psdJSON string
+
 	var active int
+
 	err := rows.Scan(&c.ID, &c.Provider, &c.AuthType, &c.Name, &c.Priority, &active,
 		&c.APIKey, &c.AccessToken, &c.RefreshToken, &c.ExpiresAt,
 		&c.TestStatus, &c.LastError, &c.RateLimitedUntil, &psdJSON, &c.BaseURL,
@@ -40,8 +43,10 @@ func scanConnection(rows interface {
 	if err != nil {
 		return c, err
 	}
+
 	c.IsActive = active != 0
 	_ = json.Unmarshal([]byte(psdJSON), &c.ProviderSpecificData)
+
 	return c, nil
 }
 
@@ -58,15 +63,20 @@ func (s *Store) ListActiveByProvider(provider string) ([]Connection, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	var out []Connection
+
 	for rows.Next() {
 		c, err := scanConnection(rows)
 		if err != nil {
 			return nil, err
 		}
+
 		out = append(out, c)
 	}
+
 	return out, rows.Err()
 }
 
@@ -75,15 +85,20 @@ func (s *Store) ListConnectionsByProvider(provider string) ([]Connection, error)
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	var out []Connection
+
 	for rows.Next() {
 		c, err := scanConnection(rows)
 		if err != nil {
 			return nil, err
 		}
+
 		out = append(out, c)
 	}
+
 	return out, rows.Err()
 }
 
@@ -92,27 +107,35 @@ func (s *Store) ListAllConnections() ([]Connection, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	var out []Connection
+
 	for rows.Next() {
 		c, err := scanConnection(rows)
 		if err != nil {
 			return nil, err
 		}
+
 		out = append(out, c)
 	}
+
 	return out, rows.Err()
 }
 
 func (s *Store) GetConnection(id string) (*Connection, error) {
 	row := s.db.QueryRow(connectionSelect+` WHERE id=?`, id)
+
 	c, err := scanConnection(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	return &c, nil
 }
 
@@ -123,6 +146,7 @@ func (s *Store) CreateConnection(provider, authType, name, apiKey, baseURL strin
 		 VALUES(?,?,?,?,0,1,'active',?,?,?)`,
 		id, provider, authType, name, apiKey, baseURL, time.Now().UTC().Format(time.RFC3339),
 	)
+
 	return id, err
 }
 
@@ -130,16 +154,19 @@ func (s *Store) CreateConnection(provider, authType, name, apiKey, baseURL strin
 func (s *Store) CreateOAuthConnection(provider, authType, name, accessToken, refreshToken, expiresAt string, psd map[string]any) (string, error) {
 	id := newID()
 	psdJSON := "{}"
+
 	if psd != nil {
 		if b, err := json.Marshal(psd); err == nil {
 			psdJSON = string(b)
 		}
 	}
+
 	_, err := s.db.Exec(
 		`INSERT INTO provider_connections(id, provider, auth_type, name, priority, is_active, test_status, access_token, refresh_token, expires_at, provider_specific_data, created_at)
 		 VALUES(?,?,?,?,0,1,'active',?,?,?,?,?)`,
 		id, provider, authType, name, accessToken, refreshToken, expiresAt, psdJSON, time.Now().UTC().Format(time.RFC3339),
 	)
+
 	return id, err
 }
 
@@ -149,6 +176,7 @@ func (s *Store) MarkConnectionUnavailable(connID string, cooldownMs int64) error
 		`UPDATE provider_connections SET rate_limited_until=? WHERE id=?`,
 		until, connID,
 	)
+
 	return err
 }
 
@@ -157,6 +185,7 @@ func (s *Store) ClearConnectionError(connID string) error {
 		`UPDATE provider_connections SET rate_limited_until='', last_error='' WHERE id=?`,
 		connID,
 	)
+
 	return err
 }
 
@@ -165,6 +194,7 @@ func (s *Store) UpdateConnectionTokens(connID, accessToken, refreshToken, expire
 		`UPDATE provider_connections SET access_token=?, refresh_token=?, expires_at=? WHERE id=?`,
 		accessToken, refreshToken, expiresAt, connID,
 	)
+
 	return err
 }
 
@@ -173,6 +203,7 @@ func (s *Store) UpdateConnectionPSD(connID string, psdJSON string) error {
 		`UPDATE provider_connections SET provider_specific_data=? WHERE id=?`,
 		psdJSON, connID,
 	)
+
 	return err
 }
 
@@ -182,6 +213,7 @@ func (s *Store) InsertUsage(provider, model string, prompt, completion int, conn
 		 VALUES(?,?,?,?,?,datetime('now'))`,
 		provider, model, prompt, completion, connectionID,
 	)
+
 	return err
 }
 
@@ -190,6 +222,7 @@ func (s *Store) UpdateConnection(id string, isActive bool, name string, priority
 		`UPDATE provider_connections SET is_active=?, name=?, priority=?, base_url=? WHERE id=?`,
 		isActive, name, priority, baseURL, id,
 	)
+
 	return err
 }
 
@@ -198,10 +231,12 @@ func (s *Store) DeleteConnection(id string) error {
 	if err != nil {
 		return err
 	}
+
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+
 	return nil
 }
 

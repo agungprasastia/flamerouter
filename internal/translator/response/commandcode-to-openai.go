@@ -26,15 +26,18 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 	}
 
 	event := chunk
+
 	if raw, ok := chunk["raw"].(string); ok && raw != "" {
 		raw = strings.TrimSpace(raw)
 		if raw == "" || raw == "[DONE]" {
 			return nil
 		}
+
 		jsonStr := raw
 		if strings.HasPrefix(jsonStr, "data:") {
 			jsonStr = strings.TrimSpace(jsonStr[5:])
 		}
+
 		var parsed map[string]any
 		if json.Unmarshal([]byte(jsonStr), &parsed) == nil {
 			event = parsed
@@ -58,13 +61,16 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 		} else if t, ok := event["delta"].(string); ok {
 			text = t
 		}
+
 		if text == "" {
 			break
 		}
+
 		delta := map[string]any{"content": text}
 		if state.ChunkIndex == 0 {
 			delta["role"] = schema.RoleAssistant
 		}
+
 		state.ChunkIndex++
 		out = append(out, buildCCChunk(state, delta, nil))
 
@@ -73,6 +79,7 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 		if text == "" {
 			break
 		}
+
 		delta := concerns.ReasoningDelta(text, state.ChunkIndex == 0)
 		state.ChunkIndex++
 		out = append(out, buildCCChunk(state, delta, nil))
@@ -84,14 +91,18 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 		} else if v, ok := event["toolCallId"].(string); ok {
 			id = v
 		}
+
 		if id == "" {
 			id = "call_" + strconv.Itoa(state.ToolIndex)
 		}
+
 		idx := state.ToolIndex
+
 		state.ToolIndex++
 		if state.ToolIndexById == nil {
 			state.ToolIndexById = make(map[string]int)
 		}
+
 		state.ToolIndexById[id] = idx
 		delta := map[string]any{
 			"tool_calls": []any{map[string]any{
@@ -104,9 +115,11 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 				},
 			}},
 		}
+
 		if state.ChunkIndex == 0 {
 			delta["role"] = schema.RoleAssistant
 		}
+
 		state.ChunkIndex++
 		out = append(out, buildCCChunk(state, delta, nil))
 
@@ -117,16 +130,19 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 		} else if v, ok := event["toolCallId"].(string); ok {
 			id = v
 		}
+
 		idx, exists := state.ToolIndexById[id]
 		if !exists {
 			break
 		}
+
 		deltaText := ""
 		if d, ok := event["delta"].(string); ok {
 			deltaText = d
 		} else if d, ok := event["inputTextDelta"].(string); ok {
 			deltaText = d
 		}
+
 		delta := map[string]any{
 			"tool_calls": []any{map[string]any{
 				"index": idx,
@@ -144,12 +160,16 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 				break
 			}
 		}
+
 		idx := state.ToolIndex
+
 		state.ToolIndex++
 		if state.ToolIndexById == nil {
 			state.ToolIndexById = make(map[string]int)
 		}
+
 		state.ToolIndexById[toolCallId] = idx
+
 		argsStr := "{}"
 		if input, ok := event["input"].(string); ok {
 			argsStr = input
@@ -157,6 +177,7 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 			b, _ := json.Marshal(input)
 			argsStr = string(b)
 		}
+
 		delta := map[string]any{
 			"tool_calls": []any{map[string]any{
 				"index": idx,
@@ -171,6 +192,7 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 		if state.ChunkIndex == 0 {
 			delta["role"] = schema.RoleAssistant
 		}
+
 		state.ChunkIndex++
 		out = append(out, buildCCChunk(state, delta, nil))
 
@@ -178,6 +200,7 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 		if reason, ok := event["finishReason"].(string); ok {
 			state.FinishReason = concerns.ToOpenAIFinish(reason, "commandcode")
 		}
+
 		if usage, ok := event["usage"].(map[string]any); ok {
 			state.RawUsage = usage
 		}
@@ -191,17 +214,21 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 				finishReason = "stop"
 			}
 		}
+
 		finalChunk := buildCCChunk(state, map[string]any{}, finishReason)
+
 		totalUsage := event["totalUsage"]
 		if totalUsage == nil {
 			totalUsage = state.RawUsage
 		}
+
 		if tu, ok := totalUsage.(map[string]any); ok {
 			usage := concerns.ToOpenAIUsage(tu, "commandcode")
 			if usage != nil {
 				finalChunk["usage"] = usage
 			}
 		}
+
 		out = append(out, finalChunk)
 
 	case "error":
@@ -209,6 +236,7 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 		if errVal == nil {
 			errVal = event["message"]
 		}
+
 		errStr := "unknown"
 		if s, ok := errVal.(string); ok {
 			errStr = s
@@ -216,6 +244,7 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 			b2, _ := json.Marshal(b)
 			errStr = string(b2)
 		}
+
 		out = append(out, buildCCChunk(state, map[string]any{"content": "\n\n[CommandCode error: " + errStr + "]"}, nil))
 		out = append(out, buildCCChunk(state, map[string]any{}, "stop"))
 	}
@@ -223,6 +252,7 @@ func commandCodeToOpenAIResponse(chunk map[string]any, state *concerns.ResponseS
 	if len(out) == 0 {
 		return nil
 	}
+
 	return out
 }
 
@@ -230,15 +260,19 @@ func ensureCCState(state *concerns.ResponseState, event map[string]any) {
 	if state.ResponseCreated {
 		return
 	}
+
 	state.ResponseCreated = true
 	state.ResponseId = "chatcmpl-" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 	state.Created = time.Now().Unix()
+
 	if m, ok := event["model"].(string); ok && m != "" {
 		state.Model = m
 	}
+
 	if state.Model == "" {
 		state.Model = "commandcode"
 	}
+
 	state.ChunkIndex = 0
 	state.ToolIndex = 0
 	state.ToolIndexById = make(map[string]int)

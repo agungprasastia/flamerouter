@@ -19,6 +19,7 @@ func fetchQoderUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	if token == "" {
 		token = opts.APIKey
 	}
+
 	if token == "" {
 		return &QuotaResult{Message: "Qoder usage unavailable: no access token"}, nil
 	}
@@ -27,6 +28,7 @@ func fetchQoderUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 
@@ -49,7 +51,9 @@ func fetchQoderUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	orgQuota, _ := body["orgResourcePackage"].(map[string]any)
 
 	expiresAtMs := int64(toFiniteFloat(body["expiresAt"], 0))
+
 	var resetAt *string
+
 	if expiresAtMs > 0 {
 		iso := time.UnixMilli(expiresAtMs).UTC().Format(time.RFC3339Nano)
 		resetAt = &iso
@@ -61,10 +65,12 @@ func fetchQoderUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 		tot := toFiniteFloat(userQuota["total"], 0)
 		usd := toFiniteFloat(userQuota["used"], 0)
 		rem := toFiniteFloat(userQuota["remaining"], 0)
+
 		unit, _ := userQuota["unit"].(string)
 		if unit == "" {
 			unit = "credits"
 		}
+
 		item := makeQuota(usd, tot, resetAt, false)
 		item.Remaining = rem
 		item.Unit = unit
@@ -75,10 +81,12 @@ func fetchQoderUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 		tot := toFiniteFloat(orgQuota["total"], 0)
 		usd := toFiniteFloat(orgQuota["used"], 0)
 		rem := toFiniteFloat(orgQuota["remaining"], 0)
+
 		unit, _ := orgQuota["unit"].(string)
 		if unit == "" {
 			unit = "credits"
 		}
+
 		item := makeQuota(usd, tot, resetAt, false)
 		item.Remaining = rem
 		item.Unit = unit
@@ -86,6 +94,7 @@ func fetchQoderUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	}
 
 	totUsagePct := toFiniteFloat(body["totalUsagePercentage"], 0)
+
 	var isQuotaExceeded *bool
 	if ex, ok := body["isQuotaExceeded"].(bool); ok {
 		isQuotaExceeded = &ex

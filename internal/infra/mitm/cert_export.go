@@ -10,6 +10,7 @@ func (s *Server) RootCAPEM() []byte {
 	if s == nil || s.rootCA == nil {
 		return nil
 	}
+
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.rootCA.Raw})
 }
 
@@ -18,6 +19,7 @@ func (s *Server) RootCA() *x509.Certificate {
 	if s == nil {
 		return nil
 	}
+
 	return s.rootCA
 }
 

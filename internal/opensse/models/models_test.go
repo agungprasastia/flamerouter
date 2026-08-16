@@ -2,13 +2,12 @@ package models
 
 import (
 	"context"
+	"flamerouter/internal/store"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"flamerouter/internal/store"
 )
 
 func TestEngineCachingAndDeduplication(t *testing.T) {
@@ -40,6 +39,7 @@ func TestEngineCachingAndDeduplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first resolve failed: %v", err)
 	}
+
 	if len(models1) != 2 || callCount != 1 {
 		t.Fatalf("expected 2 models and 1 fetch call, got %d models, %d calls", len(models1), callCount)
 	}
@@ -49,16 +49,19 @@ func TestEngineCachingAndDeduplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cached resolve failed: %v", err)
 	}
+
 	if len(models2) != 2 || callCount != 1 {
 		t.Fatalf("expected 2 models from cache without new fetch call, got %d calls", callCount)
 	}
 
 	// 3. Invalidation
 	engine.InvalidateCache(conn)
+
 	models3, err := engine.ResolveModels(ctx, conn)
 	if err != nil {
 		t.Fatalf("post-invalidation resolve failed: %v", err)
 	}
+
 	if len(models3) != 2 || callCount != 2 {
 		t.Fatalf("expected 2 models and 2 fetch calls after invalidation, got %d calls", callCount)
 	}
@@ -71,6 +74,7 @@ func TestCopilotResolver(t *testing.T) {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{
 			"data": [
@@ -92,6 +96,7 @@ func TestCopilotResolver(t *testing.T) {
 	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
 		req.URL.Host = server.Listener.Addr().String()
+
 		return oldTransport.RoundTrip(req)
 	})
 
@@ -105,9 +110,11 @@ func TestCopilotResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("copilot resolve failed: %v", err)
 	}
+
 	if len(res) != 2 {
 		t.Fatalf("expected 2 enabled chat models, got %d", len(res))
 	}
+
 	if res[0].ID != "gpt-4o" || res[1].ID != "claude-3-7-sonnet" {
 		t.Fatalf("unexpected model IDs: %+v", res)
 	}
@@ -145,6 +152,7 @@ func TestKiroResolver(t *testing.T) {
 	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
 		req.URL.Host = server.Listener.Addr().String()
+
 		return oldTransport.RoundTrip(req)
 	})
 
@@ -163,12 +171,15 @@ func TestKiroResolver(t *testing.T) {
 	if len(res) != 6 {
 		t.Fatalf("expected 6 variants, got %d", len(res))
 	}
+
 	if res[0].ID != "claude-opus-4.8" || res[0].Name != "Kiro Claude Opus 4.8 (1.5x credit)" {
 		t.Fatalf("unexpected first model: %+v", res[0])
 	}
+
 	if res[1].ID != "claude-opus-4.8-thinking" {
 		t.Fatalf("unexpected second model: %+v", res[1])
 	}
+
 	if res[4].ID != "auto" || res[4].Name != "Kiro Auto" {
 		t.Fatalf("unexpected auto model: %+v", res[4])
 	}
@@ -194,6 +205,7 @@ func TestGrokCliResolver(t *testing.T) {
 	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
 		req.URL.Host = server.Listener.Addr().String()
+
 		return oldTransport.RoundTrip(req)
 	})
 
@@ -207,9 +219,11 @@ func TestGrokCliResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grok-cli resolve failed: %v", err)
 	}
+
 	if len(res) != 2 {
 		t.Fatalf("expected 2 models, got %d", len(res))
 	}
+
 	if res[0].ID != "grok-build" || res[0].ContextLength != 500000 {
 		t.Fatalf("unexpected grok-build model: %+v", res[0])
 	}
@@ -256,9 +270,11 @@ func TestKimchiResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kimchi resolve failed: %v", err)
 	}
+
 	if len(res) != 2 {
 		t.Fatalf("expected 2 models, got %d", len(res))
 	}
+
 	if res[0].ID != "kimi-k2.7" || !res[0].IsVL || !res[0].IsReasoning {
 		t.Fatalf("unexpected kimchi model: %+v", res[0])
 	}
@@ -285,6 +301,7 @@ func TestClinePassResolver(t *testing.T) {
 	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
 		req.URL.Host = server.Listener.Addr().String()
+
 		return oldTransport.RoundTrip(req)
 	})
 
@@ -298,9 +315,11 @@ func TestClinePassResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clinepass resolve failed: %v", err)
 	}
+
 	if len(res) != 2 {
 		t.Fatalf("expected 2 cline-pass models, got %d", len(res))
 	}
+
 	if res[0].ID != "cline-pass/glm-5.2" || res[1].ID != "cline-pass/kimi-k2.7-code" {
 		t.Fatalf("unexpected clinepass models: %+v", res)
 	}
@@ -341,6 +360,7 @@ func TestQoderResolver(t *testing.T) {
 	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
 		req.URL.Host = server.Listener.Addr().String()
+
 		return oldTransport.RoundTrip(req)
 	})
 
@@ -357,17 +377,19 @@ func TestQoderResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("qoder resolve failed: %v", err)
 	}
+
 	if len(res) != 1 {
 		t.Fatalf("expected 1 enabled model, got %d", len(res))
 	}
+
 	if res[0].ID != "qmodel" || !res[0].IsReasoning || !res[0].IsVL {
 		t.Fatalf("unexpected qoder model: %+v", res[0])
 	}
 }
 
 type testDummyResolver struct {
-	ttl time.Duration
 	fn  func(ctx context.Context, conn *store.Connection) ([]DynamicModel, error)
+	ttl time.Duration
 }
 
 func (r *testDummyResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {

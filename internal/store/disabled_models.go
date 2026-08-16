@@ -5,15 +5,20 @@ func (s *Store) ListDisabledModels() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	var out []string
+
 	for rows.Next() {
 		var m string
 		if err := rows.Scan(&m); err != nil {
 			return nil, err
 		}
+
 		out = append(out, m)
 	}
+
 	return out, rows.Err()
 }
 
@@ -22,6 +27,7 @@ func (s *Store) DisableModel(model string) error {
 		`INSERT INTO disabled_models(model) VALUES(?) ON CONFLICT(model) DO NOTHING`,
 		model,
 	)
+
 	return err
 }
 

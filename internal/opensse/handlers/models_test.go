@@ -3,13 +3,12 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/opensse/models"
+	"flamerouter/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"flamerouter/internal/opensse/models"
-	"flamerouter/internal/store"
 )
 
 type dummyResolverForHandlersTest struct {
@@ -26,6 +25,7 @@ func (d *dummyResolverForHandlersTest) TTL() time.Duration {
 
 func TestDynamicModelsResolutionInHandlers(t *testing.T) {
 	st := newTestStore(t)
+
 	_, err := st.CreateOAuthConnection("kiro", "oauth", "Kiro Dev", "dummy-access-token", "dummy-refresh-token", "", map[string]any{
 		"clientId": "test-client",
 	})
@@ -67,11 +67,13 @@ func TestDynamicModelsResolutionInHandlers(t *testing.T) {
 		Object string           `json:"object"`
 		Data   []map[string]any `json:"data"`
 	}
+
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal /v1/models: %v", err)
 	}
 
 	foundDynamic := false
+
 	for _, m := range resp.Data {
 		if id, ok := m["id"].(string); ok && id == "kr/claude-opus-4.8" {
 			foundDynamic = true
@@ -86,6 +88,7 @@ func TestDynamicModelsResolutionInHandlers(t *testing.T) {
 
 func TestDynamicModelsFallbackToStaticOnNetworkError(t *testing.T) {
 	st := newTestStore(t)
+
 	_, err := st.CreateOAuthConnection("kiro", "oauth", "Kiro Dev", "dummy-access-token", "dummy-refresh-token", "", map[string]any{
 		"clientId": "test-client",
 	})
@@ -114,12 +117,14 @@ func TestDynamicModelsFallbackToStaticOnNetworkError(t *testing.T) {
 		Object string           `json:"object"`
 		Data   []map[string]any `json:"data"`
 	}
+
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal /v1/models: %v", err)
 	}
 
 	// Should fallback to static registry for kiro (which contains e.g. kr/claude-opus-5 or kr/claude-opus-4.8)
 	foundStatic := false
+
 	for _, m := range resp.Data {
 		if id, ok := m["id"].(string); ok && (id == "kr/claude-opus-5" || id == "kr/claude-opus-4.8") {
 			foundStatic = true

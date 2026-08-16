@@ -18,8 +18,8 @@ func init() {
 }
 
 type GeminiCLIExecutor struct {
-	Base
 	currentModel string
+	Base
 }
 
 func (e *GeminiCLIExecutor) buildURL(stream bool) string {
@@ -27,27 +27,34 @@ func (e *GeminiCLIExecutor) buildURL(stream bool) string {
 	if stream {
 		action = "streamGenerateContent?alt=sse"
 	}
+
 	base := "https://cloudcode-pa.googleapis.com/v1internal"
+
 	return base + ":" + action
 }
 
 func (e *GeminiCLIExecutor) buildHeaders(cred Credentials, stream bool) http.Header {
 	h := make(http.Header)
 	h.Set("Content-Type", "application/json")
+
 	tok := cred.AccessToken
 	if tok == "" {
 		tok = cred.APIKey
 	}
+
 	if tok != "" {
 		h.Set("Authorization", "Bearer "+tok)
 	}
+
 	h.Set("User-Agent", "gemini-cli-go/1.0")
 	h.Set("X-Goog-Api-Client", "gl-node/gemini-cli")
+
 	if stream {
 		h.Set("Accept", "text/event-stream")
 	} else {
 		h.Set("Accept", "application/json")
 	}
+
 	return h
 }
 
@@ -61,12 +68,14 @@ func (e *GeminiCLIExecutor) transform(model string, body map[string]any, cred Cr
 			}
 		}
 	}
+
 	project := ""
 	if p, ok := body["project"].(string); ok {
 		project = p
 	}
 	// strip model from inner if present
 	inner := body
+
 	return map[string]any{
 		"project": project,
 		"model":   model,
@@ -79,12 +88,16 @@ func (e *GeminiCLIExecutor) Execute(ctx context.Context, cred Credentials, model
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	wrapped := e.transform(model, m, cred)
+
 	payload, err := json.Marshal(wrapped)
 	if err != nil {
 		return nil, err
 	}
+
 	url := e.buildURL(stream)
+
 	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" && strings.Contains(base, "googleapis") {
 		action := "generateContent"
 		if stream {
@@ -97,5 +110,6 @@ func (e *GeminiCLIExecutor) Execute(ctx context.Context, cred Credentials, model
 			url = base
 		}
 	}
+
 	return e.DoPOST(ctx, url, e.buildHeaders(cred, stream), payload)
 }

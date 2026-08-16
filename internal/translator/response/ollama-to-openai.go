@@ -23,6 +23,7 @@ func ollamaToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState)
 		state.ResponseId = "chatcmpl-" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 		state.Created = time.Now().Unix()
 		state.Model, _ = chunk["model"].(string)
+
 		if state.Model == "" {
 			state.Model = "ollama"
 		}
@@ -36,17 +37,21 @@ func ollamaToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState)
 
 	if done, ok := chunk["done"].(bool); ok && done {
 		usage := parseOllamaUsage(chunk)
+
 		finishReason := "stop"
 		if doneReason, ok := chunk["done_reason"].(string); ok {
 			finishReason = concerns.ToOpenAIFinish(doneReason, "ollama")
 		}
+
 		if state.HadToolCalls {
 			finishReason = "tool_calls"
 		}
+
 		result := buildOllamaChunk(meta, map[string]any{}, finishReason)
 		if usage != nil {
 			result["usage"] = usage
 		}
+
 		return []map[string]any{result}
 	}
 
@@ -66,6 +71,7 @@ func ollamaToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState)
 	if content != "" {
 		state.AccumulatedContent += content
 	}
+
 	if thinking != "" {
 		state.AccumulatedThinking += thinking
 	}
@@ -74,9 +80,11 @@ func ollamaToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState)
 	if content != "" {
 		delta["content"] = content
 	}
+
 	if thinking != "" {
 		delta["reasoning_content"] = thinking
 	}
+
 	if len(toolCalls) > 0 {
 		state.HadToolCalls = true
 		delta["tool_calls"] = convertOllamaToolCalls(toolCalls)
@@ -102,9 +110,11 @@ func buildOllamaChunk(meta, delta, finishReason any) map[string]any {
 func parseOllamaUsage(chunk map[string]any) map[string]any {
 	promptTokens := getInt(chunk, "prompt_eval_count")
 	evalTokens := getInt(chunk, "eval_count")
+
 	if promptTokens == 0 && evalTokens == 0 {
 		return nil
 	}
+
 	return map[string]any{
 		"prompt_tokens":     promptTokens,
 		"completion_tokens": evalTokens,
@@ -114,18 +124,23 @@ func parseOllamaUsage(chunk map[string]any) map[string]any {
 
 func convertOllamaToolCalls(toolCalls []any) []any {
 	var result []any
+
 	for i, tcRaw := range toolCalls {
 		tc, ok := tcRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		fn, _ := tc["function"].(map[string]any)
 		name := ""
+
 		var args any
+
 		if fn != nil {
 			name, _ = fn["name"].(string)
 			args = fn["arguments"]
 		}
+
 		argsStr := "{}"
 		switch a := args.(type) {
 		case string:
@@ -134,13 +149,16 @@ func convertOllamaToolCalls(toolCalls []any) []any {
 			b, _ := json.Marshal(a)
 			argsStr = string(b)
 		}
+
 		id := ""
 		if idVal, ok := tc["id"].(string); ok {
 			id = idVal
 		}
+
 		if id == "" {
 			id = "call_" + strconv.Itoa(i)
 		}
+
 		result = append(result, map[string]any{
 			"index": i,
 			"id":    id,
@@ -151,5 +169,6 @@ func convertOllamaToolCalls(toolCalls []any) []any {
 			},
 		})
 	}
+
 	return result
 }

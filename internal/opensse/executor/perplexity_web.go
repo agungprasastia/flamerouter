@@ -53,13 +53,13 @@ var (
 		"pplx-opus":   "claude46opusthinking",
 	}
 
-	pplxCitationRE  = regexp.MustCompile(`\[\d+\]`)
-	pplxGrokTagRE   = regexp.MustCompile(`(?s)<grok:[^>]*>.*?</grok:[^>]*>`)
-	pplxGrokSelfRE  = regexp.MustCompile(`<grok:[^>]*/>`)
-	pplxXMLDeclRE   = regexp.MustCompile(`<\?[xX][mM][lL][^?]*\?>`)
-	pplxResponseRE  = regexp.MustCompile(`(?i)</?response\b[^>]*>`)
-	pplxMultiSpace  = regexp.MustCompile(` {2,}`)
-	pplxMultiNL     = regexp.MustCompile(`\n{3,}`)
+	pplxCitationRE = regexp.MustCompile(`\[\d+\]`)
+	pplxGrokTagRE  = regexp.MustCompile(`(?s)<grok:[^>]*>.*?</grok:[^>]*>`)
+	pplxGrokSelfRE = regexp.MustCompile(`<grok:[^>]*/>`)
+	pplxXMLDeclRE  = regexp.MustCompile(`<\?[xX][mM][lL][^?]*\?>`)
+	pplxResponseRE = regexp.MustCompile(`(?i)</?response\b[^>]*>`)
+	pplxMultiSpace = regexp.MustCompile(` {2,}`)
+	pplxMultiNL    = regexp.MustCompile(`\n{3,}`)
 
 	pplxSessionCache   = make(map[string]pplxSessionEntry)
 	pplxSessionCacheMu sync.Mutex
@@ -81,8 +81,8 @@ type pplxHistoryItem struct {
 
 type pplxParsedMessages struct {
 	SystemMsg  string
-	History    []pplxHistoryItem
 	CurrentMsg string
+	History    []pplxHistoryItem
 }
 
 func pplxSessionKey(history []pplxHistoryItem) string {
@@ -90,12 +90,16 @@ func pplxSessionKey(history []pplxHistoryItem) string {
 	for _, h := range history {
 		parts = append(parts, h.Role+":"+h.Content)
 	}
+
 	joined := strings.Join(parts, "\n")
+
 	var hash uint32 = 0x811c9dc5
+
 	for i := 0; i < len(joined); i++ {
 		hash ^= uint32(joined[i])
 		hash = (hash * 0x01000193)
 	}
+
 	return fmt.Sprintf("%08x", hash)
 }
 
@@ -103,17 +107,22 @@ func pplxSessionLookup(history []pplxHistoryItem) string {
 	if len(history) == 0 {
 		return ""
 	}
+
 	key := pplxSessionKey(history)
+
 	pplxSessionCacheMu.Lock()
 	defer pplxSessionCacheMu.Unlock()
+
 	entry, ok := pplxSessionCache[key]
 	if !ok {
 		return ""
 	}
+
 	if time.Now().UnixMilli()-entry.ts > 3600*1000 {
 		delete(pplxSessionCache, key)
 		return ""
 	}
+
 	return entry.backendUUID
 }
 
@@ -121,20 +130,24 @@ func pplxSessionStore(history []pplxHistoryItem, currentMsg, responseText, backe
 	if backendUUID == "" {
 		return
 	}
+
 	full := make([]pplxHistoryItem, len(history), len(history)+2)
 	copy(full, history)
 	full = append(full, pplxHistoryItem{Role: "user", Content: currentMsg})
 	full = append(full, pplxHistoryItem{Role: "assistant", Content: responseText})
 
 	key := pplxSessionKey(full)
+
 	pplxSessionCacheMu.Lock()
 	defer pplxSessionCacheMu.Unlock()
+
 	pplxSessionCache[key] = pplxSessionEntry{
 		backendUUID: backendUUID,
 		ts:          time.Now().UnixMilli(),
 	}
 	if len(pplxSessionCache) > 200 {
 		var oldestKey string
+
 		var oldestTs int64 = math.MaxInt64
 		for k, v := range pplxSessionCache {
 			if v.ts < oldestTs {
@@ -142,6 +155,7 @@ func pplxSessionStore(history []pplxHistoryItem, currentMsg, responseText, backe
 				oldestKey = k
 			}
 		}
+
 		if oldestKey != "" {
 			delete(pplxSessionCache, oldestKey)
 		}
@@ -155,16 +169,19 @@ func cleanPplxResponse(text string, strip bool) string {
 	t = pplxGrokTagRE.ReplaceAllString(t, "")
 	t = pplxGrokSelfRE.ReplaceAllString(t, "")
 	t = pplxResponseRE.ReplaceAllString(t, "")
+
 	if strip {
 		t = pplxMultiSpace.ReplaceAllString(t, " ")
 		t = pplxMultiNL.ReplaceAllString(t, "\n\n")
 		t = strings.TrimSpace(t)
 	}
+
 	return t
 }
 
 func parsePplxOpenAIMessages(messages []any) pplxParsedMessages {
 	var systemMsg strings.Builder
+
 	var history []pplxHistoryItem
 
 	for _, msgRaw := range messages {
@@ -172,19 +189,23 @@ func parsePplxOpenAIMessages(messages []any) pplxParsedMessages {
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 		if role == "" {
 			role = "user"
 		}
+
 		if role == "developer" {
 			role = "system"
 		}
+
 		content := ""
 		switch c := msg["content"].(type) {
 		case string:
 			content = c
 		case []any:
 			var parts []string
+
 			for _, p := range c {
 				if pm, ok := p.(map[string]any); ok {
 					if t, _ := pm["type"].(string); t == "text" {
@@ -192,11 +213,14 @@ func parsePplxOpenAIMessages(messages []any) pplxParsedMessages {
 					}
 				}
 			}
+
 			content = strings.Join(parts, " ")
 		}
+
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
+
 		if role == "system" {
 			systemMsg.WriteString(content)
 			systemMsg.WriteString("\n")
@@ -210,6 +234,7 @@ func parsePplxOpenAIMessages(messages []any) pplxParsedMessages {
 		currentMsg = history[len(history)-1].Content
 		history = history[:len(history)-1]
 	}
+
 	return pplxParsedMessages{
 		SystemMsg:  systemMsg.String(),
 		History:    history,
@@ -222,31 +247,39 @@ func formatPplxToolsHint(tools any) string {
 	if !ok || len(toolsArr) == 0 {
 		return ""
 	}
+
 	var lines []string
+
 	for _, t := range toolsArr {
 		tm, ok := t.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		fn, ok := tm["function"].(map[string]any)
 		if !ok {
 			fn = tm
 		}
+
 		name, _ := fn["name"].(string)
 		if name == "" {
 			name = "unnamed"
 		}
+
 		desc, _ := fn["description"].(string)
 		if firstLine := strings.Split(desc, "\n")[0]; len(firstLine) > 200 {
 			desc = firstLine[:200]
 		} else {
 			desc = firstLine
 		}
+
 		lines = append(lines, fmt.Sprintf("- %s: %s", name, desc))
 	}
+
 	if len(lines) == 0 {
 		return ""
 	}
+
 	return "Available tools (reference only, cannot invoke):\n" + strings.Join(lines, "\n")
 }
 
@@ -254,19 +287,25 @@ func buildPplxQuery(parsed pplxParsedMessages, followUpUUID string, tools any) s
 	if followUpUUID != "" {
 		return parsed.CurrentMsg
 	}
+
 	obj := make(map[string]any)
+
 	var instr []string
 	if strings.TrimSpace(parsed.SystemMsg) != "" {
 		instr = append(instr, strings.TrimSpace(parsed.SystemMsg))
 	}
+
 	if hint := formatPplxToolsHint(tools); hint != "" {
 		instr = append(instr, hint)
 	}
+
 	instr = append(instr, "You have built-in web search. Answer questions directly using search results.")
+
 	obj["instructions"] = instr
 	if len(parsed.History) > 0 {
 		obj["history"] = parsed.History
 	}
+
 	if parsed.CurrentMsg != "" {
 		obj["query"] = parsed.CurrentMsg
 	} else if len(parsed.History) == 0 {
@@ -274,10 +313,12 @@ func buildPplxQuery(parsed pplxParsedMessages, followUpUUID string, tools any) s
 	}
 
 	b, _ := json.Marshal(obj)
+
 	s := string(b)
 	if len(s) > 96000 {
 		return s[len(s)-96000:]
 	}
+
 	return s
 }
 
@@ -286,10 +327,11 @@ func buildPplxRequestBody(query, mode, modelPref, followUpUUID string) map[strin
 	if followUpUUID != "" {
 		followUpVal = followUpUUID
 	}
+
 	return map[string]any{
 		"query_str": query,
 		"params": map[string]any{
-			"query_str":              query,
+			"query_str":             query,
 			"search_focus":          "internet",
 			"mode":                  mode,
 			"model_preference":      modelPref,
@@ -313,6 +355,7 @@ func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, m
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	messages, _ := m["messages"].([]any)
 	if len(messages) == 0 {
 		return jsonErr(400, "Missing or empty messages array", "invalid_request", ""), nil
@@ -327,6 +370,7 @@ func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, m
 
 	pplxMode := "copilot"
 	modelPref := model
+
 	if thinking && pplxThinkingMap[model] != "" {
 		pplxMode = "copilot"
 		modelPref = pplxThinkingMap[model]
@@ -344,6 +388,7 @@ func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, m
 	}
 
 	reqPayload := buildPplxRequestBody(query, pplxMode, modelPref, followUpUUID)
+
 	payloadBytes, err := json.Marshal(reqPayload)
 	if err != nil {
 		return nil, err
@@ -371,18 +416,21 @@ func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, m
 
 	res, err := e.DoPOST(ctx, url, h, payloadBytes)
 	if err != nil {
-		return jsonErr(502, "Perplexity connection failed: "+err.Error(), "upstream_error", ""), nil
+		return nil, err
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		status := res.StatusCode
 		msg := fmt.Sprintf("Perplexity returned HTTP %d", status)
+
 		if status == 401 || status == 403 {
 			msg = "Perplexity auth failed — session cookie may be expired. Re-paste your __Secure-next-auth.session-token."
 		} else if status == 429 {
 			msg = "Perplexity rate limited. Wait a moment and retry."
 		}
+
 		DrainBody(res.Body)
+
 		return jsonErr(status, msg, "upstream_error", fmt.Sprintf("HTTP_%d", status)), nil
 	}
 
@@ -391,6 +439,7 @@ func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, m
 
 	if stream {
 		sseBody := wrapPplxStream(res.Body, model, cid, created, parsed.History, parsed.CurrentMsg)
+
 		return &Result{
 			StatusCode: 200,
 			Header: http.Header{
@@ -406,6 +455,7 @@ func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, m
 	if err != nil {
 		return jsonErr(502, err.Error(), "upstream_error", "PPLX_ERROR"), nil
 	}
+
 	return &Result{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -424,11 +474,14 @@ type pplxExtractedChunk struct {
 
 func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 	defer close(out)
+
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
 	var fullAnswer string
+
 	var backendUUID string
+
 	seenLen := 0
 	seenThinking := make(map[string]bool)
 
@@ -437,6 +490,7 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 		if line == "" || !strings.HasPrefix(line, "data:") {
 			continue
 		}
+
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if payload == "[DONE]" {
 			break
@@ -451,6 +505,7 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 			out <- pplxExtractedChunk{errorMsg: errMsg, done: true}
 			return
 		}
+
 		if bu, _ := event["backend_uuid"].(string); bu != "" {
 			backendUUID = bu
 		}
@@ -461,6 +516,7 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 			if !ok {
 				continue
 			}
+
 			usage, _ := b["intended_usage"].(string)
 
 			if usage == "pro_search_steps" {
@@ -499,8 +555,10 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 						for _, c := range chunks {
 							sb.WriteString(fmt.Sprint(c))
 						}
+
 						chunkText := sb.String()
 						prog, _ := mb["progress"].(string)
+
 						if prog == "DONE" {
 							fullAnswer = chunkText
 							if len(fullAnswer) > seenLen {
@@ -549,6 +607,7 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 		if fin, _ := event["final"].(bool); fin {
 			break
 		}
+
 		if st, _ := event["status"].(string); st == "COMPLETED" {
 			break
 		}
@@ -581,12 +640,14 @@ func wrapPplxStream(r io.ReadCloser, model, cid string, created int64, history [
 		go readPplxEvents(r, ch)
 
 		var fullAnswer string
+
 		var respBackendUUID string
 
 		for chunk := range ch {
 			if chunk.backendUUID != "" {
 				respBackendUUID = chunk.backendUUID
 			}
+
 			if chunk.errorMsg != "" {
 				writeSSE(map[string]any{
 					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
@@ -596,8 +657,10 @@ func wrapPplxStream(r io.ReadCloser, model, cid string, created int64, history [
 						"finish_reason": nil, "logprobs": nil,
 					}},
 				})
+
 				break
 			}
+
 			if chunk.thinking != "" {
 				writeSSE(map[string]any{
 					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
@@ -607,14 +670,18 @@ func wrapPplxStream(r io.ReadCloser, model, cid string, created int64, history [
 						"finish_reason": nil, "logprobs": nil,
 					}},
 				})
+
 				continue
 			}
+
 			if chunk.done {
 				if chunk.answer != "" {
 					fullAnswer = chunk.answer
 				}
+
 				break
 			}
+
 			if chunk.delta != "" {
 				dt := cleanPplxResponse(chunk.delta, false)
 				if dt != "" {
@@ -628,6 +695,7 @@ func wrapPplxStream(r io.ReadCloser, model, cid string, created int64, history [
 					})
 				}
 			}
+
 			if chunk.answer != "" {
 				fullAnswer = chunk.answer
 			}
@@ -640,39 +708,49 @@ func wrapPplxStream(r io.ReadCloser, model, cid string, created int64, history [
 				"index": 0, "delta": map[string]any{}, "finish_reason": "stop", "logprobs": nil,
 			}},
 		})
+
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 
 		pplxSessionStore(history, currentMsg, cleanPplxResponse(fullAnswer, true), respBackendUUID)
 	}()
+
 	return pr
 }
 
 func collectPplxNonStreaming(r io.ReadCloser, model, cid string, created int64, history []pplxHistoryItem, currentMsg string) ([]byte, error) {
 	defer r.Close()
+
 	ch := make(chan pplxExtractedChunk, 16)
 	go readPplxEvents(r, ch)
 
 	var fullAnswer string
+
 	var respBackendUUID string
+
 	var thinkingParts []string
 
 	for chunk := range ch {
 		if chunk.backendUUID != "" {
 			respBackendUUID = chunk.backendUUID
 		}
+
 		if chunk.errorMsg != "" {
 			return nil, fmt.Errorf("%s", chunk.errorMsg)
 		}
+
 		if chunk.thinking != "" {
 			thinkingParts = append(thinkingParts, chunk.thinking)
 			continue
 		}
+
 		if chunk.done {
 			if chunk.answer != "" {
 				fullAnswer = chunk.answer
 			}
+
 			break
 		}
+
 		if chunk.answer != "" {
 			fullAnswer = chunk.answer
 		}
@@ -700,5 +778,6 @@ func collectPplxNonStreaming(r io.ReadCloser, model, cid string, created int64, 
 			"total_tokens":      promptTokens + completionTokens,
 		},
 	}
+
 	return json.Marshal(out)
 }

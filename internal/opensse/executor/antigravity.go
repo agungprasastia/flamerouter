@@ -3,10 +3,9 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/translator/formats"
 	"net/http"
 	"strings"
-
-	"flamerouter/internal/translator/formats"
 )
 
 func init() {
@@ -41,6 +40,7 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 	} else {
 		request = body
 	}
+
 	e.stripBlacklisted(request)
 	e.stripBlacklisted(body)
 
@@ -58,20 +58,24 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 					if !ok {
 						continue
 					}
+
 					if params, ok := d["parameters"].(map[string]any); ok {
 						d["parameters"] = formats.CleanJSONSchemaForAntigravity(params)
 					}
+
 					if name, ok := d["name"].(string); ok {
 						d["name"] = sanitizeFunctionName(name)
 					}
 				}
 			}
+
 			if decls, ok := t["function_declarations"].([]any); ok {
 				for _, dRaw := range decls {
 					d, ok := dRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					if params, ok := d["parameters"].(map[string]any); ok {
 						d["parameters"] = formats.CleanJSONSchemaForAntigravity(params)
 					}
@@ -90,6 +94,7 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 			project = pid
 		}
 	}
+
 	if project == "" {
 		project = formats.GenerateProjectId()
 	}
@@ -106,6 +111,7 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 	} else {
 		out["requestId"] = formats.GenerateRequestId()
 	}
+
 	return out
 }
 
@@ -113,7 +119,9 @@ func sanitizeFunctionName(name string) string {
 	if name == "" {
 		return "_unknown"
 	}
+
 	var b strings.Builder
+
 	for i, r := range name {
 		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
 			r == '_' || r == '.' || r == ':' || r == '-'
@@ -121,18 +129,22 @@ func sanitizeFunctionName(name string) string {
 			if i == 0 && r >= '0' && r <= '9' {
 				b.WriteByte('_')
 			}
+
 			b.WriteRune(r)
 		} else {
 			b.WriteByte('_')
 		}
 	}
+
 	s := b.String()
 	if s == "" || (s[0] >= '0' && s[0] <= '9') {
 		s = "_" + s
 	}
+
 	if len(s) > 64 {
 		s = s[:64]
 	}
+
 	return s
 }
 
@@ -141,7 +153,9 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, cred Credentials, mod
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	wrapped := e.transform(model, m, cred)
+
 	payload, err := json.Marshal(wrapped)
 	if err != nil {
 		return nil, err
@@ -151,7 +165,9 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, cred Credentials, mod
 	if stream {
 		action = "streamGenerateContent?alt=sse"
 	}
+
 	url := "https://cloudcode-pa.googleapis.com/v1internal:" + action
+
 	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" {
 		if !strings.Contains(base, "generateContent") {
 			url = base + ":" + action
@@ -162,18 +178,23 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, cred Credentials, mod
 
 	h := make(http.Header)
 	h.Set("Content-Type", "application/json")
+
 	tok := cred.AccessToken
 	if tok == "" {
 		tok = cred.APIKey
 	}
+
 	if tok != "" {
 		h.Set("Authorization", "Bearer "+tok)
 	}
+
 	h.Set("User-Agent", "antigravity/ide/2.1.1 darwin/arm64")
+
 	if stream {
 		h.Set("Accept", "text/event-stream")
 	} else {
 		h.Set("Accept", "application/json")
 	}
+
 	return e.DoPOST(ctx, url, h, payload)
 }

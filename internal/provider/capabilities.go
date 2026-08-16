@@ -70,11 +70,13 @@ func GetCapabilities(model string) Capabilities {
 	if caps, ok := ModelCapabilities[model]; ok {
 		return caps
 	}
+
 	for _, p := range PatternCapabilities {
 		if matchGlob(model, p.Pattern) {
 			return p.Caps
 		}
 	}
+
 	return DefaultCapabilities
 }
 
@@ -82,14 +84,18 @@ func matchGlob(name, pattern string) bool {
 	if pattern == "*" {
 		return true
 	}
+
 	if len(pattern) == 0 {
 		return false
 	}
+
 	if pattern[len(pattern)-1] == '*' {
 		return len(name) >= len(pattern)-1 && name[:len(pattern)-1] == pattern[:len(pattern)-1]
 	}
+
 	if pattern[0] == '*' {
 		return len(name) >= len(pattern)-1 && name[len(name)-len(pattern)+1:] == pattern[1:]
 	}
+
 	return name == pattern
 }

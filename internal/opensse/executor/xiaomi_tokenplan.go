@@ -26,7 +26,9 @@ func NewXiaomiTokenplanExecutor(client *http.Client) *XiaomiTokenplanExecutor {
 	if client == nil {
 		client = http.DefaultClient
 	}
+
 	e := NewDefaultForProvider(client, "xiaomi-tokenplan")
+
 	return &XiaomiTokenplanExecutor{
 		DefaultExecutor: *e,
 	}
@@ -36,10 +38,12 @@ func resolveXiaomiTokenplanBaseURL(cred Credentials) string {
 	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" {
 		return base
 	}
+
 	region := strPSD(cred, "region")
 	if rURL, ok := xiaomiTokenplanRegions[region]; ok {
 		return rURL
 	}
+
 	return xiaomiTokenplanRegions[xiaomiTokenplanDefaultRegion]
 }
 
@@ -48,6 +52,7 @@ func buildXiaomiTokenplanURL(model string, stream bool, cred Credentials) string
 	if strings.Contains(baseURL, "/anthropic/v1/messages") || strings.Contains(baseURL, "/chat/completions") {
 		return baseURL
 	}
+
 	isClaude := false
 
 	if cred.ProviderSpecificData != nil {
@@ -56,10 +61,12 @@ func buildXiaomiTokenplanURL(model string, stream bool, cred Credentials) string
 				isClaude = true
 			}
 		}
+
 		if fmt, ok := cred.ProviderSpecificData["format"].(string); ok && fmt == "claude" {
 			isClaude = true
 		}
 	}
+
 	if strings.HasSuffix(model, "-claude") {
 		isClaude = true
 	}
@@ -73,6 +80,7 @@ func buildXiaomiTokenplanURL(model string, stream bool, cred Credentials) string
 	if strings.HasSuffix(trimmed, "/chat/completions") {
 		return trimmed
 	}
+
 	return trimmed + "/chat/completions"
 }
 
@@ -81,5 +89,6 @@ func (e *XiaomiTokenplanExecutor) Execute(ctx context.Context, cred Credentials,
 	url := buildXiaomiTokenplanURL(model, stream, cred)
 	credCopy := cred
 	credCopy.BaseURL = url
+
 	return e.DefaultExecutor.Execute(ctx, credCopy, model, body, stream)
 }

@@ -81,8 +81,10 @@ func TestRouteTable_CriticalPathsRegistered(t *testing.T) {
 			if tc.method == http.MethodPost || tc.method == http.MethodPatch {
 				req.Header.Set("Content-Type", "application/json")
 			}
+
 			rr := httptest.NewRecorder()
 			h.ServeHTTP(rr, req)
+
 			if rr.Code == http.StatusNotFound {
 				t.Fatalf("%s %s → 404 (route missing)", tc.method, tc.path)
 			}
@@ -97,12 +99,14 @@ func TestRouteTable_ShutdownSecret(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/shutdown", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("no secret: status %d want 401", rr.Code)
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/shutdown", nil)
 	req.Header.Set("Authorization", "Bearer test-shutdown")
+
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	// may 200 before process shutdown goroutine; not 401/404

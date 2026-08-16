@@ -15,12 +15,15 @@ func TestConstants(t *testing.T) {
 	if QODER_OPENAPI_BASE != "https://openapi.qoder.sh" {
 		t.Errorf("unexpected QODER_OPENAPI_BASE: %s", QODER_OPENAPI_BASE)
 	}
+
 	if QODER_CHAT_SIG_PATH != "/api/v2/service/pro/sse/agent_chat_generation" {
 		t.Errorf("unexpected QODER_CHAT_SIG_PATH: %s", QODER_CHAT_SIG_PATH)
 	}
+
 	if len(QODER_MODEL_MAP) == 0 {
 		t.Error("QODER_MODEL_MAP is empty")
 	}
+
 	if QODER_MODEL_MAP["auto"] != "auto" {
 		t.Error("missing auto in QODER_MODEL_MAP")
 	}
@@ -52,8 +55,10 @@ func TestQoderEncodeBody(t *testing.T) {
 				if got != "" {
 					t.Fatalf("expected empty, got %q", got)
 				}
+
 				return
 			}
+
 			if len(got) == 0 {
 				t.Fatal("expected non-empty output")
 			}
@@ -70,6 +75,7 @@ func TestQoderEncodeBodyDeterministicVector(t *testing.T) {
 	input := []byte("test")
 	got := QoderEncodeBody(input)
 	expected := "$$F^J_JH"
+
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}
@@ -103,6 +109,7 @@ func TestAESEncryptCBCBase64(t *testing.T) {
 	if len(decrypted) == 0 {
 		t.Fatal("empty decrypted data")
 	}
+
 	padLen := int(decrypted[len(decrypted)-1])
 	unpadded := decrypted[:len(decrypted)-padLen]
 
@@ -113,6 +120,7 @@ func TestAESEncryptCBCBase64(t *testing.T) {
 
 func TestRSAEncryptPKCS1v15Base64(t *testing.T) {
 	data := []byte("16byte-secret-key")
+
 	b64, err := RSAEncryptPKCS1v15Base64(data)
 	if err != nil {
 		t.Fatalf("RSAEncryptPKCS1v15Base64 failed: %v", err)
@@ -203,6 +211,7 @@ func TestBuildCosyHeaders(t *testing.T) {
 		if !ok {
 			t.Errorf("missing expected header %q", h)
 		}
+
 		if val == "" && h != "Cosy-Organization-Id" && h != "Cosy-Organization-Tags" {
 			t.Errorf("header %q should not be empty", h)
 		}
@@ -211,12 +220,15 @@ func TestBuildCosyHeaders(t *testing.T) {
 	if headers["Cosy-User"] != "user_12345" {
 		t.Errorf("Cosy-User mismatch: got %q", headers["Cosy-User"])
 	}
+
 	if headers["Cosy-Machineid"] != "fixed-machine-id" {
 		t.Errorf("Cosy-Machineid mismatch: got %q", headers["Cosy-Machineid"])
 	}
+
 	if headers["Cosy-Sigpath"] != "/api/v2/service/pro/sse/agent_chat_generation" {
 		t.Errorf("Cosy-Sigpath mismatch: got %q", headers["Cosy-Sigpath"])
 	}
+
 	if headers["Cosy-Bodylength"] != "18" {
 		t.Errorf("Cosy-Bodylength mismatch: got %q", headers["Cosy-Bodylength"])
 	}
@@ -226,6 +238,7 @@ func TestBuildCosyHeaders(t *testing.T) {
 	if !strings.HasPrefix(auth, "Bearer COSY.") {
 		t.Fatalf("invalid Authorization header prefix: %q", auth)
 	}
+
 	parts := strings.Split(strings.TrimPrefix(auth, "Bearer COSY."), ".")
 	if len(parts) != 2 {
 		t.Fatalf("expected 2 parts after Bearer COSY., got %d", len(parts))
@@ -239,6 +252,7 @@ func TestBuildCosyHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to decode payloadB64: %v", err)
 	}
+
 	if !strings.Contains(string(payloadBytes), `"version":"v1"`) {
 		t.Errorf("payload missing version: %s", string(payloadBytes))
 	}

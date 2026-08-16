@@ -27,10 +27,12 @@ func setGrokHeaders(h http.Header, token string, psd map[string]any) {
 	h.Set("x-grok-client-identifier", grokClientIdentifier)
 	h.Set("x-grok-client-version", grokVersion)
 	h.Set("x-grok-client-mode", "headless")
+
 	if psd != nil {
 		if em, ok := psd["email"].(string); ok && em != "" {
 			h.Set("x-email", em)
 		}
+
 		if uid, ok := psd["userId"].(string); ok && uid != "" {
 			h.Set("x-userid", uid)
 		} else if pid, ok := psd["principalId"].(string); ok && pid != "" {
@@ -42,6 +44,7 @@ func setGrokHeaders(h http.Header, token string, psd map[string]any) {
 func parseGrokCliBilling(billing, user map[string]any) *QuotaResult {
 	root := billing
 	cfg := root
+
 	if c, ok := root["config"].(map[string]any); ok && c != nil {
 		cfg = c
 	}
@@ -55,6 +58,7 @@ func parseGrokCliBilling(billing, user map[string]any) *QuotaResult {
 	monthLimit := toFiniteFloat(getVal(cfg, root, "monthlyLimit", "monthly_limit"), math.NaN())
 	incUsed := toFiniteFloat(getVal(cfg, root, "includedUsed", "included_used"), math.NaN())
 	totUsed := toFiniteFloat(getVal(cfg, root, "totalUsed", "total_used"), math.NaN())
+
 	if !math.IsNaN(monthLimit) && monthLimit > 0 {
 		u := 0.0
 		if !math.IsNaN(incUsed) {
@@ -62,16 +66,19 @@ func parseGrokCliBilling(billing, user map[string]any) *QuotaResult {
 		} else if !math.IsNaN(totUsed) {
 			u = totUsed
 		}
+
 		quotas["Monthly included"] = makeQuota(u, monthLimit, periodEnd, false)
 	}
 
 	onDemandCap := toFiniteFloat(getVal(cfg, root, "onDemandCap", "on_demand_cap"), math.NaN())
 	onDemandUsed := toFiniteFloat(getVal(cfg, root, "onDemandUsed", "on_demand_used"), math.NaN())
+
 	if !math.IsNaN(onDemandCap) && onDemandCap > 0 {
 		u := 0.0
 		if !math.IsNaN(onDemandUsed) {
 			u = math.Max(0, onDemandUsed)
 		}
+
 		quotas["On-demand"] = makeQuota(u, onDemandCap, periodEnd, false)
 	} else if !subAccess && !math.IsNaN(onDemandCap) && onDemandCap == 0 && !math.IsNaN(onDemandUsed) {
 		quotas["On-demand"] = QuotaItem{
@@ -101,6 +108,7 @@ func parseGrokCliBilling(billing, user map[string]any) *QuotaResult {
 	}
 
 	plan := resolveGrokPlan(user, cfg)
+
 	return &QuotaResult{
 		Provider: "grok-cli",
 		Plan:     plan,
@@ -117,18 +125,22 @@ func getVal(cfg, root map[string]any, camel, snake string) any {
 		if v, ok := cfg[camel]; ok && v != nil {
 			return v
 		}
+
 		if v, ok := cfg[snake]; ok && v != nil {
 			return v
 		}
 	}
+
 	if root != nil {
 		if v, ok := root[camel]; ok && v != nil {
 			return v
 		}
+
 		if v, ok := root[snake]; ok && v != nil {
 			return v
 		}
 	}
+
 	return nil
 }
 
@@ -140,17 +152,20 @@ func getGrokPeriodEnd(cfg, root map[string]any) *string {
 				return res
 			}
 		}
+
 		if v, ok := root[k]; ok {
 			if res := parseResetTime(v); res != nil {
 				return res
 			}
 		}
 	}
+
 	if cp, ok := cfg["currentPeriod"].(map[string]any); ok {
 		if res := parseResetTime(cp["end"]); res != nil {
 			return res
 		}
 	}
+
 	return nil
 }
 
@@ -159,17 +174,20 @@ func getGrokSubscriptionTier(user, cfg map[string]any) string {
 		if m == nil {
 			continue
 		}
+
 		for _, k := range []string{"subscriptionTier", "subscription_tier"} {
 			if s, ok := m[k].(string); ok && s != "" {
 				return strings.TrimSpace(s)
 			}
 		}
+
 		if sub, ok := m["subscription"].(map[string]any); ok && sub != nil {
 			if s, ok := sub["tier"].(string); ok && s != "" {
 				return strings.TrimSpace(s)
 			}
 		}
 	}
+
 	return ""
 }
 
@@ -178,18 +196,22 @@ func resolveGrokPlan(user, cfg map[string]any) string {
 	if tier != "" {
 		tier = strings.ReplaceAll(tier, "_", " ")
 		tier = strings.ReplaceAll(tier, "-", " ")
-		return strings.Title(tier)
+
+		return titleCase(tier)
 	}
+
 	if user != nil {
 		if codeAcc, ok := user["hasGrokCodeAccess"].(bool); ok && codeAcc {
 			return "Grok Code"
 		}
 	}
+
 	if cfg != nil {
 		if unif, ok := cfg["isUnifiedBillingUser"].(bool); ok && unif {
 			return "Grok Build"
 		}
 	}
+
 	return "Grok Build"
 }
 
@@ -198,16 +220,20 @@ func planFromGrokAccessToken(token string) string {
 	if len(parts) < 2 {
 		return ""
 	}
+
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
 		return ""
 	}
+
 	var data struct {
 		Tier int `json:"tier"`
 	}
+
 	if err := json.Unmarshal(payloadBytes, &data); err != nil {
 		return ""
 	}
+
 	switch data.Tier {
 	case 0:
 		return "Free"
@@ -233,6 +259,7 @@ func fetchGrokGrpcCredits(ctx context.Context, opts FetchOptions) (float64, *str
 	if err != nil {
 		return 0, nil, false
 	}
+
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 	req.Header.Set("Content-Type", "application/grpc-web+proto")
 	req.Header.Set("X-Grpc-Web", "1")
@@ -242,17 +269,22 @@ func fetchGrokGrpcCredits(ctx context.Context, opts FetchOptions) (float64, *str
 	if err != nil {
 		return 0, nil, false
 	}
+
 	defer res.Body.Close()
+
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return 0, nil, false
 	}
+
 	bodyBytes, err := io.ReadAll(io.LimitReader(res.Body, 64*1024))
 	if err != nil || len(bodyBytes) == 0 {
 		return 0, nil, false
 	}
+
 	pct, resetAt, ok := DecodeGrokCreditsFrame(bodyBytes)
 	if !ok {
 		return 0, nil, false
 	}
+
 	return math.Round(pct), resetAt, true
 }

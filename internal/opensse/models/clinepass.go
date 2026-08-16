@@ -3,14 +3,13 @@ package models
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/opensse/shared/clineauth"
+	"flamerouter/internal/store"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
-
-	"flamerouter/internal/opensse/shared/clineauth"
-	"flamerouter/internal/store"
 )
 
 const (
@@ -32,6 +31,7 @@ func (r *ClinePassResolver) client() *http.Client {
 	if r.Client != nil {
 		return r.Client
 	}
+
 	return http.DefaultClient
 }
 
@@ -80,20 +80,25 @@ func (r *ClinePassResolver) fetchRaw(ctx context.Context, token string, isAPIKey
 		var wrapper struct {
 			Data []clinepassRawModel `json:"data"`
 		}
+
 		if err2 := json.Unmarshal(bodyBytes, &wrapper); err2 != nil {
 			return nil, resp.StatusCode, fmt.Errorf("decode clinepass models: %w", err)
 		}
+
 		list = wrapper.Data
 	}
+
 	return list, resp.StatusCode, nil
 }
 
 func (r *ClinePassResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
 	isAPIKey := conn.APIKey != ""
+
 	token := conn.APIKey
 	if token == "" {
 		token = conn.AccessToken
 	}
+
 	if token == "" {
 		return nil, nil
 	}
@@ -104,21 +109,27 @@ func (r *ClinePassResolver) Resolve(ctx context.Context, conn *store.Connection)
 	}
 
 	seen := make(map[string]bool)
+
 	var out []DynamicModel
+
 	for _, m := range raw {
 		id := strings.TrimSpace(m.ID)
 		if id == "" || !strings.HasPrefix(id, "cline-pass/") || seen[id] {
 			continue
 		}
+
 		seen[id] = true
+
 		name := strings.TrimSpace(m.Name)
 		if name == "" {
 			name = id
 		}
+
 		out = append(out, DynamicModel{
 			ID:   id,
 			Name: name,
 		})
 	}
+
 	return out, nil
 }

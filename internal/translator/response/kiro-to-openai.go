@@ -41,6 +41,7 @@ func kiroToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) [
 	if et, ok := chunk["event"].(string); ok {
 		eventType = et
 	}
+
 	if et, ok := chunk["event_type"].(string); ok && eventType == "" {
 		eventType = et
 	}
@@ -52,15 +53,19 @@ func kiroToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) [
 		} else if c, ok := chunk["content"].(string); ok {
 			content = c
 		}
+
 		if content == "" {
 			return nil
 		}
+
 		delta := map[string]any{}
 		if state.ChunkIndex == 0 {
 			delta["role"] = schema.RoleAssistant
 		}
+
 		delta["content"] = content
 		state.ChunkIndex++
+
 		return []map[string]any{buildKiroChunk(meta, delta, nil)}
 	}
 
@@ -74,16 +79,20 @@ func kiroToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) [
 				content, _ = evt["content"].(string)
 			}
 		}
+
 		if content == "" {
 			if c, ok := chunk["content"].(string); ok {
 				content = c
 			}
 		}
+
 		if content == "" {
 			return nil
 		}
+
 		delta := concerns.ReasoningDelta(content, state.ChunkIndex == 0)
 		state.ChunkIndex++
+
 		return []map[string]any{buildKiroChunk(meta, delta, nil)}
 	}
 
@@ -92,27 +101,34 @@ func kiroToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) [
 		if toolUse == nil {
 			toolUse = chunk
 		}
+
 		toolCallId := ""
 		if t, ok := toolUse["toolUseId"].(string); ok {
 			toolCallId = t
 		}
+
 		if toolCallId == "" {
 			toolCallId = "call_" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 		}
+
 		toolName := ""
 		if n, ok := toolUse["name"].(string); ok {
 			toolName = n
 		}
+
 		toolInput := toolUse["input"]
 		argsStr := "{}"
+
 		if toolInput != nil {
 			b, _ := json.Marshal(toolInput)
 			argsStr = string(b)
 		}
+
 		delta := map[string]any{}
 		if state.ChunkIndex == 0 {
 			delta["role"] = schema.RoleAssistant
 		}
+
 		delta["tool_calls"] = []any{map[string]any{
 			"index": 0,
 			"id":    toolCallId,
@@ -123,6 +139,7 @@ func kiroToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) [
 			},
 		}}
 		state.ChunkIndex++
+
 		return []map[string]any{buildKiroChunk(meta, delta, nil)}
 	}
 
@@ -131,11 +148,14 @@ func kiroToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) [
 		if state.HadToolUse {
 			finishReason = "tool_calls"
 		}
+
 		openaiFinish := concerns.ToOpenAIFinish(finishReason, "kiro")
+
 		result := buildKiroChunk(meta, map[string]any{}, openaiFinish)
 		if state.RawUsage != nil {
 			result["usage"] = state.RawUsage
 		}
+
 		return []map[string]any{result}
 	}
 
@@ -144,10 +164,12 @@ func kiroToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) [
 		if !ok {
 			usageRaw = chunk
 		}
+
 		usage := concerns.ToOpenAIUsage(usageRaw, "kiro")
 		if usage != nil {
 			state.RawUsage = usage
 		}
+
 		return nil
 	}
 
@@ -166,5 +188,6 @@ func buildKiroChunk(meta, delta, finishReason any) map[string]any {
 			"finish_reason": finishReason,
 		}},
 	}
+
 	return chunk
 }

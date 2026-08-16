@@ -11,9 +11,11 @@ func TestCheckFallbackError_429(t *testing.T) {
 	if !fb {
 		t.Fatal("expected fallback")
 	}
+
 	if cd != config.GetQuotaCooldown(1) {
 		t.Fatalf("cooldown=%d expected %d", cd, config.GetQuotaCooldown(1))
 	}
+
 	if lvl != 1 {
 		t.Fatalf("level=%d", lvl)
 	}
@@ -22,9 +24,11 @@ func TestCheckFallbackError_429(t *testing.T) {
 func TestCheckFallbackError_ExponentialBackoff(t *testing.T) {
 	_, _, lvl1 := config.CheckFallbackError(429, "", 0)
 	_, cd2, lvl2 := config.CheckFallbackError(429, "", lvl1)
+
 	if cd2 <= config.GetQuotaCooldown(lvl1) {
 		t.Fatal("expected higher cooldown")
 	}
+
 	if lvl2 != 2 {
 		t.Fatalf("level=%d", lvl2)
 	}
@@ -46,10 +50,12 @@ func TestCheckFallbackError_Transient(t *testing.T) {
 
 func TestGetUnavailableUntil(t *testing.T) {
 	until := config.GetUnavailableUntil(5000)
+
 	parsed, err := time.Parse(time.RFC3339, until)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if time.Until(parsed) > 6*time.Second || time.Until(parsed) < 4*time.Second {
 		t.Fatalf("unexpected time: %v", time.Until(parsed))
 	}

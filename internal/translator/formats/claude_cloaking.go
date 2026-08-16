@@ -21,6 +21,7 @@ func generateBillingHeader(payload any) string {
 	b := make([]byte, 2)
 	rand.Read(b)
 	buildHash := hex.EncodeToString(b)[:3]
+
 	return fmt.Sprintf("x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=%s; cch=%s;",
 		claudeVersion, buildHash, ccEntrypoint, cch)
 }
@@ -29,19 +30,24 @@ func deriveUuid(seed string) string {
 	h := sha256.Sum256([]byte(seed))
 	hexStr := hex.EncodeToString(h[:])
 	nibble := hexStr[16]
+
 	var n int
+
 	if nibble >= '0' && nibble <= '9' {
 		n = int(nibble - '0')
 	} else {
 		n = int(nibble-'a') + 10
 	}
+
 	variant := fmt.Sprintf("%x", (n&0x3)|0x8)
+
 	return fmt.Sprintf("%s-%s-4%s-%s%s-%s",
 		hexStr[0:8], hexStr[8:12], hexStr[13:16], variant, hexStr[17:20], hexStr[20:32])
 }
 
 func generateFakeUserID(sessionId, apiKey string) string {
 	var deviceId, accountUuid string
+
 	if apiKey != "" {
 		d := sha256.Sum256([]byte("device:" + apiKey))
 		deviceId = hex.EncodeToString(d[:])
@@ -52,10 +58,12 @@ func generateFakeUserID(sessionId, apiKey string) string {
 		deviceId = hex.EncodeToString(b)
 		accountUuid = randomUUIDCloak()
 	}
+
 	sessionUuid := sessionId
 	if sessionUuid == "" {
 		sessionUuid = randomUUIDCloak()
 	}
+
 	return fmt.Sprintf(`{"device_id":"%s","account_uuid":"%s","session_id":"%s"}`, deviceId, accountUuid, sessionUuid)
 }
 
@@ -64,6 +72,7 @@ func randomUUIDCloak() string {
 	rand.Read(b)
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
+
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
@@ -101,9 +110,11 @@ func ApplyCloaking(body map[string]any, apiKey, sessionId string) map[string]any
 	if meta == nil {
 		meta = map[string]any{}
 	}
+
 	if _, has := meta["user_id"]; !has {
 		meta["user_id"] = generateFakeUserID(sessionId, apiKey)
 		body["metadata"] = meta
 	}
+
 	return body
 }

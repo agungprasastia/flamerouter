@@ -4,15 +4,18 @@ import "sync"
 
 // KiroSessionManager tracks session IDs for Kiro requests.
 type KiroSessionManager struct {
+	sessions map[string]string
 	mu       sync.RWMutex
-	sessions map[string]string // connectionID -> sessionID
 }
 
-var kiroSessions = &KiroSessionManager{sessions: make(map[string]string)}
+func NewKiroSessionManager() *KiroSessionManager {
+	return &KiroSessionManager{sessions: make(map[string]string)}
+}
 
 func (m *KiroSessionManager) Get(connID string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
 	return m.sessions[connID]
 }
 

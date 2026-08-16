@@ -35,6 +35,7 @@ func (e *CodexExecutor) transform(model string, body map[string]any) map[string]
 			if !ok {
 				continue
 			}
+
 			if role, _ := item["role"].(string); role == "system" {
 				item["role"] = "developer"
 			}
@@ -42,16 +43,20 @@ func (e *CodexExecutor) transform(model string, body map[string]any) map[string]
 	}
 	// Strip non-allowlisted fields
 	out := map[string]any{}
+
 	for k, v := range body {
 		if responsesAllowlist[k] {
 			out[k] = v
 		}
 	}
+
 	out["model"] = model
 	out["stream"] = true
+
 	if _, ok := out["store"]; !ok {
 		out["store"] = false
 	}
+
 	return out
 }
 
@@ -62,10 +67,12 @@ func (e *CodexExecutor) Execute(ctx context.Context, cred Credentials, model str
 	}
 	// If chat format, leave as-is for now — translator should have produced responses shape
 	transformed := e.transform(model, m)
+
 	payload, err := json.Marshal(transformed)
 	if err != nil {
 		return nil, err
 	}
+
 	url := e.BaseURL
 	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" {
 		url = base
@@ -73,16 +80,21 @@ func (e *CodexExecutor) Execute(ctx context.Context, cred Credentials, model str
 			url = base + "/responses"
 		}
 	}
+
 	h := make(http.Header)
 	h.Set("Content-Type", "application/json")
 	h.Set("Accept", "text/event-stream")
+
 	tok := cred.AccessToken
 	if tok == "" {
 		tok = cred.APIKey
 	}
+
 	if tok != "" {
 		h.Set("Authorization", "Bearer "+tok)
 	}
+
 	h.Set("OpenAI-Beta", "responses=v1")
+
 	return e.DoPOST(ctx, url, h, payload)
 }

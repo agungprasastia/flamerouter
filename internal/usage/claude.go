@@ -44,6 +44,7 @@ func fetchClaudeUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
 	req.Header.Set("anthropic-version", claudeAPIVersion)
@@ -58,6 +59,7 @@ func fetchClaudeUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 		claudeCooldownMu.Lock()
 		claudeCooldown[opts.AccessToken] = time.Now().Add(3 * time.Minute)
 		claudeCooldownMu.Unlock()
+
 		return fetchClaudeUsageLegacy(ctx, opts)
 	}
 
@@ -77,6 +79,7 @@ func fetchClaudeUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 			quotas["session (5h)"] = makeClaudeQuotaObject(ut, fv["resets_at"])
 		}
 	}
+
 	if sv, ok := data["seven_day"].(map[string]any); ok && sv != nil {
 		if ut, has := sv["utilization"].(float64); has {
 			quotas["weekly (7d)"] = makeClaudeQuotaObject(ut, sv["resets_at"])
@@ -104,6 +107,7 @@ func fetchClaudeUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 
 func makeClaudeQuotaObject(used float64, resetsAtVal any) QuotaItem {
 	rem := math.Max(0, 100.0-used)
+
 	return QuotaItem{
 		Used:                used,
 		Total:               100,
@@ -119,6 +123,7 @@ func fetchClaudeUsageLegacy(ctx context.Context, opts FetchOptions) (*QuotaResul
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 	req.Header.Set("anthropic-version", claudeAPIVersion)
 
@@ -141,15 +146,19 @@ func fetchClaudeUsageLegacy(ctx context.Context, opts FetchOptions) (*QuotaResul
 	if plan == "" {
 		plan = "Unknown"
 	}
+
 	orgID, _ := settings["organization_id"].(string)
 	if orgID != "" {
 		usageURL := strings.ReplaceAll(claudeOrgUsageURL, "{org_id}", orgID)
+
 		uReq, uErr := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
 		if uErr == nil {
 			uReq.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 			uReq.Header.Set("anthropic-version", claudeAPIVersion)
+
 			if uRes, err := opts.HTTPClient.Do(uReq); err == nil {
 				defer uRes.Body.Close()
+
 				if uRes.StatusCode >= 200 && uRes.StatusCode < 300 {
 					var usageData map[string]any
 					if err := json.NewDecoder(uRes.Body).Decode(&usageData); err == nil {

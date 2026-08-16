@@ -5,11 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"flamerouter/internal/translator/concerns"
 	"fmt"
 	"regexp"
 	"strings"
-
-	"flamerouter/internal/translator/concerns"
 )
 
 const (
@@ -42,26 +41,29 @@ func (e *GithubExecutor) buildHeaders(cred Credentials, stream bool) map[string]
 	if tok == "" {
 		tok = cred.APIKey
 	}
+
 	rid := randomHex(16)
+
 	h := map[string][]string{
-		"Authorization":                     {fmt.Sprintf("Bearer %s", tok)},
-		"Content-Type":                      {"application/json"},
-		"copilot-integration-id":            {"vscode-chat"},
-		"editor-version":                    {fmt.Sprintf("vscode/%s", ghVSCodeVersion)},
-		"editor-plugin-version":             {fmt.Sprintf("copilot-chat/%s", ghCopilotChatVersion)},
-		"user-agent":                        {ghUserAgent},
-		"openai-intent":                     {"conversation-panel"},
-		"x-github-api-version":              {ghAPIVersion},
-		"x-request-id":                      {rid},
+		"Authorization":                       {fmt.Sprintf("Bearer %s", tok)},
+		"Content-Type":                        {"application/json"},
+		"copilot-integration-id":              {"vscode-chat"},
+		"editor-version":                      {fmt.Sprintf("vscode/%s", ghVSCodeVersion)},
+		"editor-plugin-version":               {fmt.Sprintf("copilot-chat/%s", ghCopilotChatVersion)},
+		"user-agent":                          {ghUserAgent},
+		"openai-intent":                       {"conversation-panel"},
+		"x-github-api-version":                {ghAPIVersion},
+		"x-request-id":                        {rid},
 		"x-vscode-user-agent-library-version": {"electron-fetch"},
-		"X-Initiator":                       {"user"},
-		"anthropic-version":                 {anthropicAPIVersion},
+		"X-Initiator":                         {"user"},
+		"anthropic-version":                   {anthropicAPIVersion},
 	}
 	if stream {
 		h["Accept"] = []string{"text/event-stream"}
 	} else {
 		h["Accept"] = []string{"application/json"}
 	}
+
 	return h
 }
 
@@ -70,27 +72,33 @@ func (e *GithubExecutor) sanitizeMessages(body map[string]any) {
 	if !ok {
 		return
 	}
+
 	for i, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		content, ok := msg["content"].([]any)
 		if !ok {
 			continue
 		}
+
 		var clean []any
+
 		for _, partRaw := range content {
 			part, ok := partRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			t, _ := part["type"].(string)
 			if t == "text" || t == "image_url" {
 				clean = append(clean, part)
 				continue
 			}
-			text := ""
+
+			var text string
 			if s, ok := part["text"].(string); ok {
 				text = s
 			} else if s, ok := part["content"].(string); ok {
@@ -99,15 +107,18 @@ func (e *GithubExecutor) sanitizeMessages(body map[string]any) {
 				b, _ := json.Marshal(part)
 				text = string(b)
 			}
+
 			if text != "" {
 				clean = append(clean, map[string]any{"type": "text", "text": text})
 			}
 		}
+
 		if len(clean) > 0 {
 			msg["content"] = clean
 		} else {
 			msg["content"] = nil
 		}
+
 		messages[i] = msg
 	}
 }
@@ -117,6 +128,7 @@ func (e *GithubExecutor) Execute(ctx context.Context, cred Credentials, model st
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	m["model"] = model
 	m["stream"] = stream
 	concerns.StripUnsupportedParams("github", model, m)
@@ -147,8 +159,10 @@ func (e *GithubExecutor) Execute(ctx context.Context, cred Credentials, model st
 	if err != nil {
 		return nil, err
 	}
+
 	headers := e.buildHeaders(cred, stream)
 	h := make(map[string][]string)
+
 	for k, v := range headers {
 		h[k] = v
 	}
@@ -156,15 +170,18 @@ func (e *GithubExecutor) Execute(ctx context.Context, cred Credentials, model st
 	hh := e.Base.BuildHeaders(cred, stream)
 	for k, vals := range headers {
 		hh.Del(k)
+
 		for _, v := range vals {
 			hh.Add(k, v)
 		}
 	}
+
 	return e.DoPOST(ctx, url, hh, payload)
 }
 
 func randomHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
+
 	return hex.EncodeToString(b)
 }

@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	PrivateKeyPrefix  = "zed-rsa-pkcs1:"
-	ZedWebBaseURL     = "https://zed.dev"
-	ZedCloudBaseURL   = "https://cloud.zed.dev"
-	ZedLLMBaseURL     = "https://cloud.zed.dev"
+	PrivateKeyPrefix   = "zed-rsa-pkcs1:"
+	ZedWebBaseURL      = "https://zed.dev"
+	ZedCloudBaseURL    = "https://cloud.zed.dev"
+	ZedLLMBaseURL      = "https://cloud.zed.dev"
 	DefaultLLMTokenURL = "https://cloud.zed.dev/client/llm_tokens"
 )
 
@@ -39,11 +39,11 @@ var ZED_HEADERS = map[string]string{
 
 // ZedKeypair holds the RSA keypair generated for Zed authentication.
 type ZedKeypair struct {
-	PrivateKey   *rsa.PrivateKey
-	PublicKey    *rsa.PublicKey
+	PrivateKey    *rsa.PrivateKey
+	PublicKey     *rsa.PublicKey
 	PrivateKeyPEM string
-	PublicKeyDER []byte
-	Verifier     string
+	Verifier      string
+	PublicKeyDER  []byte
 }
 
 // GenerateZedKeypair generates a 2048-bit RSA private key and returns PKCS#1 PEM string prefixed with "zed-rsa-pkcs1:".
@@ -64,11 +64,11 @@ func GenerateZedKeypair() (*ZedKeypair, error) {
 	verifier := PrivateKeyPrefix + base64.RawURLEncoding.EncodeToString([]byte(privPEM))
 
 	return &ZedKeypair{
-		PrivateKey:   privKey,
-		PublicKey:    &privKey.PublicKey,
+		PrivateKey:    privKey,
+		PublicKey:     &privKey.PublicKey,
 		PrivateKeyPEM: privPEM,
-		PublicKeyDER: pubDER,
-		Verifier:     verifier,
+		PublicKeyDER:  pubDER,
+		Verifier:      verifier,
 	}, nil
 }
 
@@ -77,7 +77,9 @@ func EncodeZedPublicKeyVerifier(pubKey *rsa.PublicKey) string {
 	if pubKey == nil {
 		return ""
 	}
+
 	der := x509.MarshalPKCS1PublicKey(pubKey)
+
 	return base64.RawURLEncoding.EncodeToString(der)
 }
 
@@ -89,11 +91,13 @@ func DecryptZedAccessToken(privateKeyPEM, encryptedTokenBase64 string) (string, 
 		if err != nil {
 			// ponytail: try padded base64url if unpadded fails
 			var padErr error
+
 			decoded, padErr = base64.URLEncoding.DecodeString(strings.TrimPrefix(pemStr, PrivateKeyPrefix))
 			if padErr != nil {
 				return "", fmt.Errorf("invalid private key verifier encoding: %w", err)
 			}
 		}
+
 		pemStr = string(decoded)
 	}
 
@@ -109,7 +113,9 @@ func DecryptZedAccessToken(privateKeyPEM, encryptedTokenBase64 string) (string, 
 		if errPkcs8 != nil {
 			return "", fmt.Errorf("failed to parse private key: %w", err)
 		}
+
 		var ok bool
+
 		privKey, ok = pkcs8Key.(*rsa.PrivateKey)
 		if !ok {
 			return "", errors.New("parsed key is not an RSA private key")
@@ -149,9 +155,11 @@ func BuildZedUserAuthHeader(accessToken string) string {
 	if trimmed == "" {
 		return ""
 	}
+
 	if strings.HasPrefix(trimmed, "Bearer ") || strings.Contains(trimmed, " ") {
 		return trimmed
 	}
+
 	return "Bearer " + trimmed
 }
 
@@ -170,6 +178,7 @@ func FetchZedLLMToken(ctx context.Context, accessToken, clientID string) (string
 	}
 
 	reqBody := llmTokenRequest{ClientID: clientID}
+
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request body: %w", err)
@@ -188,10 +197,12 @@ func FetchZedLLMToken(ctx context.Context, accessToken, clientID string) (string
 	req.Header.Set(ZED_HEADERS["clientSupportsXai"], "1")
 
 	client := &http.Client{Timeout: 30 * time.Second}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to execute zed llm token request: %w", err)
 	}
+
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(resp.Body)

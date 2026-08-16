@@ -2,15 +2,15 @@ package combo
 
 import (
 	"context"
+	"flamerouter/internal/store"
 	"reflect"
 	"testing"
-
-	"flamerouter/internal/store"
 )
 
 func TestNormalizePoolConfig(t *testing.T) {
 	// legacy slice form
 	legacy := []any{"openai/gpt-4o", "gemini/gemini-2.5-flash"}
+
 	cfg := NormalizePoolConfig(legacy)
 	if !cfg.Enabled || cfg.RoundRobin || len(cfg.Models) != 2 {
 		t.Fatalf("unexpected legacy parse: %+v", cfg)
@@ -22,6 +22,7 @@ func TestNormalizePoolConfig(t *testing.T) {
 		"roundRobin": true,
 		"models":     []any{"openai/gpt-4o"},
 	}
+
 	cfg2 := NormalizePoolConfig(obj)
 	if !cfg2.Enabled || !cfg2.RoundRobin || len(cfg2.Models) != 1 || cfg2.Models[0] != "openai/gpt-4o" {
 		t.Fatalf("unexpected obj parse: %+v", cfg2)
@@ -32,6 +33,7 @@ func TestNormalizePoolConfig(t *testing.T) {
 		"enabled": false,
 		"models":  []any{"openai/gpt-4o"},
 	}
+
 	cfg3 := NormalizePoolConfig(objDisabled)
 	if cfg3.Enabled {
 		t.Fatalf("expected disabled: %+v", cfg3)
@@ -42,6 +44,7 @@ func TestGetPoolConfig_EmptyEnabledFallsBack(t *testing.T) {
 	cfg := CapacityAdapterConfig{
 		Vision: ModalityPoolConfig{Enabled: true, Models: nil},
 	}
+
 	pool := GetPoolConfig("vision", cfg)
 	if len(pool.Models) != 1 || pool.Models[0] != DefaultFallbackModel {
 		t.Fatalf("expected fallback model, got %v", pool.Models)
@@ -56,6 +59,7 @@ func TestGetCapacityAdapterModels_Deduplication(t *testing.T) {
 	}
 	models := GetCapacityAdapterModels(cfg)
 	want := []string{"openai/gpt-4o", "gemini/gemini-2.5-flash", "whisper-large"}
+
 	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("want %v, got %v", want, models)
 	}
@@ -73,6 +77,7 @@ func TestAugmentModelsWithCapacityAdapter_PrependWhenIncapable(t *testing.T) {
 
 	augmented := AugmentModelsWithCapacityAdapter(models, reqCaps, cfg)
 	want := []string{"openai/gpt-4o", "deepseek/deepseek-v3"}
+
 	if !reflect.DeepEqual(augmented, want) {
 		t.Fatalf("want %v, got %v", want, augmented)
 	}
@@ -109,6 +114,7 @@ func TestAdaptModelForCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
+
 	if selected != "openai/gpt-4o" {
 		t.Fatalf("expected openai/gpt-4o, got %s", selected)
 	}
@@ -118,6 +124,7 @@ func TestAdaptModelForCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
+
 	if selected2 != "openai/gpt-4o" {
 		t.Fatalf("expected openai/gpt-4o, got %s", selected2)
 	}
@@ -127,6 +134,7 @@ func TestAdaptModelForCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
+
 	if selected3 != "deepseek/deepseek-v3" {
 		t.Fatalf("expected deepseek/deepseek-v3, got %s", selected3)
 	}
@@ -147,6 +155,7 @@ func TestStripHistoryForContext(t *testing.T) {
 
 	// Tiny context window triggers middle strip
 	stripped := StripHistoryForContext(body, 10)
+
 	msgs, ok := stripped["messages"].([]any)
 	if !ok {
 		t.Fatalf("expected messages array")
@@ -159,6 +168,7 @@ func TestStripHistoryForContext(t *testing.T) {
 	if firstRole != "system" {
 		t.Fatalf("expected system preserved, got %s", firstRole)
 	}
+
 	if lastRole != "user" || lastContent != "turn 3 with image" {
 		t.Fatalf("expected tail preserved, got %s: %s", lastRole, lastContent)
 	}
@@ -172,6 +182,7 @@ func TestLoadCapacityAdapterConfig(t *testing.T) {
 	defer st.Close()
 
 	_ = st.SetSetting("capacityAdapter", `{"vision":{"enabled":true,"roundRobin":true,"models":["m1","m2"]}}`)
+
 	cfg := LoadCapacityAdapterConfig(st)
 	if !cfg.Vision.Enabled || !cfg.Vision.RoundRobin || len(cfg.Vision.Models) != 2 {
 		t.Fatalf("failed loading settings: %+v", cfg)

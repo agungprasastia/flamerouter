@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"flamerouter/internal/store"
+	"flamerouter/internal/tokenrefresh"
 	"fmt"
 	"io"
 	"math"
@@ -13,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"flamerouter/internal/store"
-	"flamerouter/internal/tokenrefresh"
 	"github.com/google/uuid"
 )
 
@@ -43,6 +43,7 @@ func (r *KiroResolver) client() *http.Client {
 	if r.Client != nil {
 		return r.Client
 	}
+
 	return http.DefaultClient
 }
 
@@ -50,15 +51,18 @@ func regionFromProfileArn(profileArn string) string {
 	if profileArn == "" {
 		return kiroDefaultRegion
 	}
+
 	parts := strings.Split(profileArn, ":")
 	if len(parts) >= 4 && parts[3] != "" {
 		return parts[3]
 	}
+
 	return kiroDefaultRegion
 }
 
 func buildKiroFingerprintHeaders(conn *store.Connection) http.Header {
 	seed := ""
+
 	if conn.ProviderSpecificData != nil {
 		if cid, ok := conn.ProviderSpecificData["clientId"].(string); ok && cid != "" {
 			seed = cid
@@ -66,15 +70,19 @@ func buildKiroFingerprintHeaders(conn *store.Connection) http.Header {
 			seed = arn
 		}
 	}
+
 	if seed == "" {
 		seed = conn.RefreshToken
 	}
+
 	if seed == "" {
 		seed = conn.AccessToken
 	}
+
 	if seed == "" {
 		seed = "kiro-anonymous"
 	}
+
 	sum := sha256.Sum256([]byte(seed))
 	machineID := hex.EncodeToString(sum[:])
 
@@ -90,18 +98,19 @@ func buildKiroFingerprintHeaders(conn *store.Connection) http.Header {
 	h.Set("amz-sdk-request", "attempt=1; max=1")
 	h.Set("amz-sdk-invocation-id", uuid.New().String())
 	h.Set("Accept", "application/json")
+
 	return h
 }
 
 type kiroRawModel struct {
+	TokenLimits *struct {
+		MaxInputTokens int `json:"maxInputTokens"`
+	} `json:"tokenLimits"`
 	ModelID        string  `json:"modelId"`
 	ID             string  `json:"id"`
 	ModelName      string  `json:"modelName"`
 	Description    string  `json:"description"`
 	RateMultiplier float64 `json:"rateMultiplier"`
-	TokenLimits    *struct {
-		MaxInputTokens int `json:"maxInputTokens"`
-	} `json:"tokenLimits"`
 }
 
 type kiroResponse struct {
@@ -110,12 +119,9 @@ type kiroResponse struct {
 
 func stripSyntheticSuffixes(id string) string {
 	out := id
-	if strings.HasSuffix(out, "-agentic") {
-		out = out[:len(out)-len("-agentic")]
-	}
-	if strings.HasSuffix(out, "-thinking") {
-		out = out[:len(out)-len("-thinking")]
-	}
+	out = strings.TrimSuffix(out, "-agentic")
+	out = strings.TrimSuffix(out, "-thinking")
+
 	return out
 }
 
@@ -124,28 +130,35 @@ func formatKiroDisplayName(modelName, modelID string, rateMultiplier float64) st
 	if base == "" {
 		base = strings.TrimSpace(modelID)
 	}
+
 	if base == "" {
 		base = "Kiro"
 	}
+
 	if rateMultiplier <= 0 || math.Abs(rateMultiplier-1.0) < 1e-9 {
 		return fmt.Sprintf("Kiro %s", base)
 	}
+
 	return fmt.Sprintf("Kiro %s (%.1fx credit)", base, rateMultiplier)
 }
 
 func (r *KiroResolver) fetchRaw(ctx context.Context, conn *store.Connection) ([]kiroRawModel, int, error) {
 	profileArn := ""
+
 	if conn.ProviderSpecificData != nil {
 		if arn, ok := conn.ProviderSpecificData["profileArn"].(string); ok {
 			profileArn = arn
 		}
 	}
+
 	region := regionFromProfileArn(profileArn)
 	vals := url.Values{}
 	vals.Set("origin", "AI_EDITOR")
+
 	if profileArn != "" {
 		vals.Set("profileArn", profileArn)
 	}
+
 	reqURL := fmt.Sprintf("https://q.%s.amazonaws.com/ListAvailableModels?%s", region, vals.Encode())
 
 	ctx, cancel := context.WithTimeout(ctx, kiroDefaultTimeout)
@@ -155,6 +168,7 @@ func (r *KiroResolver) fetchRaw(ctx context.Context, conn *store.Connection) ([]
 	if err != nil {
 		return nil, 0, err
 	}
+
 	req.Header = buildKiroFingerprintHeaders(conn)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", conn.AccessToken))
 
@@ -173,6 +187,7 @@ func (r *KiroResolver) fetchRaw(ctx context.Context, conn *store.Connection) ([]
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("decode kiro models: %w", err)
 	}
+
 	return parsed.Models, resp.StatusCode, nil
 }
 
@@ -187,35 +202,44 @@ func (r *KiroResolver) Resolve(ctx context.Context, conn *store.Connection) ([]D
 		if rm == nil {
 			rm = tokenrefresh.NewRefreshManager()
 		}
+
 		refreshed, refErr := rm.Refresh(ctx, "kiro", conn.RefreshToken)
 		if refErr == nil && refreshed != nil && refreshed.AccessToken != "" {
 			connCopy := *conn
 			connCopy.AccessToken = refreshed.AccessToken
+
 			if refreshed.RefreshToken != "" {
 				connCopy.RefreshToken = refreshed.RefreshToken
 			}
+
 			raw, _, err = r.fetchRaw(ctx, &connCopy)
 		}
 	}
+
 	if err != nil {
 		return nil, err
 	}
 
 	var expanded []DynamicModel
+
 	for _, m := range raw {
 		upstreamID := m.ModelID
 		if upstreamID == "" {
 			upstreamID = m.ID
 		}
+
 		if upstreamID == "" {
 			continue
 		}
+
 		safeUpstream := stripSyntheticSuffixes(upstreamID)
 		display := formatKiroDisplayName(m.ModelName, safeUpstream, m.RateMultiplier)
+
 		ctxLen := 200000
 		if m.TokenLimits != nil && m.TokenLimits.MaxInputTokens > 0 {
 			ctxLen = m.TokenLimits.MaxInputTokens
 		}
+
 		rateMult := m.RateMultiplier
 		if rateMult <= 0 {
 			rateMult = 1.0
@@ -267,5 +291,6 @@ func (r *KiroResolver) Resolve(ctx context.Context, conn *store.Connection) ([]D
 			})
 		}
 	}
+
 	return expanded, nil
 }

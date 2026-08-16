@@ -4,10 +4,12 @@ import "database/sql"
 
 func (s *Store) KVGet(scope, key string) (string, error) {
 	var v string
+
 	err := s.db.QueryRow(`SELECT value FROM kv WHERE scope=? AND key=?`, scope, key).Scan(&v)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
+
 	return v, err
 }
 
@@ -17,6 +19,7 @@ func (s *Store) KVSet(scope, key, value string) error {
 		 ON CONFLICT(scope, key) DO UPDATE SET value=excluded.value`,
 		scope, key, value,
 	)
+
 	return err
 }
 
@@ -30,14 +33,19 @@ func (s *Store) KVList(scope string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	out := make(map[string]string)
+
 	for rows.Next() {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
 			return nil, err
 		}
+
 		out[k] = v
 	}
+
 	return out, rows.Err()
 }

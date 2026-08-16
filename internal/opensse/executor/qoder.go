@@ -7,15 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"flamerouter/internal/opensse/shared/qoder"
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
-	"flamerouter/internal/opensse/shared/qoder"
 	"github.com/google/uuid"
 )
 
@@ -24,7 +23,6 @@ func init() {
 }
 
 var (
-	billingBlockRe = regexp.MustCompile(`"code"\s*:\s*"(112|10605)"`)
 	catalogMu      sync.RWMutex
 	modelConfigs   = map[string]map[string]any{
 		"auto":          {"key": "auto", "is_reasoning": false, "max_output_tokens": 32768, "source": "system"},
@@ -50,6 +48,7 @@ func NewQoderExecutor(client *http.Client) *QoderExecutor {
 	if client == nil {
 		client = http.DefaultClient
 	}
+
 	return &QoderExecutor{
 		Base: Base{
 			Provider: "qoder",
@@ -63,13 +62,16 @@ func (e *QoderExecutor) buildURL(cred Credentials) string {
 	if e.BaseURL != "" && !strings.Contains(e.BaseURL, "api3.qoder.sh") {
 		return e.BaseURL
 	}
+
 	raw := cred.APIKey
 	if raw == "" {
 		raw = cred.AccessToken
 	}
+
 	if !strings.HasPrefix(raw, "pt-") && (strings.HasPrefix(raw, "jt-") || strings.HasPrefix(cred.AccessToken, "jt-")) {
 		return fmt.Sprintf("%s/algo%s?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1", qoder.QODER_CHAT_BASE_ALT, qoder.QODER_CHAT_SIG_PATH)
 	}
+
 	return qoder.QODER_CHAT_URL_ENCODED
 }
 
@@ -77,11 +79,13 @@ func extractQoderText(content any) string {
 	if content == nil {
 		return ""
 	}
+
 	switch v := content.(type) {
 	case string:
 		return v
 	case []any:
 		var parts []string
+
 		for _, item := range v {
 			if m, ok := item.(map[string]any); ok {
 				if t, ok := m["text"].(string); ok && t != "" {
@@ -89,6 +93,7 @@ func extractQoderText(content any) string {
 				}
 			}
 		}
+
 		return strings.Join(parts, "\n")
 	default:
 		return fmt.Sprint(v)
@@ -99,7 +104,9 @@ func normalizeQoderMessages(rawMessages []any) ([]map[string]any, string) {
 	if len(rawMessages) == 0 {
 		return []map[string]any{}, ""
 	}
+
 	var systemParts []string
+
 	var out []map[string]any
 
 	for _, item := range rawMessages {
@@ -107,21 +114,27 @@ func normalizeQoderMessages(rawMessages []any) ([]map[string]any, string) {
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 		text := extractQoderText(msg["content"])
+
 		if role == "system" {
 			if text != "" {
 				systemParts = append(systemParts, text)
 			}
+
 			continue
 		}
+
 		cloned := make(map[string]any, len(msg))
 		for k, v := range msg {
 			cloned[k] = v
 		}
+
 		cloned["content"] = text
 		out = append(out, cloned)
 	}
+
 	return out, strings.Join(systemParts, "\n\n")
 }
 
@@ -134,16 +147,19 @@ func lastQoderUserText(messages []map[string]any) string {
 			}
 		}
 	}
+
 	return ""
 }
 
 func stableQoderHash(prefix string, parts ...string) string {
 	h := sha256.New()
 	h.Write([]byte(prefix))
+
 	for _, p := range parts {
 		h.Write([]byte{0})
 		h.Write([]byte(p))
 	}
+
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -151,23 +167,29 @@ func stableQoderChatRecordID(model string, messages []map[string]any, tools any,
 	h := sha256.New()
 	h.Write([]byte("qoder-record\x00"))
 	h.Write([]byte(model))
+
 	for _, m := range messages {
 		if role, ok := m["role"].(string); ok && role != "" {
 			h.Write([]byte{0})
 			h.Write([]byte(role))
 		}
+
 		if content, ok := m["content"].(string); ok && content != "" {
 			h.Write([]byte{0})
 			h.Write([]byte(content))
 		}
 	}
+
 	if tools != nil {
 		h.Write([]byte{0})
+
 		if b, err := json.Marshal(tools); err == nil {
 			h.Write(b)
 		}
 	}
+
 	h.Write([]byte(fmt.Sprintf("\x00mt=%d", maxTokens)))
+
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -175,17 +197,20 @@ func truncateQoderString(s string, n int) string {
 	if len(s) > n {
 		return s[:n] + "..."
 	}
+
 	return s
 }
 
 func getQoderModelConfig(qoderKey string) map[string]any {
 	catalogMu.RLock()
 	defer catalogMu.RUnlock()
+
 	if cfg, ok := modelConfigs[qoderKey]; ok {
 		cp := make(map[string]any, len(cfg))
 		for k, v := range cfg {
 			cp[k] = v
 		}
+
 		return cp
 	}
 	// Fallback dynamic config
@@ -197,19 +222,12 @@ func getQoderModelConfig(qoderKey string) map[string]any {
 	}
 }
 
-func isQoderBillingBlock(inner string) bool {
-	if inner == "" {
-		return false
-	}
-	lower := strings.ToLower(inner)
-	return billingBlockRe.MatchString(inner) || strings.Contains(lower, "pricingurl")
-}
-
 func buildQoderRequestBody(model string, body map[string]any, cred Credentials) (string, map[string]any, error) {
 	qoderKey := strings.TrimPrefix(model, "qoder/")
 	if qoderKey == "" {
 		qoderKey = "auto"
 	}
+
 	modelConfig := getQoderModelConfig(qoderKey)
 
 	rawMessages, _ := body["messages"].([]any)
@@ -217,6 +235,7 @@ func buildQoderRequestBody(model string, body map[string]any, cred Credentials) 
 	tools := body["tools"]
 
 	isReasoning, _ := modelConfig["is_reasoning"].(bool)
+
 	maxOutputTokens := 0
 	if mot, ok := modelConfig["max_output_tokens"].(int); ok {
 		maxOutputTokens = mot
@@ -226,9 +245,11 @@ func buildQoderRequestBody(model string, body map[string]any, cred Credentials) 
 	if maxOutputTokens > 0 {
 		maxTokens = maxOutputTokens
 	}
+
 	if mt, ok := body["max_tokens"].(float64); ok && mt > 0 && int(mt) < maxTokens {
 		maxTokens = int(mt)
 	}
+
 	if mct, ok := body["max_completion_tokens"].(float64); ok && mct > 0 && int(mct) < maxTokens {
 		maxTokens = int(mct)
 	}
@@ -310,25 +331,28 @@ func wrapQoderSSE(resp *http.Response, model string) *Result {
 					if data == "[DONE]" {
 						if !doneEmitted {
 							_, _ = pw.Write([]byte("data: [DONE]\n\n"))
-							doneEmitted = true
 						}
+
 						return
 					}
 
 					var env struct {
-						StatusCodeValue int    `json:"statusCodeValue"`
 						Body            string `json:"body"`
+						StatusCodeValue int    `json:"statusCodeValue"`
 					}
+
 					if err := json.Unmarshal([]byte(data), &env); err == nil {
 						statusVal := env.StatusCodeValue
 						if statusVal == 0 {
 							statusVal = 200
 						}
+
 						if statusVal != 200 {
 							msg := env.Body
 							if msg == "" {
 								msg = fmt.Sprintf("upstream status %d", statusVal)
 							}
+
 							errChunk, _ := json.Marshal(map[string]any{
 								"id":      fmt.Sprintf("qoder-error-%d", time.Now().UnixMilli()),
 								"object":  "chat.completion.chunk",
@@ -345,18 +369,19 @@ func wrapQoderSSE(resp *http.Response, model string) *Result {
 								},
 							})
 							_, _ = pw.Write([]byte("data: " + string(errChunk) + "\n\n"))
+
 							if !doneEmitted {
 								_, _ = pw.Write([]byte("data: [DONE]\n\n"))
-								doneEmitted = true
 							}
+
 							return
 						}
 
 						if env.Body == "[DONE]" {
 							if !doneEmitted {
 								_, _ = pw.Write([]byte("data: [DONE]\n\n"))
-								doneEmitted = true
 							}
+
 							return
 						}
 
@@ -367,10 +392,12 @@ func wrapQoderSSE(resp *http.Response, model string) *Result {
 					}
 				}
 			}
+
 			if err != nil {
 				if !doneEmitted {
 					_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 				}
+
 				return
 			}
 		}
@@ -379,6 +406,7 @@ func wrapQoderSSE(resp *http.Response, model string) *Result {
 	hdr := resp.Header.Clone()
 	hdr.Set("Content-Type", "text/event-stream")
 	hdr.Set("Cache-Control", "no-cache")
+
 	return &Result{
 		StatusCode: resp.StatusCode,
 		Header:     hdr,
@@ -393,6 +421,7 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 		b, _ := json.Marshal(errResp)
 		hdr := make(http.Header)
 		hdr.Set("Content-Type", "application/json")
+
 		return &Result{StatusCode: http.StatusUnauthorized, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}, nil
 	}
 
@@ -400,11 +429,13 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 	if authToken == "" {
 		authToken = cred.APIKey
 	}
+
 	if authToken == "" {
 		errResp := map[string]any{"error": map[string]any{"message": "qoder credential is missing accessToken; reconnect the account"}}
 		b, _ := json.Marshal(errResp)
 		hdr := make(http.Header)
 		hdr.Set("Content-Type", "application/json")
+
 		return &Result{StatusCode: http.StatusUnauthorized, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}, nil
 	}
 
@@ -415,11 +446,7 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 
 	qoderKey, payload, err := buildQoderRequestBody(model, parsedBody, cred)
 	if err != nil {
-		errResp := map[string]any{"error": map[string]any{"message": err.Error()}}
-		b, _ := json.Marshal(errResp)
-		hdr := make(http.Header)
-		hdr.Set("Content-Type", "application/json")
-		return &Result{StatusCode: http.StatusBadRequest, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}, nil
+		return nil, err
 	}
 
 	plainBody, err := json.Marshal(payload)
@@ -445,6 +472,7 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 		b, _ := json.Marshal(errResp)
 		hdr := make(http.Header)
 		hdr.Set("Content-Type", "application/json")
+
 		return &Result{StatusCode: http.StatusUnauthorized, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}, nil
 	}
 
@@ -457,12 +485,15 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("X-Model-Key", qoderKey)
+
 	modelSource := "system"
+
 	if mc, ok := payload["model_config"].(map[string]any); ok {
 		if s, ok := mc["source"].(string); ok && s != "" {
 			modelSource = s
 		}
 	}
+
 	req.Header.Set("X-Model-Source", modelSource)
 	req.Header.Set("Accept-Encoding", "identity")
 

@@ -34,14 +34,17 @@ func openaiToKiroRequest(model string, body map[string]any, stream bool, credent
 	if credentials != nil {
 		rawHeaders, _ = credentials["rawHeaders"].(string)
 	}
+
 	authMethod := ""
 	profileArn := ""
+
 	if credentials != nil {
 		if psd, ok := credentials["providerSpecificData"].(map[string]any); ok {
 			authMethod, _ = psd["authMethod"].(string)
 			profileArn, _ = psd["profileArn"].(string)
 		}
 	}
+
 	accountBoundAuth := authMethod == "api_key" || authMethod == "idc" || authMethod == "external_idp"
 	if accountBoundAuth {
 		if profileArn == "" {
@@ -57,12 +60,15 @@ func openaiToKiroRequest(model string, body map[string]any, stream bool, credent
 	if thinkingBudget != nil {
 		systemPromptParts = append(systemPromptParts, buildThinkingSystemPrefixFromBudget(*thinkingBudget))
 	}
+
 	if agentic {
 		systemPromptParts = append(systemPromptParts, translator.KiroAgenticSystemPrompt)
 	}
+
 	systemPrompt := strings.Join(systemPromptParts, "\n\n")
 	currentTimeContext := "[Context: Current time is " + concerns.CurrentTimestamp() + "]"
 	contentPrefix := systemPrompt
+
 	if contentPrefix != "" {
 		contentPrefix += "\n\n" + currentTimeContext
 	} else {
@@ -73,10 +79,10 @@ func openaiToKiroRequest(model string, body map[string]any, stream bool, credent
 
 	payload := map[string]any{
 		"conversationState": map[string]any{
-			"chatTriggerType":      "MANUAL",
-			"conversationId":       uuid.New().String(),
-			"agentContinuationId":  uuid.New().String(),
-			"agentTaskType":        "vibe",
+			"chatTriggerType":     "MANUAL",
+			"conversationId":      uuid.New().String(),
+			"agentContinuationId": uuid.New().String(),
+			"agentTaskType":       "vibe",
 			"currentMessage": map[string]any{
 				"userInputMessage": map[string]any{
 					"content": contentPrefix + "\n\n" + currentMessage,
@@ -92,6 +98,7 @@ func openaiToKiroRequest(model string, body map[string]any, stream bool, credent
 	if profileArn != "" {
 		payload["profileArn"] = profileArn
 	}
+
 	if systemPrompt != "" {
 		payload["systemPrompt"] = systemPrompt
 	}
@@ -103,12 +110,15 @@ func openaiToKiroRequest(model string, body map[string]any, stream bool, credent
 
 	inferenceConfig := map[string]any{}
 	inferenceConfig["maxTokens"] = 32000
+
 	if temp != 0 {
 		inferenceConfig["temperature"] = temp
 	}
+
 	if topP != 0 {
 		inferenceConfig["topP"] = topP
 	}
+
 	payload["inferenceConfig"] = inferenceConfig
 
 	return payload
@@ -116,11 +126,13 @@ func openaiToKiroRequest(model string, body map[string]any, stream bool, credent
 
 func flattenKiroToolInteractions(messages []any) []any {
 	var out []any
+
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 
 		if role == schema.RoleTool {
@@ -129,17 +141,20 @@ func flattenKiroToolInteractions(messages []any) []any {
 				"role":    schema.RoleUser,
 				"content": "[Tool result: " + content + "]",
 			})
+
 			continue
 		}
 
 		if role == schema.RoleAssistant {
 			var parts []string
+
 			if arr, ok := msg["content"].([]any); ok {
 				for _, blockRaw := range arr {
 					block, ok := blockRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					btype, _ := block["type"].(string)
 					if btype == "tool_use" {
 						name, _ := block["name"].(string)
@@ -152,31 +167,37 @@ func flattenKiroToolInteractions(messages []any) []any {
 			} else if s, ok := msg["content"].(string); ok {
 				parts = append(parts, s)
 			}
+
 			for _, tcRaw := range msg["tool_calls"].([]any) {
 				tc, ok := tcRaw.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				fn, _ := tc["function"].(map[string]any)
 				name, _ := fn["name"].(string)
 				args, _ := fn["arguments"].(string)
 				parts = append(parts, "[Tool call: "+name+"("+args+")]")
 			}
+
 			out = append(out, map[string]any{
 				"role":    schema.RoleAssistant,
 				"content": strings.Join(parts, "\n"),
 			})
+
 			continue
 		}
 
 		if role == schema.RoleUser {
 			if arr, ok := msg["content"].([]any); ok {
 				newContent := make([]any, 0, len(arr))
+
 				for _, blockRaw := range arr {
 					block, ok := blockRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					if block["type"] == "tool_result" {
 						content := extractKiroTextContent(block["content"])
 						newContent = append(newContent, map[string]any{
@@ -187,25 +208,33 @@ func flattenKiroToolInteractions(messages []any) []any {
 						newContent = append(newContent, block)
 					}
 				}
+
 				out = append(out, map[string]any{
 					"role":    role,
 					"content": newContent,
 				})
+
 				continue
 			}
 		}
 
 		out = append(out, msg)
 	}
+
 	return out
 }
 
 func convertKiroMessages(messages []any, tools []any, model string, clientProvidedTools bool) ([]any, string) {
 	var history []any
+
 	var currentMessage string
+
 	var pendingUserContent []string
+
 	var pendingAssistantContent []string
+
 	var currentRole string
+
 	toolsInjected := false
 
 	flushPending := func() {
@@ -214,6 +243,7 @@ func convertKiroMessages(messages []any, tools []any, model string, clientProvid
 			if content == "" {
 				content = "continue"
 			}
+
 			history = append(history, map[string]any{
 				"userInputMessage": map[string]any{
 					"content": content,
@@ -227,6 +257,7 @@ func convertKiroMessages(messages []any, tools []any, model string, clientProvid
 			if content == "" {
 				content = "..."
 			}
+
 			history = append(history, map[string]any{
 				"assistantResponseMessage": map[string]any{
 					"content": content,
@@ -241,9 +272,11 @@ func convertKiroMessages(messages []any, tools []any, model string, clientProvid
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 
 		wasSystem := role == schema.RoleSystem
+
 		if role == schema.RoleSystem || role == schema.RoleTool {
 			role = schema.RoleUser
 		}
@@ -251,6 +284,7 @@ func convertKiroMessages(messages []any, tools []any, model string, clientProvid
 		if role != currentRole && currentRole != "" {
 			flushPending()
 		}
+
 		currentRole = role
 
 		if role == schema.RoleUser {
@@ -260,15 +294,18 @@ func convertKiroMessages(messages []any, tools []any, model string, clientProvid
 				content = c
 			case []any:
 				var textParts []string
+
 				for _, blockRaw := range c {
 					block, ok := blockRaw.(map[string]any)
 					if !ok {
 						continue
 					}
+
 					if text, ok := block["text"].(string); ok {
 						textParts = append(textParts, text)
 					}
 				}
+
 				content = strings.Join(textParts, "\n")
 			}
 
@@ -293,11 +330,13 @@ func convertKiroMessages(messages []any, tools []any, model string, clientProvid
 					if !ok {
 						continue
 					}
+
 					if text, ok := block["text"].(string); ok {
 						textContent += text
 					}
 				}
 			}
+
 			if textContent != "" {
 				pendingAssistantContent = append(pendingAssistantContent, textContent)
 			}
@@ -312,7 +351,9 @@ func convertKiroMessages(messages []any, tools []any, model string, clientProvid
 		if item, ok := history[i].(map[string]any); ok {
 			if _, ok := item["userInputMessage"]; ok {
 				currentMessage = extractKiroUserContent(item)
+
 				history = append(history[:i], history[i+1:]...)
+
 				break
 			}
 		}
@@ -323,17 +364,20 @@ func convertKiroMessages(messages []any, tools []any, model string, clientProvid
 		if len(mergedHistory) > 0 {
 			prev, ok := mergedHistory[len(mergedHistory)-1].(map[string]any)
 			curr, ok2 := item.(map[string]any)
+
 			if ok && ok2 {
 				if _, prevIsUser := prev["userInputMessage"]; prevIsUser {
 					if _, currIsUser := curr["userInputMessage"]; currIsUser {
 						prevMsg := prev["userInputMessage"].(map[string]any)
 						currMsg := curr["userInputMessage"].(map[string]any)
 						prevMsg["content"] = prevMsg["content"].(string) + "\n\n" + currMsg["content"].(string)
+
 						continue
 					}
 				}
 			}
 		}
+
 		mergedHistory = append(mergedHistory, item)
 	}
 
@@ -350,17 +394,21 @@ func extractKiroTextContent(content any) string {
 		return c
 	case []any:
 		var parts []string
+
 		for _, blockRaw := range c {
 			block, ok := blockRaw.(map[string]any)
 			if !ok {
 				continue
 			}
+
 			if text, ok := block["text"].(string); ok {
 				parts = append(parts, text)
 			}
 		}
+
 		return strings.Join(parts, "\n")
 	}
+
 	return ""
 }
 
@@ -369,7 +417,9 @@ func extractKiroUserContent(item map[string]any) string {
 	if !ok {
 		return ""
 	}
+
 	content, _ := uim["content"].(string)
+
 	return content
 }
 
@@ -377,9 +427,11 @@ func buildThinkingSystemPrefixFromBudget(budget int) string {
 	if budget < 1 {
 		budget = 1
 	}
+
 	if budget > 32000 {
 		budget = 32000
 	}
+
 	return "<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>" + concerns.MustMarshal(budget) + "</max_thinking_length>"
 }
 
@@ -387,10 +439,12 @@ func buildKiroAdditionalModelRequestFields(body map[string]any, model string) ma
 	if !supportsKiroAdditionalModelRequestFields(model) {
 		return nil
 	}
+
 	effort := extractKiroEffortLevel(body)
 	if effort == "" {
 		return nil
 	}
+
 	return map[string]any{
 		"thinking": map[string]any{
 			"type":    "adaptive",
@@ -407,18 +461,22 @@ func supportsKiroAdditionalModelRequestFields(model string) bool {
 	if !strings.Contains(m, "claude") {
 		return false
 	}
+
 	parts := strings.Split(m, ".")
 	for _, p := range parts {
 		if p == "claude" {
 			idx := 0
+
 			for i, pp := range parts {
 				if pp == "claude" {
 					idx = i
 					break
 				}
 			}
+
 			if idx+1 < len(parts) {
 				major := 0
+
 				for _, ch := range parts[idx+1] {
 					if ch >= '0' && ch <= '9' {
 						major = major*10 + int(ch-'0')
@@ -426,10 +484,12 @@ func supportsKiroAdditionalModelRequestFields(model string) bool {
 						break
 					}
 				}
+
 				return major >= 4
 			}
 		}
 	}
+
 	return false
 }
 
@@ -437,19 +497,23 @@ func extractKiroEffortLevel(body map[string]any) string {
 	if body == nil {
 		return ""
 	}
+
 	if cfg, ok := body["output_config"].(map[string]any); ok {
 		if effort, ok := cfg["effort"].(string); ok {
 			return normalizeKiroEffort(effort)
 		}
 	}
+
 	if re, ok := body["reasoning_effort"].(string); ok {
 		return normalizeKiroEffort(re)
 	}
+
 	if reasoning, ok := body["reasoning"].(map[string]any); ok {
 		if effort, ok := reasoning["effort"].(string); ok {
 			return normalizeKiroEffort(effort)
 		}
 	}
+
 	return ""
 }
 
@@ -462,5 +526,6 @@ func normalizeKiroEffort(effort string) string {
 	case "low", "medium", "high":
 		return strings.ToLower(effort)
 	}
+
 	return ""
 }

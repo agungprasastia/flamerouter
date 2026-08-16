@@ -57,6 +57,7 @@ type GrokWebExecutor struct{ Base }
 func grokRandomHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
+
 	return hex.EncodeToString(b)
 }
 
@@ -71,49 +72,63 @@ func parseOpenAIMessages(messages []any) string {
 		role string
 		text string
 	}
+
 	var items []extracted
+
 	for _, raw := range messages {
 		msg, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 		if role == "" {
 			role = "user"
 		}
+
 		if role == "developer" {
 			role = "system"
 		}
+
 		content := ""
 		switch c := msg["content"].(type) {
 		case string:
 			content = c
 		case []any:
 			var parts []string
+
 			for _, p := range c {
 				pm, ok := p.(map[string]any)
 				if !ok {
 					continue
 				}
+
 				if t, _ := pm["type"].(string); t == "text" {
 					parts = append(parts, fmt.Sprint(pm["text"]))
 				}
 			}
+
 			content = strings.Join(parts, " ")
 		}
+
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
+
 		items = append(items, extracted{role: role, text: content})
 	}
+
 	lastUser := -1
+
 	for i := len(items) - 1; i >= 0; i-- {
 		if items[i].role == "user" {
 			lastUser = i
 			break
 		}
 	}
+
 	var parts []string
+
 	for i, it := range items {
 		if i == lastUser {
 			parts = append(parts, it.text)
@@ -121,15 +136,19 @@ func parseOpenAIMessages(messages []any) string {
 			parts = append(parts, it.role+": "+it.text)
 		}
 	}
+
 	return strings.Join(parts, "\n\n")
 }
 
 func jsonErr(status int, msg, typ, code string) *Result {
 	body := map[string]any{"error": map[string]any{"message": msg, "type": typ}}
+
 	if code != "" {
 		body["error"].(map[string]any)["code"] = code
 	}
+
 	b, _ := json.Marshal(body)
+
 	return &Result{
 		StatusCode: status,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -142,14 +161,17 @@ func (e *GrokWebExecutor) Execute(ctx context.Context, cred Credentials, model s
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+
 	messages, _ := m["messages"].([]any)
 	if len(messages) == 0 {
 		return jsonErr(400, "Missing or empty messages array", "invalid_request", ""), nil
 	}
+
 	info, ok := grokWebModelMap[model]
 	if !ok {
 		info = grokWebModelMap["grok-4.1-fast"]
 	}
+
 	message := parseOpenAIMessages(messages)
 	if strings.TrimSpace(message) == "" {
 		return jsonErr(400, "Empty query after processing", "invalid_request", ""), nil
@@ -168,6 +190,7 @@ func (e *GrokWebExecutor) Execute(ctx context.Context, cred Credentials, model s
 			"screenWidth": 2056, "screenHeight": 1329, "viewportWidth": 2056, "viewportHeight": 1083,
 		},
 	}
+
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -199,33 +222,38 @@ func (e *GrokWebExecutor) Execute(ctx context.Context, cred Credentials, model s
 	if token == "" {
 		token = cred.AccessToken
 	}
+
 	if token != "" {
-		if strings.HasPrefix(token, "sso=") {
-			token = token[4:]
-		}
+		token = strings.TrimPrefix(token, "sso=")
 		h.Set("Cookie", "sso="+token)
 	}
 
 	res, err := e.DoPOST(ctx, grokWebChatAPI, h, payloadBytes)
 	if err != nil {
-		return jsonErr(502, "Grok connection failed: "+err.Error(), "upstream_error", ""), nil
+		return nil, err
 	}
+
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		status := res.StatusCode
 		msg := fmt.Sprintf("Grok returned HTTP %d", status)
+
 		if status == 401 || status == 403 {
 			msg = "Grok auth failed — SSO cookie may be expired. Re-paste your sso cookie value from grok.com."
 		} else if status == 429 {
 			msg = "Grok rate limited. Wait a moment and retry, or rotate cookies."
 		}
+
 		DrainBody(res.Body)
+
 		return jsonErr(status, msg, "upstream_error", fmt.Sprintf("HTTP_%d", status)), nil
 	}
 
 	cid := "chatcmpl-grok-" + randomUUID()[:12]
 	created := time.Now().Unix()
+
 	if stream {
 		sseBody := convertGrokNDJSONToSSE(res.Body, model, cid, created)
+
 		return &Result{
 			StatusCode: 200,
 			Header: http.Header{
@@ -237,10 +265,12 @@ func (e *GrokWebExecutor) Execute(ctx context.Context, cred Credentials, model s
 			Body: sseBody,
 		}, nil
 	}
+
 	jsonBody, err := convertGrokNDJSONToJSON(res.Body, model, cid, created)
 	if err != nil {
 		return jsonErr(502, err.Error(), "upstream_error", "GROK_ERROR"), nil
 	}
+
 	return &Result{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -255,36 +285,46 @@ type grokChunk struct {
 
 func readGrokNDJSON(r io.Reader, out chan<- grokChunk) {
 	defer close(out)
+
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
 			continue
 		}
+
 		var event map[string]any
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			continue
 		}
+
 		if errObj, ok := event["error"].(map[string]any); ok {
 			msg, _ := errObj["message"].(string)
 			if msg == "" {
 				msg = fmt.Sprintf("Grok error: %v", errObj["code"])
 			}
 			out <- grokChunk{errorMsg: msg, done: true}
+
 			return
 		}
+
 		result, _ := event["result"].(map[string]any)
+
 		resp, _ := result["response"].(map[string]any)
 		if resp == nil {
 			continue
 		}
+
 		if mr, ok := resp["modelResponse"].(map[string]any); ok {
 			if msg, _ := mr["message"].(string); msg != "" {
 				out <- grokChunk{fullMessage: msg}
 			}
+
 			continue
 		}
+
 		if tok, ok := resp["token"]; ok && tok != nil {
 			out <- grokChunk{delta: fmt.Sprint(tok)}
 		}
@@ -297,6 +337,7 @@ func convertGrokNDJSONToSSE(r io.ReadCloser, model, cid string, created int64) i
 	go func() {
 		defer r.Close()
 		defer pw.Close()
+
 		writeSSE := func(obj map[string]any) {
 			b, _ := json.Marshal(obj)
 			_, _ = pw.Write([]byte("data: "))
@@ -310,8 +351,10 @@ func convertGrokNDJSONToSSE(r io.ReadCloser, model, cid string, created int64) i
 				"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil, "logprobs": nil,
 			}},
 		})
+
 		ch := make(chan grokChunk, 16)
 		go readGrokNDJSON(r, ch)
+
 		for c := range ch {
 			if c.errorMsg != "" {
 				writeSSE(map[string]any{
@@ -322,11 +365,14 @@ func convertGrokNDJSONToSSE(r io.ReadCloser, model, cid string, created int64) i
 						"finish_reason": nil, "logprobs": nil,
 					}},
 				})
+
 				break
 			}
+
 			if c.done {
 				break
 			}
+
 			if c.delta != "" {
 				writeSSE(map[string]any{
 					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
@@ -338,6 +384,7 @@ func convertGrokNDJSONToSSE(r io.ReadCloser, model, cid string, created int64) i
 				})
 			}
 		}
+
 		writeSSE(map[string]any{
 			"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
 			"system_fingerprint": nil,
@@ -345,29 +392,37 @@ func convertGrokNDJSONToSSE(r io.ReadCloser, model, cid string, created int64) i
 				"index": 0, "delta": map[string]any{}, "finish_reason": "stop", "logprobs": nil,
 			}},
 		})
+
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
+
 	return pr
 }
 
 func convertGrokNDJSONToJSON(r io.ReadCloser, model, cid string, created int64) ([]byte, error) {
 	defer r.Close()
+
 	ch := make(chan grokChunk, 16)
 	go readGrokNDJSON(r, ch)
+
 	var full string
+
 	for c := range ch {
 		if c.errorMsg != "" {
 			return nil, fmt.Errorf("%s", c.errorMsg)
 		}
+
 		if c.done {
 			break
 		}
+
 		if c.fullMessage != "" {
 			full = c.fullMessage
 		} else if c.delta != "" {
 			full += c.delta
 		}
 	}
+
 	msg := map[string]any{"role": "assistant", "content": full}
 	promptTokens := (len(full) + 3) / 4
 	completionTokens := promptTokens
@@ -382,5 +437,6 @@ func convertGrokNDJSONToJSON(r io.ReadCloser, model, cid string, created int64) 
 			"total_tokens": promptTokens + completionTokens,
 		},
 	}
+
 	return json.Marshal(out)
 }

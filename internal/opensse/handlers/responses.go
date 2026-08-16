@@ -3,14 +3,13 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/opensse/model"
 	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
 	"flamerouter/internal/translator"
+	"net/http"
 )
 
 func Responses(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
@@ -36,8 +35,10 @@ func CompactResponses(ctx context.Context, w http.ResponseWriter, body []byte, s
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return err
 	}
+
 	m["_compact"] = true
 	payload, _ := json.Marshal(m)
+
 	return Responses(ctx, w, payload, st, exec, fb)
 }
 
@@ -57,16 +58,18 @@ func convertResponsesToChat(body map[string]any) map[string]any {
 	if input, ok := body["input"]; ok {
 		if inputArr, ok := input.([]any); ok {
 			var messages []any
+
 			for _, item := range inputArr {
 				if msg, ok := item.(map[string]any); ok {
 					role, _ := msg["role"].(string)
-					content, _ := msg["content"]
+					content := msg["content"]
 					messages = append(messages, map[string]any{
 						"role":    role,
 						"content": content,
 					})
 				}
 			}
+
 			result["messages"] = messages
 		} else if inputStr, ok := input.(string); ok && inputStr != "" {
 			result["messages"] = []any{
@@ -90,21 +93,27 @@ func convertResponsesToChat(body map[string]any) map[string]any {
 	if temp, ok := body["temperature"]; ok {
 		result["temperature"] = temp
 	}
+
 	if maxTokens, ok := body["max_output_tokens"]; ok {
 		result["max_tokens"] = maxTokens
 	}
+
 	if topP, ok := body["top_p"]; ok {
 		result["top_p"] = topP
 	}
+
 	if tools, ok := body["tools"]; ok {
 		result["tools"] = tools
 	}
+
 	if toolChoice, ok := body["tool_choice"]; ok {
 		result["tool_choice"] = toolChoice
 	}
+
 	if respFormat, ok := body["response_format"]; ok {
 		result["response_format"] = respFormat
 	}
+
 	if streamOpts, ok := body["stream_options"]; ok {
 		result["stream_options"] = streamOpts
 	}
@@ -124,6 +133,7 @@ func handleResponsesChat(ctx context.Context, w http.ResponseWriter, body []byte
 
 	ts := LoadTokenSaverFromStore(st)
 	combo, _ := st.GetComboByName(modelStr)
+
 	if combo != nil && len(combo.Models) > 0 {
 		return handleCombo(ctx, w, body, combo, st, exec, fb, streamReq, sourceFormat, ts)
 	}
@@ -141,6 +151,7 @@ func handleResponsesChat(ctx context.Context, w http.ResponseWriter, body []byte
 		http.Error(w, `{"error":"model must be provider/model format"}`, http.StatusBadRequest)
 		return nil
 	}
+
 	providerID := model.ResolveProviderAlias(mref.Provider, provider.ProviderAliases())
 
 	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, "", 0, nil)

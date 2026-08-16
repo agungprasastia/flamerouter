@@ -1,7 +1,6 @@
 package translator
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -57,9 +56,11 @@ func ResolveKiroModel(model string) (upstream string, agentic bool) {
 		agentic = true
 		upstream = upstream[:len(upstream)-len(KiroAgenticSuffix)]
 	}
+
 	if len(upstream) > len(KiroThinkingSuffix) && upstream[len(upstream)-len(KiroThinkingSuffix):] == KiroThinkingSuffix {
 		upstream = upstream[:len(upstream)-len(KiroThinkingSuffix)]
 	}
+
 	return
 }
 
@@ -68,12 +69,10 @@ func ResolveKiroThinkingBudget(body map[string]any, headers map[string]string, m
 		return re
 	}
 
-	if headers != nil {
-		for k, v := range headers {
-			if strings.EqualFold(k, "anthropic-beta") && strings.Contains(strings.ToLower(v), "interleaved-thinking") {
-				budget := KiroThinkingBudgetDefault
-				return &budget
-			}
+	for k, v := range headers {
+		if strings.EqualFold(k, "anthropic-beta") && strings.Contains(strings.ToLower(v), "interleaved-thinking") {
+			budget := KiroThinkingBudgetDefault
+			return &budget
 		}
 	}
 
@@ -93,66 +92,70 @@ func ResolveKiroThinkingBudget(body map[string]any, headers map[string]string, m
 	return nil
 }
 
-func buildThinkingSystemPrefix(budget int) string {
-	if budget < 1 {
-		budget = 1
-	}
-	if budget > 32000 {
-		budget = 32000
-	}
-	return fmt.Sprintf("<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>%d</max_thinking_length>", budget)
-}
-
 func extractThinkingFromBody(body map[string]any) *int {
 	if body == nil {
 		return nil
 	}
+
 	if cfg, ok := body["output_config"].(map[string]any); ok {
 		if effort, ok := cfg["effort"].(string); ok {
 			level := strings.ToLower(effort)
 			if level == "none" || level == "off" || level == "disabled" {
 				return nil
 			}
+
 			budget := effortToBudget(level)
 			if budget != nil {
 				return budget
 			}
+
 			b := KiroThinkingBudgetDefault
+
 			return &b
 		}
 	}
+
 	if re, ok := body["reasoning_effort"].(string); ok {
 		level := strings.ToLower(re)
 		if level == "none" || level == "off" || level == "disabled" {
 			return nil
 		}
+
 		budget := effortToBudget(level)
 		if budget != nil {
 			return budget
 		}
+
 		b := KiroThinkingBudgetDefault
+
 		return &b
 	}
+
 	if reasoning, ok := body["reasoning"].(map[string]any); ok {
 		if effort, ok := reasoning["effort"].(string); ok {
 			level := strings.ToLower(effort)
 			if level == "none" || level == "off" || level == "disabled" {
 				return nil
 			}
+
 			budget := effortToBudget(level)
 			if budget != nil {
 				return budget
 			}
+
 			b := KiroThinkingBudgetDefault
+
 			return &b
 		}
 	}
+
 	if thinking, ok := body["thinking"].(map[string]any); ok {
 		if budgetTokens, ok := thinking["budget_tokens"].(float64); ok && budgetTokens > 0 {
 			b := int(budgetTokens)
 			return &b
 		}
 	}
+
 	return nil
 }
 
@@ -168,6 +171,7 @@ func effortToBudget(level string) *int {
 		b := 16000
 		return &b
 	}
+
 	return nil
 }
 
@@ -175,23 +179,28 @@ func containsThinkingModeTag(body map[string]any) bool {
 	if body == nil {
 		return false
 	}
+
 	messages, _ := body["messages"].([]any)
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
 		if !ok {
 			continue
 		}
+
 		role, _ := msg["role"].(string)
 		if role != "system" && role != "user" {
 			continue
 		}
+
 		if textContainsThinkingTag(msg["content"]) {
 			return true
 		}
 	}
+
 	if sys, ok := body["system"].(string); ok {
 		return textContainsThinkingTag(sys)
 	}
+
 	return false
 }
 
@@ -209,9 +218,11 @@ func textContainsThinkingTag(content any) bool {
 			}
 		}
 	}
+
 	if !strings.Contains(text, "<thinking_mode>") {
 		return false
 	}
+
 	return strings.Contains(text, "<thinking_mode>enabled</thinking_mode>") ||
 		strings.Contains(text, "<thinking_mode>interleaved</thinking_mode>")
 }
@@ -220,5 +231,6 @@ func ResolveDefaultProfileArn(authMethod string) string {
 	if authMethod == "google" || authMethod == "github" {
 		return KiroDefaultProfileArnSocial
 	}
+
 	return KiroDefaultProfileArnBuilderID
 }

@@ -12,6 +12,7 @@ func buildEventFrame(eventType string, payload any) []byte {
 	// headers: :event-type (string type 7)
 	name := []byte(":event-type")
 	val := []byte(eventType)
+
 	var hdr []byte
 	hdr = append(hdr, byte(len(name)))
 	hdr = append(hdr, name...)
@@ -35,13 +36,16 @@ func buildEventFrame(eventType string, payload any) []byte {
 
 func TestParseEventFrame(t *testing.T) {
 	frame := buildEventFrame("assistantResponseEvent", map[string]any{"content": "hello"})
+
 	headers, payload, ok := parseEventFrame(frame)
 	if !ok {
 		t.Fatal("parse failed")
 	}
+
 	if headers[":event-type"] != "assistantResponseEvent" {
 		t.Fatalf("event type: %q", headers[":event-type"])
 	}
+
 	if payload["content"] != "hello" {
 		t.Fatalf("payload: %#v", payload)
 	}
@@ -55,10 +59,12 @@ func TestTransformKiroEventStream(t *testing.T) {
 
 	rc := transformKiroEventStream(strings.NewReader(string(data)), "claude-sonnet-4")
 	defer rc.Close()
+
 	out, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	s := string(out)
 	if !strings.Contains(s, `"content":"hi "`) && !strings.Contains(s, `"content": "hi "`) {
 		// json marshal may not space
@@ -66,9 +72,11 @@ func TestTransformKiroEventStream(t *testing.T) {
 			t.Fatalf("missing content: %s", s)
 		}
 	}
+
 	if !strings.Contains(s, "[DONE]") {
 		t.Fatalf("missing DONE: %s", s)
 	}
+
 	if !strings.Contains(s, "chat.completion.chunk") {
 		t.Fatalf("missing chunk type: %s", s)
 	}

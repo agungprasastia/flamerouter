@@ -1,10 +1,14 @@
 package store
 
 type ProxyPool struct {
-	ID, Name, Type, Host string
-	Port                 int
-	Username, Password   string
-	IsActive             bool
+	ID       string
+	Name     string
+	Type     string
+	Host     string
+	Username string
+	Password string
+	Port     int
+	IsActive bool
 }
 
 func (s *Store) ListProxyPools() ([]ProxyPool, error) {
@@ -12,17 +16,23 @@ func (s *Store) ListProxyPools() ([]ProxyPool, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
+
 	var out []ProxyPool
+
 	for rows.Next() {
 		var p ProxyPool
+
 		var active int
 		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.Host, &p.Port, &p.Username, &p.Password, &active); err != nil {
 			return nil, err
 		}
+
 		p.IsActive = active != 0
 		out = append(out, p)
 	}
+
 	return out, rows.Err()
 }
 
@@ -32,6 +42,7 @@ func (s *Store) CreateProxyPool(name, typ, host string, port int, username, pass
 		`INSERT INTO proxy_pools (id,name,type,host,port,username,password) VALUES (?,?,?,?,?,?,?)`,
 		id, name, typ, host, port, username, password,
 	)
+
 	return id, err
 }
 
@@ -40,6 +51,7 @@ func (s *Store) UpdateProxyPool(id, name, typ, host string, port int, username, 
 		`UPDATE proxy_pools SET name=?,type=?,host=?,port=?,username=?,password=?,is_active=? WHERE id=?`,
 		name, typ, host, port, username, password, boolToInt(isActive), id,
 	)
+
 	return err
 }
 
@@ -50,14 +62,18 @@ func (s *Store) DeleteProxyPool(id string) error {
 
 func (s *Store) GetProxyPool(id string) (*ProxyPool, error) {
 	var p ProxyPool
+
 	var active int
+
 	err := s.db.QueryRow(
 		`SELECT id, name, type, host, port, username, password, is_active FROM proxy_pools WHERE id=?`, id,
 	).Scan(&p.ID, &p.Name, &p.Type, &p.Host, &p.Port, &p.Username, &p.Password, &active)
 	if err != nil {
 		return nil, err
 	}
+
 	p.IsActive = active != 0
+
 	return &p, nil
 }
 
@@ -71,5 +87,6 @@ func boolToInt(b bool) int {
 	if b {
 		return 1
 	}
+
 	return 0
 }

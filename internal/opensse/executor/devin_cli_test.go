@@ -3,19 +3,20 @@ package executor_test
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/opensse/executor"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-
-	"flamerouter/internal/opensse/executor"
 )
 
 func TestDevinCliExecutor_PromptBuilderAndExecutionMock(t *testing.T) {
 	tmpDir := t.TempDir()
+
 	var scriptName string
+
 	var scriptContent string
 
 	if runtime.GOOS == "windows" {
@@ -36,7 +37,7 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 `
 	}
 
-	if err := os.WriteFile(scriptName, []byte(scriptContent), 0755); err != nil {
+	if err := os.WriteFile(scriptName, []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -73,7 +74,9 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 
 func TestDevinCliExecutor_NonStreaming(t *testing.T) {
 	tmpDir := t.TempDir()
+
 	var scriptName string
+
 	var scriptContent string
 
 	if runtime.GOOS == "windows" {
@@ -94,7 +97,7 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 `
 	}
 
-	if err := os.WriteFile(scriptName, []byte(scriptContent), 0755); err != nil {
+	if err := os.WriteFile(scriptName, []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,11 +120,14 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {
 		t.Fatal(err)
 	}
+
 	choices, _ := respObj["choices"].([]any)
 	if len(choices) == 0 {
 		t.Fatal("empty choices")
 	}
+
 	first, _ := choices[0].(map[string]any)
+
 	msg, _ := first["message"].(map[string]any)
 	if msg["content"] != "Non-streaming result" {
 		t.Errorf("content = %v, want Non-streaming result", msg["content"])
