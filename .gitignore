@@ -34,5 +34,6 @@ Thumbs.db
 
 node_modules/
 .next/
+next-env.d.ts
 graphify-out/
 tsconfig.tsbuildinfo
