@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"flamerouter/internal/opensse/shared/clineauth"
 	"flamerouter/internal/translator/concerns"
 )
 
@@ -134,7 +135,13 @@ func applyHeaderHook(h http.Header, hook string, cred Credentials) {
 			h.Set("X-Msh-Device-Id", did)
 		}
 	case "clineHeaders":
-		h.Set("User-Agent", "Cline/1.0")
+		headers := clineauth.BuildClineHeaders(cred.APIKey, nil)
+		if cred.APIKey == "" && cred.AccessToken != "" {
+			headers = clineauth.BuildClineHeaders(cred.AccessToken, nil)
+		}
+		for k, v := range headers {
+			h.Set(k, v)
+		}
 	case "kilocodeOrg":
 		if org := strPSD(cred, "orgId"); org != "" {
 			h.Set("X-Kilocode-OrganizationID", org)

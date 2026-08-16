@@ -11,6 +11,7 @@ import (
 
 	"flamerouter/internal/auth"
 	"flamerouter/internal/config"
+	"flamerouter/internal/netutil"
 	"flamerouter/internal/oauth"
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
@@ -1048,9 +1049,5 @@ func (s *Server) authOK(r *http.Request) bool {
 }
 
 func machineID(salt string) string {
-	h := auth.HashKey(salt)
-	if len(h) > 16 {
-		return h[:16]
-	}
-	return h
+	return netutil.GetConsistentMachineID(salt)
 }

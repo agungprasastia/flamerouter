@@ -84,6 +84,6 @@ func (r *RoundRobin) Execute(ctx context.Context, w http.ResponseWriter, body []
 	models []string, st *store.Store, exec executor.Executor,
 	fb *fallback.Fallback, opts Options) error {
 
-	models = prepareModels(models, opts.ComboName, "round-robin", opts.StickyLimit, body)
+	models = PrepareModelsWithCapacityAdapter(models, opts.ComboName, "round-robin", opts.StickyLimit, body, st)
 	return runSequential(ctx, w, body, models, opts)
 }

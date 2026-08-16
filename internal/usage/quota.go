@@ -1,21 +1,138 @@
 package usage
 
-// Quota is a placeholder per-provider quota snapshot.
-type Quota struct {
-	Provider string `json:"provider"`
-	Used     int64  `json:"used"`
-	Limit    int64  `json:"limit"`
-	Unit     string `json:"unit"`
-	Note     string `json:"note,omitempty"`
+import (
+	"context"
+	"net/http"
+	"time"
+)
+
+type QuotaItem struct {
+	Used                float64 `json:"used"`
+	Total               float64 `json:"total"`
+	Remaining           float64 `json:"remaining,omitempty"`
+	RemainingPercentage float64 `json:"remainingPercentage"`
+	ResetAt             *string `json:"resetAt,omitempty"`
+	Unlimited           bool    `json:"unlimited,omitempty"`
+	DisplayName         string  `json:"displayName,omitempty"`
+	Unit                string  `json:"unit,omitempty"`
+	Recurring           *bool   `json:"recurring,omitempty"`
 }
 
-// FetchQuota returns a stub quota for provider. Live fetch deferred.
-func FetchQuota(provider string) Quota {
-	return Quota{
+type ResetCreditInfo struct {
+	AvailableCount int `json:"availableCount"`
+}
+
+type QuotaResult struct {
+	Provider           string               `json:"provider"`
+	Limit              int64                `json:"limit"`
+	Used               int64                `json:"used"`
+	Remaining          int64                `json:"remaining"`
+	ResetsAt           *string              `json:"resetsAt,omitempty"`
+	Plan               string               `json:"plan,omitempty"`
+	Message            string               `json:"message,omitempty"`
+	Quotas             map[string]QuotaItem `json:"quotas,omitempty"`
+	ResetCredits       *ResetCreditInfo     `json:"resetCredits,omitempty"`
+	LimitReached       *bool                `json:"limitReached,omitempty"`
+	ReviewLimitReached *bool                `json:"reviewLimitReached,omitempty"`
+	TotalUsagePct      float64              `json:"totalUsagePercentage,omitempty"`
+	IsQuotaExceeded    *bool                `json:"isQuotaExceeded,omitempty"`
+	Details            map[string]any       `json:"details,omitempty"`
+}
+
+type FetchOptions struct {
+	Provider             string
+	AccessToken          string
+	APIKey               string
+	BaseURL              string
+	ProviderSpecificData map[string]any
+	Force                bool
+	HTTPClient           *http.Client
+}
+
+type QuotaHandler func(ctx context.Context, opts FetchOptions) (*QuotaResult, error)
+
+var (
+	quotaHandlers   = map[string]QuotaHandler{}
+	quotaHTTPClient = &http.Client{
+		Timeout: 15 * time.Second,
+	}
+)
+
+func RegisterQuotaHandler(provider string, handler QuotaHandler) {
+	quotaHandlers[provider] = handler
+}
+
+func FetchProviderUsage(ctx context.Context, opts FetchOptions) *QuotaResult {
+	if opts.HTTPClient == nil {
+		opts.HTTPClient = quotaHTTPClient
+	}
+	handler, ok := quotaHandlers[opts.Provider]
+	if !ok {
+		return &QuotaResult{
+			Provider: opts.Provider,
+			Message:  "Usage API not implemented for " + opts.Provider,
+		}
+	}
+	res, err := handler(ctx, opts)
+	if err != nil {
+		return &QuotaResult{
+			Provider: opts.Provider,
+			Message:  err.Error(),
+		}
+	}
+	if res == nil {
+		return &QuotaResult{
+			Provider: opts.Provider,
+		}
+	}
+	if res.Provider == "" {
+		res.Provider = opts.Provider
+	}
+	computeTopLevelNormalized(res)
+	return res
+}
+
+func FetchQuota(provider string) QuotaResult {
+	res := FetchProviderUsage(context.Background(), FetchOptions{
 		Provider: provider,
-		Used:     0,
-		Limit:    0,
-		Unit:     "tokens",
-		Note:     "quota fetch not implemented",
+	})
+	if res == nil {
+		return QuotaResult{Provider: provider}
+	}
+	return *res
+}
+
+func computeTopLevelNormalized(res *QuotaResult) {
+	if len(res.Quotas) == 0 {
+		return
+	}
+	if res.Limit == 0 && res.Used == 0 && res.Remaining == 0 {
+		var chosen *QuotaItem
+		for _, k := range []string{"session", "Session (5h)", "On-demand", "Monthly included", "chat", "user", "Weekly", "Weekly (7d)"} {
+			if item, exists := res.Quotas[k]; exists {
+				chosen = &item
+				break
+			}
+		}
+		if chosen == nil {
+			for _, item := range res.Quotas {
+				chosen = &item
+				break
+			}
+		}
+		if chosen != nil {
+			res.Limit = int64(chosen.Total)
+			res.Used = int64(chosen.Used)
+			if chosen.Remaining > 0 {
+				res.Remaining = int64(chosen.Remaining)
+			} else if chosen.Total >= chosen.Used {
+				res.Remaining = int64(chosen.Total - chosen.Used)
+			}
+			if chosen.ResetAt != nil && res.ResetsAt == nil {
+				res.ResetsAt = chosen.ResetAt
+			}
+		}
 	}
 }
+
+

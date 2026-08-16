@@ -26,6 +26,7 @@ type RefreshManager struct {
 	refreshers map[string]Refresher
 	mu         sync.RWMutex
 	retryMap   sync.Map
+	dedup      *DedupGroup
 }
 
 type Refresher interface {
@@ -33,8 +34,13 @@ type Refresher interface {
 }
 
 func NewRefreshManager() *RefreshManager {
+	return NewRefreshManagerWithTTL(DefaultRefreshResultTTL)
+}
+
+func NewRefreshManagerWithTTL(ttl time.Duration) *RefreshManager {
 	rm := &RefreshManager{
 		refreshers: make(map[string]Refresher),
+		dedup:      NewDedupGroup(ttl),
 	}
 	rm.registerDefaults()
 	return rm
@@ -77,6 +83,13 @@ func (rm *RefreshManager) Refresh(ctx context.Context, provider string, refreshT
 
 	if !ok {
 		return nil, fmt.Errorf("no refresher for provider: %s", provider)
+	}
+
+	key := fmt.Sprintf("%s:%s", provider, refreshToken)
+	if rm.dedup != nil && refreshToken != "" {
+		return rm.dedup.Do(ctx, key, func() (*RefreshResult, error) {
+			return rm.refreshWithRetry(ctx, provider, refreshToken, refresher)
+		})
 	}
 
 	return rm.refreshWithRetry(ctx, provider, refreshToken, refresher)

@@ -2,6 +2,7 @@ package combo
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -19,7 +20,7 @@ func (f *FallbackStrategy) Execute(ctx context.Context, w http.ResponseWriter, b
 	models []string, st *store.Store, exec executor.Executor,
 	fb *fallback.Fallback, opts Options) error {
 
-	models = prepareModels(models, opts.ComboName, "fallback", opts.StickyLimit, body)
+	models = PrepareModelsWithCapacityAdapter(models, opts.ComboName, "fallback", opts.StickyLimit, body, st)
 	return runSequential(ctx, w, body, models, opts)
 }
 
@@ -55,5 +56,21 @@ func runSequential(ctx context.Context, w http.ResponseWriter, body []byte, mode
 
 func prepareModels(models []string, comboName, strategy string, sticky int, body []byte) []string {
 	rotated := GetRotatedModels(models, comboName, strategy, sticky)
+	return ReorderForCapabilities(rotated, body)
+}
+
+func PrepareModelsWithCapacityAdapter(models []string, comboName, strategy string, sticky int, body []byte, st *store.Store) []string {
+	if len(models) == 0 {
+		return models
+	}
+	var m map[string]any
+	if body != nil {
+		_ = json.Unmarshal(body, &m)
+	}
+	reqCaps := DetectRequiredCapabilities(m)
+	cfg := LoadCapacityAdapterConfig(st)
+	augmented := AugmentModelsWithCapacityAdapter(models, reqCaps, cfg)
+
+	rotated := GetRotatedModels(augmented, comboName, strategy, sticky)
 	return ReorderForCapabilities(rotated, body)
 }

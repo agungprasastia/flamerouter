@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
+	"time"
 
+	"flamerouter/internal/opensse/models"
 	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
 )
@@ -111,26 +113,65 @@ func buildModelList(st *store.Store, kindFilter []string, withCaps bool) []map[s
 		if alias == "" {
 			alias = p.ID
 		}
-		for _, m := range p.Models {
-			mk := modelKind(m)
-			if !kindIn(kindFilter, mk) && !(mk == "imageToText" && kindIn(kindFilter, llmKind)) {
-				continue
+
+		resolvedDynamic := false
+		if st != nil && kindIn(kindFilter, llmKind) {
+			if conns, err := st.ListActiveByProvider(p.ID); err == nil && len(conns) > 0 {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				dynModels, dynErr := models.DefaultEngine.ResolveModels(ctx, &conns[0])
+				cancel()
+				if dynErr == nil && len(dynModels) > 0 {
+					resolvedDynamic = true
+					for _, dm := range dynModels {
+						id := alias + "/" + dm.ID
+						if seen[id] {
+							continue
+						}
+						seen[id] = true
+						entry := map[string]any{
+							"id":       id,
+							"object":   "model",
+							"owned_by": alias,
+						}
+						if dm.Capabilities != nil {
+							entry["capabilities"] = dm.Capabilities
+						} else if withCaps || true {
+							entry["capabilities"] = provider.GetCapabilities(dm.ID)
+						}
+						if dm.ContextLength > 0 {
+							entry["context_length"] = dm.ContextLength
+						}
+						if dm.MaxOutputTokens > 0 {
+							entry["max_completion_tokens"] = dm.MaxOutputTokens
+						}
+						out = append(out, entry)
+					}
+				}
 			}
-			id := alias + "/" + m.ID
-			if seen[id] {
-				continue
+		}
+
+		if !resolvedDynamic {
+			for _, m := range p.Models {
+				mk := modelKind(m)
+				if !kindIn(kindFilter, mk) && !(mk == "imageToText" && kindIn(kindFilter, llmKind)) {
+					continue
+				}
+				id := alias + "/" + m.ID
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				entry := map[string]any{
+					"id":       id,
+					"object":   "model",
+					"owned_by": alias,
+				}
+				if withCaps || mk == llmKind {
+					caps := provider.GetCapabilities(m.ID)
+					entry["capabilities"] = caps
+				}
+				out = append(out, entry)
 			}
-			seen[id] = true
-			entry := map[string]any{
-				"id":       id,
-				"object":   "model",
-				"owned_by": alias,
-			}
-			if withCaps || mk == llmKind {
-				caps := provider.GetCapabilities(m.ID)
-				entry["capabilities"] = caps
-			}
-			out = append(out, entry)
 		}
 	}
 	if out == nil {
@@ -191,54 +232,4 @@ func kindIn(filter []string, k string) bool {
 		}
 	}
 	return false
-}
-
-func lookupModelInfo(fullID, requestedKind string) map[string]any {
-	slash := strings.Index(fullID, "/")
-	if slash < 0 {
-		return nil
-	}
-	alias := fullID[:slash]
-	modelID := fullID[slash+1:]
-
-	p := provider.GetProviderByAlias(alias)
-	if p == nil {
-		p = provider.GetProvider(alias)
-	}
-	if p == nil {
-		return nil
-	}
-	outAlias := p.Alias
-	if outAlias == "" {
-		outAlias = p.ID
-	}
-	for _, m := range p.Models {
-		if m.ID != modelID {
-			continue
-		}
-		mk := modelKind(m)
-		if requestedKind != "" && mk != requestedKind && requestedKind != mk {
-			// allow slug forms
-			if !(requestedKind == "image-to-text" && mk == "imageToText") {
-				continue
-			}
-		}
-		info := map[string]any{
-			"id":       outAlias + "/" + m.ID,
-			"name":     m.Name,
-			"kind":     mk,
-			"owned_by": outAlias,
-			"endpoint": kindEndpoint[mk],
-		}
-		if m.Params != nil {
-			info["params"] = m.Params
-		}
-		if m.Dimensions > 0 {
-			info["dimensions"] = m.Dimensions
-		}
-		caps := provider.GetCapabilities(m.ID)
-		info["capabilities"] = caps
-		return info
-	}
-	return nil
 }

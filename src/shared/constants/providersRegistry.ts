@@ -8744,6 +8744,65 @@ export const REGISTRY = [
         "name": "DeepSeek V4 Pro"
       }
     ]
+  },
+  {
+    "id": "trae",
+    "priority": 100,
+    "alias": "trae",
+    "display": {
+      "name": "Trae (ByteDance)",
+      "icon": "bot",
+      "color": "#0052FF",
+      "textIcon": "TR"
+    },
+    "category": "oauth",
+    "transport": {
+      "baseUrl": "https://api.trae.ai",
+      "headers": {}
+    },
+    "models": [
+      { "id": "claude-3-5-sonnet", "name": "Claude 3.5 Sonnet (Trae)" },
+      { "id": "gpt-4o", "name": "GPT-4o (Trae)" }
+    ]
+  },
+  {
+    "id": "windsurf",
+    "priority": 100,
+    "alias": "windsurf",
+    "display": {
+      "name": "Windsurf (Codeium)",
+      "icon": "sparkles",
+      "color": "#09B6A2",
+      "textIcon": "WS"
+    },
+    "category": "apikey",
+    "transport": {
+      "baseUrl": "https://server.codeium.com",
+      "headers": {}
+    },
+    "models": [
+      { "id": "swe-1-6-fast", "name": "SWE 1.6 Fast" },
+      { "id": "claude-opus-4-7-max", "name": "Claude Opus 4.7 Max" }
+    ]
+  },
+  {
+    "id": "devin-cli",
+    "priority": 100,
+    "alias": "devin-cli",
+    "display": {
+      "name": "Devin CLI (Cognition)",
+      "icon": "terminal",
+      "color": "#000000",
+      "textIcon": "DV"
+    },
+    "category": "free",
+    "transport": {
+      "baseUrl": "http://localhost:devin",
+      "headers": {}
+    },
+    "models": [
+      { "id": "devin", "name": "Devin" }
+    ]
   }
 ];
 export default REGISTRY;

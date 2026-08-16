@@ -34,10 +34,18 @@ export default function UsageChart({ period = "7d" }) {
       const res = await fetch(`/api/usage/chart?period=${period}`);
       if (res.ok) {
         const json = await res.json();
-        setData(json);
+        const chartList = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.data)
+            ? json.data
+            : [];
+        setData(chartList);
+      } else {
+        setData([]);
       }
     } catch (e) {
       console.error("Failed to fetch chart data:", e);
+      setData([]);
     } finally {
       setLoading(false);
     }
@@ -47,7 +55,7 @@ export default function UsageChart({ period = "7d" }) {
     fetchData();
   }, [fetchData]);
 
-  const hasData = data.some((d) => d.tokens > 0 || d.cost > 0);
+  const hasData = Array.isArray(data) && data.some((d) => d.tokens > 0 || d.cost > 0);
 
   return (
     <Card className="flex min-w-0 flex-col gap-5 p-4 sm:p-6">

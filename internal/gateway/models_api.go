@@ -1,10 +1,16 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"time"
 
+	"flamerouter/internal/opensse/handlers"
+	"flamerouter/internal/opensse/models"
 	"flamerouter/internal/provider"
 )
 
@@ -15,34 +21,63 @@ func (s *Server) handleAllModels(w http.ResponseWriter, r *http.Request) {
 	for _, d := range disabled {
 		disabledSet[d] = true
 	}
-	var models []map[string]any
+	var outModels []map[string]any
 	for _, p := range provider.ListProviders() {
 		alias := p.Alias
 		if alias == "" {
 			alias = p.ID
 		}
-		for _, m := range p.Models {
-			full := alias + "/" + m.ID
-			if disabledSet[full] || disabledSet[m.ID] {
-				continue
+
+		resolvedDynamic := false
+		if s.st != nil {
+			if conns, err := s.st.ListActiveByProvider(p.ID); err == nil && len(conns) > 0 {
+				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				dynModels, dynErr := models.DefaultEngine.ResolveModels(ctx, &conns[0])
+				cancel()
+				if dynErr == nil && len(dynModels) > 0 {
+					resolvedDynamic = true
+					for _, dm := range dynModels {
+						full := alias + "/" + dm.ID
+						if disabledSet[full] || disabledSet[dm.ID] {
+							continue
+						}
+						entry := map[string]any{
+							"provider":  p.ID,
+							"model":     dm.ID,
+							"name":      dm.Name,
+							"fullModel": full,
+							"alias":     firstNonEmpty(aliases[full], dm.ID),
+						}
+						outModels = append(outModels, entry)
+					}
+				}
 			}
-			entry := map[string]any{
-				"provider":  p.ID,
-				"model":     m.ID,
-				"name":      m.Name,
-				"fullModel": full,
-				"alias":     firstNonEmpty(aliases[full], m.ID),
+		}
+
+		if !resolvedDynamic {
+			for _, m := range p.Models {
+				full := alias + "/" + m.ID
+				if disabledSet[full] || disabledSet[m.ID] {
+					continue
+				}
+				entry := map[string]any{
+					"provider":  p.ID,
+					"model":     m.ID,
+					"name":      m.Name,
+					"fullModel": full,
+					"alias":     firstNonEmpty(aliases[full], m.ID),
+				}
+				if m.Kind != "" {
+					entry["kind"] = m.Kind
+				}
+				outModels = append(outModels, entry)
 			}
-			if m.Kind != "" {
-				entry["kind"] = m.Kind
-			}
-			models = append(models, entry)
 		}
 	}
-	if models == nil {
-		models = []map[string]any{}
+	if outModels == nil {
+		outModels = []map[string]any{}
 	}
-	writeJSONOK(w, map[string]any{"models": models})
+	writeJSONOK(w, map[string]any{"models": outModels})
 }
 
 func firstNonEmpty(a, b string) string {
@@ -61,78 +96,95 @@ func (s *Server) handleTestModel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Model required")
 		return
 	}
-	// ponytail: no live ping; registry presence only
-	ok := false
-	for _, p := range provider.ListProviders() {
-		alias := p.Alias
-		if alias == "" {
-			alias = p.ID
-		}
-		for _, m := range p.Models {
-			if m.ID == req.Model || alias+"/"+m.ID == req.Model || p.ID+"/"+m.ID == req.Model {
-				ok = true
-				break
-			}
-		}
-		if ok {
-			break
-		}
+	kind := strings.ToLower(strings.TrimSpace(req.Kind))
+	if kind == "" {
+		kind = "llm"
 	}
-	writeJSONOK(w, map[string]any{"ok": ok, "model": req.Model, "kind": req.Kind})
-}
 
-func (s *Server) handleListCustomModels(w http.ResponseWriter, r *http.Request) {
-	models, err := s.st.ListCustomModels()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db")
-		return
-	}
-	list := make([]map[string]any, 0, len(models))
-	for _, m := range models {
-		list = append(list, map[string]any{
-			"id": m.ID, "provider": m.Provider, "model_id": m.ModelID,
-			"display_name": m.DisplayName, "capabilities": m.Capabilities,
+	start := time.Now()
+	var probeBody []byte
+	switch kind {
+	case "embedding":
+		probeBody, _ = json.Marshal(map[string]any{
+			"model": req.Model,
+			"input": "test",
+		})
+	case "image":
+		probeBody, _ = json.Marshal(map[string]any{
+			"model":  req.Model,
+			"prompt": "test",
+		})
+	default:
+		probeBody, _ = json.Marshal(map[string]any{
+			"model":      req.Model,
+			"max_tokens": 1024,
+			"stream":     false,
+			"messages": []map[string]string{
+				{"role": "user", "content": "hi"},
+			},
 		})
 	}
-	writeJSONOK(w, map[string]any{"models": list})
-}
 
-func (s *Server) handleCreateCustomModel(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Provider     string `json:"provider"`
-		ProviderAlias string `json:"providerAlias"`
-		ModelID      string `json:"model_id"`
-		ID           string `json:"id"`
-		DisplayName  string `json:"display_name"`
-		Name         string `json:"name"`
-		Capabilities string `json:"capabilities"`
+	rec := httptest.NewRecorder()
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	var err error
+	switch kind {
+	case "embedding":
+		err = handlers.Embeddings(ctx, rec, probeBody, s.st, s.exec, s.fb)
+	case "image":
+		err = handlers.ImageGeneration(ctx, rec, probeBody, s.st, s.exec, s.fb)
+	default:
+		ts := handlers.LoadTokenSaverFromStore(s.st)
+		err = handlers.ChatWithOptions(ctx, rec, probeBody, s.st, s.exec, s.fb, handlers.ChatOptions{
+			TokenSaver: ts,
+			Usage:      usageBridge{s.tracker},
+		})
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json")
-		return
+
+	latencyMs := time.Since(start).Milliseconds()
+	statusCode := rec.Code
+	if statusCode == 0 {
+		statusCode = http.StatusOK
 	}
-	prov := req.Provider
-	if prov == "" {
-		prov = req.ProviderAlias
-	}
-	mid := req.ModelID
-	if mid == "" {
-		mid = req.ID
-	}
-	if prov == "" || mid == "" {
-		writeErr(w, http.StatusBadRequest, "provider and model id required")
-		return
-	}
-	name := req.DisplayName
-	if name == "" {
-		name = req.Name
-	}
-	id, err := s.st.CreateCustomModel(prov, mid, name, req.Capabilities)
+
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db")
+		writeJSONOK(w, map[string]any{
+			"ok":        false,
+			"model":     req.Model,
+			"kind":      kind,
+			"error":     err.Error(),
+			"latencyMs": latencyMs,
+			"status":    statusCode,
+		})
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "id": id})
+
+	if statusCode >= 400 {
+		raw := strings.TrimSpace(rec.Body.String())
+		errMsg := fmt.Sprintf("HTTP %d", statusCode)
+		if raw != "" {
+			errMsg = fmt.Sprintf("HTTP %d: %s", statusCode, raw)
+		}
+		writeJSONOK(w, map[string]any{
+			"ok":        false,
+			"model":     req.Model,
+			"kind":      kind,
+			"error":     errMsg,
+			"latencyMs": latencyMs,
+			"status":    statusCode,
+		})
+		return
+	}
+
+	writeJSONOK(w, map[string]any{
+		"ok":        true,
+		"model":     req.Model,
+		"kind":      kind,
+		"latencyMs": latencyMs,
+		"status":    statusCode,
+	})
 }
 
 func (s *Server) handleListDisabledModels(w http.ResponseWriter, r *http.Request) {

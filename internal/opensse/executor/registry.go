@@ -36,6 +36,14 @@ func GetExecutor(provider string) Executor {
 		"gcli": "grok-cli",
 		"gb":   "grok-cli",
 		"mmf":  "mimo-free",
+		"qd":   "qoder",
+		"xmtp": "xiaomi-tokenplan",
+		"cb":   "codebuddy-cn",
+		"zd":   "zed",
+		"pplx": "perplexity-web",
+		"tr":   "trae",
+		"ws":   "windsurf",
+		"dv":   "devin-cli",
 	}
 	if alias, ok := aliases[provider]; ok {
 		if e, ok := specialized[alias]; ok {

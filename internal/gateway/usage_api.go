@@ -163,12 +163,29 @@ func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request)
 			"promptTokens": d.PromptTokens, "completionTokens": d.CompletionTokens,
 		})
 	}
-	writeJSONOK(w, map[string]any{
-		"connectionId": connID,
-		"promptTokens": prompt, "completionTokens": completion,
-		"data": out,
-		"quota": usage.FetchQuota(""),
+
+	conn, _ := s.st.GetConnection(connID)
+	if conn == nil {
+		writeJSONOK(w, map[string]any{
+			"connectionId": connID,
+			"promptTokens": prompt, "completionTokens": completion,
+			"data":  out,
+			"quota": usage.FetchQuota(""),
+		})
+		return
+	}
+
+	force := r.URL.Query().Get("force") == "1"
+	usageRes := usage.FetchProviderUsage(r.Context(), usage.FetchOptions{
+		Provider:             conn.Provider,
+		AccessToken:          conn.AccessToken,
+		APIKey:               conn.APIKey,
+		BaseURL:              conn.BaseURL,
+		ProviderSpecificData: conn.ProviderSpecificData,
+		Force:                force,
 	})
+
+	writeJSONOK(w, usageRes)
 }
 
 func usageRange(r *http.Request) (from, to string) {

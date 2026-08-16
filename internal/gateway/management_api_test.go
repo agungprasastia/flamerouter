@@ -9,6 +9,7 @@ import (
 
 	"flamerouter/internal/auth"
 	"flamerouter/internal/config"
+	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/store"
 )
 
@@ -32,6 +33,7 @@ func testServer(t *testing.T) (http.Handler, *store.Store) {
 		cfg:     cfg,
 		st:      st,
 		keys:    keys,
+		fb:      fallback.New(st),
 		jwt:     auth.NewJWTManager(cfg.JWTSecret),
 		session: auth.NewSessionHandler(auth.NewJWTManager(cfg.JWTSecret), st, "123456"),
 		mux:     http.NewServeMux(),
@@ -126,6 +128,19 @@ func TestSettingsAndProxyPoolsAPI(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("custom models %d", rr.Code)
+	}
+
+	body = bytes.NewBufferString(`{"model":"oc/deepseek-v4-flash-free"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/models/test", body)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("model test post %d %s", rr.Code, rr.Body.String())
+	}
+	var testRes map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &testRes)
+	if testRes["ok"] != true {
+		t.Fatalf("expected test ok=true, got %+v", testRes)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/init", nil)

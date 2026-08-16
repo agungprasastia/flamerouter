@@ -12,6 +12,7 @@ func TestProviderRegistryModelsParity(t *testing.T) {
 		"openai", "claude", "codex", "cursor", "kiro", "antigravity",
 		"github", "gemini", "deepseek", "groq", "openrouter", "xai",
 		"mistral", "alicode", "cohere", "fireworks", "together", "ollama",
+		"trae", "windsurf", "devin-cli",
 	}
 	for _, pid := range expectedProviders {
 		p := provider.GetProvider(pid)
@@ -35,6 +36,9 @@ func TestProviderRegistryModelsParity(t *testing.T) {
 		"ds":   "deepseek",
 		"gc":   "gemini-cli",
 		"gcli": "grok-cli",
+		"tr":   "trae",
+		"ws":   "windsurf",
+		"dv":   "devin-cli",
 	}
 	for alias, wantID := range aliasTests {
 		p := provider.GetProviderByAlias(alias)

@@ -125,9 +125,20 @@ func ChatWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st
 		}
 	}
 
-	combo, _ := st.GetComboByName(modelStr)
-	if combo != nil && len(combo.Models) > 0 {
-		return handleCombo(ctx, w, body, combo, st, exec, fb, streamReq, sourceFormat, ts)
+	cDef, _ := st.GetComboByName(modelStr)
+	if cDef != nil && len(cDef.Models) > 0 {
+		return handleCombo(ctx, w, body, cDef, st, exec, fb, streamReq, sourceFormat, ts)
+	}
+
+	capConfig := combo.LoadCapacityAdapterConfig(st)
+	reqCaps := combo.DetectRequiredCapabilities(m)
+	soloAugmented := combo.AugmentModelsWithCapacityAdapter([]string{modelStr}, reqCaps, capConfig)
+	if len(soloAugmented) > 1 {
+		synthCombo := &store.Combo{
+			Name:   modelStr,
+			Models: soloAugmented,
+		}
+		return handleCombo(ctx, w, body, synthCombo, st, exec, fb, streamReq, sourceFormat, ts)
 	}
 
 	aliases, _ := st.ListAliases()
@@ -203,6 +214,20 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 
 	for {
 		conn, err := fb.SelectAccountWithStrategy(providerID, strategy, stickyLimit, excludeIDs)
+		if conn == nil {
+			pDef := provider.GetProvider(providerID)
+			if pDef == nil {
+				pDef = provider.GetProviderByAlias(providerID)
+			}
+			if pDef != nil && (pDef.Category == "free" || pDef.HasFree || providerID == "opencode" || providerID == "mimo-free") && len(excludeIDs) == 0 {
+				conn = &store.Connection{
+					ID:       "synthetic-" + providerID,
+					Provider: providerID,
+					IsActive: true,
+					BaseURL:  pDef.Transport.BaseURL,
+				}
+			}
+		}
 		if conn == nil {
 			if len(excludeIDs) == 0 {
 				http.Error(w, `{"error":"no active connection for provider `+providerID+`"}`, http.StatusBadRequest)
