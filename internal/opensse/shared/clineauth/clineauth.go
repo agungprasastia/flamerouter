@@ -1,3 +1,4 @@
+// Package clineauth provides authentication headers and token normalization for Cline integration.
 package clineauth
 
 import (

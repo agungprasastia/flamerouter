@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -161,7 +162,10 @@ func TestFusion_NoJudgeReturnsFirstPanel(t *testing.T) {
 }
 
 func TestFusion_WithJudgeCallsJudge(t *testing.T) {
-	var models []string
+	var (
+		mu     sync.Mutex
+		models []string
+	)
 
 	f := &Fusion{}
 	rr := httptest.NewRecorder()
@@ -170,7 +174,10 @@ func TestFusion_WithJudgeCallsJudge(t *testing.T) {
 		Stream:     false,
 		JudgeModel: "p/judge",
 		SingleModel: func(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, stream bool) error {
+			mu.Lock()
 			models = append(models, modelStr)
+			mu.Unlock()
+
 			resp, _ := json.Marshal(map[string]any{
 				"choices": []any{map[string]any{
 					"message": map[string]any{"role": "assistant", "content": "text-" + modelStr},
@@ -189,14 +196,17 @@ func TestFusion_WithJudgeCallsJudge(t *testing.T) {
 
 	foundJudge := false
 
+	mu.Lock()
 	for _, m := range models {
 		if m == "p/judge" {
 			foundJudge = true
 		}
 	}
+	recordedModels := append([]string(nil), models...)
+	mu.Unlock()
 
 	if !foundJudge {
-		t.Fatalf("expected judge model call, models=%v", models)
+		t.Fatalf("expected judge model call, models=%v", recordedModels)
 	}
 }
 

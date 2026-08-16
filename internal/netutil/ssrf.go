@@ -1,7 +1,8 @@
+// Package netutil provides common network and HTTP utilities.
 package netutil
 
 import (
-	"fmt"
+	"errors"
 	"net"
 	"net/url"
 	"strings"
@@ -12,26 +13,27 @@ var blockedHostnames = map[string]bool{
 }
 var blockedSuffixes = []string{".internal", ".local", ".localhost"}
 
+// AssertPublicURL validates that the raw URL is well-formed and does not target internal addresses.
 func AssertPublicURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("Blocked URL: invalid")
+		return errors.New("blocked URL: invalid")
 	}
 
 	host := strings.ToLower(u.Hostname())
 	if blockedHostnames[host] {
-		return fmt.Errorf("Blocked URL: internal host")
+		return errors.New("blocked URL: internal host")
 	}
 
 	for _, s := range blockedSuffixes {
 		if strings.HasSuffix(host, s) {
-			return fmt.Errorf("Blocked URL: internal host")
+			return errors.New("blocked URL: internal host")
 		}
 	}
 
 	if ip := net.ParseIP(host); ip != nil {
 		if isBlockedIP(ip) {
-			return fmt.Errorf("Blocked URL: private IP")
+			return errors.New("blocked URL: private IP")
 		}
 
 		return nil

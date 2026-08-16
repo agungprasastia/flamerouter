@@ -9,23 +9,8 @@ import (
 	"testing"
 )
 
-func TestFakeExecutorCapturesCallAndReturnsResponse(t *testing.T) {
-	responseHeader := http.Header{"X-Test": {"source"}}
-	fake := NewFakeExecutor(Response{
-		StatusCode: 201,
-		Header:     responseHeader,
-		Body:       []byte(`{"ok":true}`),
-	})
-	requestBody := []byte(`{"input":"test"}`)
-
-	result, err := fake.Execute(context.Background(), executor.Credentials{
-		APIKey:               "k",
-		ProviderSpecificData: map[string]any{"region": "test"},
-	}, "p/model", requestBody, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer result.Body.Close()
+func verifyHeaders(t *testing.T, result *executor.Result, responseHeader http.Header) {
+	t.Helper()
 
 	if result.StatusCode != 201 {
 		t.Fatalf("status = %d", result.StatusCode)
@@ -40,17 +25,11 @@ func TestFakeExecutorCapturesCallAndReturnsResponse(t *testing.T) {
 	if got := responseHeader.Get("X-Test"); got != "source" {
 		t.Fatalf("source header = %q", got)
 	}
+}
 
-	responseBody, err := io.ReadAll(result.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+func verifyCalls(t *testing.T, calls []Call) {
+	t.Helper()
 
-	if got := string(responseBody); got != `{"ok":true}` {
-		t.Fatalf("body = %q", got)
-	}
-
-	calls := fake.Calls()
 	if len(calls) != 1 {
 		t.Fatalf("calls = %d", len(calls))
 	}
@@ -77,12 +56,68 @@ func TestFakeExecutorCapturesCallAndReturnsResponse(t *testing.T) {
 	}
 }
 
+func TestFakeExecutorCapturesCallAndReturnsResponse(t *testing.T) {
+	responseHeader := http.Header{"X-Test": {"source"}}
+	fake := NewFakeExecutor(Response{
+		StatusCode: 201,
+		Header:     responseHeader,
+		Body:       []byte(`{"ok":true}`),
+		StreamBody: nil,
+	})
+	requestBody := []byte(`{"input":"test"}`)
+
+	result, err := fake.Execute(context.Background(), executor.Credentials{
+		APIKey:               "k",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProjectID:            "",
+		ProviderSpecificData: map[string]any{"region": "test"},
+	}, "p/model", requestBody, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if closeErr := result.Body.Close(); closeErr != nil {
+			t.Logf("close error: %v", closeErr)
+		}
+	})
+
+	verifyHeaders(t, result, responseHeader)
+
+	responseBody, err := io.ReadAll(result.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := string(responseBody); got != `{"ok":true}` {
+		t.Fatalf("body = %q", got)
+	}
+
+	verifyCalls(t, fake.Calls())
+}
+
 func TestFakeExecutorReturnsQueuedErrorBeforeResponse(t *testing.T) {
 	queuedError := errors.New("transport failed")
-	fake := NewFakeExecutor(Response{StatusCode: 200, StreamBody: []byte("stream")})
+	fake := NewFakeExecutor(Response{
+		StatusCode: 200,
+		Header:     nil,
+		Body:       nil,
+		StreamBody: []byte("stream"),
+	})
 	fake.QueueError(queuedError)
 
-	result, err := fake.Execute(context.Background(), executor.Credentials{}, "p/model", nil, true)
+	emptyCreds := executor.Credentials{
+		APIKey:               "",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProjectID:            "",
+		ProviderSpecificData: nil,
+	}
+
+	result, err := fake.Execute(context.Background(), emptyCreds, "p/model", nil, true)
 	if !errors.Is(err, queuedError) {
 		t.Fatalf("error = %v", err)
 	}
@@ -91,12 +126,16 @@ func TestFakeExecutorReturnsQueuedErrorBeforeResponse(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 
-	result, err = fake.Execute(context.Background(), executor.Credentials{}, "p/model", nil, true)
+	result, err = fake.Execute(context.Background(), emptyCreds, "p/model", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	defer result.Body.Close()
+	t.Cleanup(func() {
+		if closeErr := result.Body.Close(); closeErr != nil {
+			t.Logf("close error: %v", closeErr)
+		}
+	})
 
 	responseBody, err := io.ReadAll(result.Body)
 	if err != nil {

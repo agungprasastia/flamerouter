@@ -1,3 +1,4 @@
+// Package machineid retrieves consistent hardware-bound identifiers across platforms.
 package machineid
 
 import (
@@ -5,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -22,7 +24,9 @@ var (
 // Result is cached per salt.
 func GetConsistentMachineID(salt string) string {
 	if val, ok := saltCache.Load(salt); ok {
-		return val.(string)
+		if s, okStr := val.(string); okStr {
+			return s
+		}
 	}
 
 	rawID := getRawMachineID()
@@ -69,17 +73,21 @@ func readWindowsMachineID() string {
 	cmd := exec.Command("reg", "query", `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid")
 
 	out, err := cmd.Output()
-	if err == nil {
-		lines := strings.Split(string(out), "\n")
-		for _, line := range lines {
-			if strings.Contains(line, "MachineGuid") {
-				fields := strings.Fields(line)
-				if len(fields) >= 3 {
-					val := strings.TrimSpace(fields[len(fields)-1])
-					if val != "" {
-						return val
-					}
-				}
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if !strings.Contains(line, "MachineGuid") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) >= 3 {
+			val := strings.TrimSpace(fields[len(fields)-1])
+			if val != "" {
+				return val
 			}
 		}
 	}
@@ -92,17 +100,21 @@ func readDarwinMachineID() string {
 	cmd := exec.Command("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
 
 	out, err := cmd.Output()
-	if err == nil {
-		lines := strings.Split(string(out), "\n")
-		for _, line := range lines {
-			if strings.Contains(line, "IOPlatformUUID") {
-				parts := strings.Split(line, "=")
-				if len(parts) >= 2 {
-					val := strings.Trim(strings.TrimSpace(parts[1]), `"`)
-					if val != "" {
-						return val
-					}
-				}
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if !strings.Contains(line, "IOPlatformUUID") {
+			continue
+		}
+
+		parts := strings.Split(line, "=")
+		if len(parts) >= 2 {
+			val := strings.Trim(strings.TrimSpace(parts[1]), `"`)
+			if val != "" {
+				return val
 			}
 		}
 	}
@@ -117,7 +129,8 @@ func readLinuxMachineID() string {
 		"/sys/class/dmi/id/product_uuid",
 	}
 	for _, p := range paths {
-		if data, err := os.ReadFile(p); err == nil {
+		cleanPath := filepath.Clean(p)
+		if data, err := os.ReadFile(cleanPath); err == nil {
 			val := strings.TrimSpace(string(data))
 			if val != "" {
 				return val
@@ -134,7 +147,8 @@ func readBSDMachineID() string {
 		"/var/db/hostid",
 	}
 	for _, p := range paths {
-		if data, err := os.ReadFile(p); err == nil {
+		cleanPath := filepath.Clean(p)
+		if data, err := os.ReadFile(cleanPath); err == nil {
 			val := strings.TrimSpace(string(data))
 			if val != "" {
 				return val

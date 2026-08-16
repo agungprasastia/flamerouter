@@ -1,3 +1,4 @@
+// Package netutil provides common network and HTTP utilities.
 package netutil
 
 import (

@@ -1,3 +1,4 @@
+// Package testutil provides mock executors and test fixtures for opensse packages.
 package testutil
 
 import (
@@ -10,6 +11,7 @@ import (
 	"sync"
 )
 
+// Response represents a queued mock response in FakeExecutor.
 type Response struct {
 	Header     http.Header
 	Body       []byte
@@ -17,6 +19,7 @@ type Response struct {
 	StatusCode int
 }
 
+// Call represents a recorded execution invocation in FakeExecutor.
 type Call struct {
 	Credentials executor.Credentials
 	Model       string
@@ -24,6 +27,7 @@ type Call struct {
 	Stream      bool
 }
 
+// FakeExecutor is a mock implementation of executor.Executor for testing.
 type FakeExecutor struct {
 	responses []Response
 	errors    []error
@@ -33,22 +37,31 @@ type FakeExecutor struct {
 
 var _ executor.Executor = (*FakeExecutor)(nil)
 
+// NewFakeExecutor constructs a FakeExecutor with the given initial queued responses.
 func NewFakeExecutor(responses ...Response) *FakeExecutor {
-	return &FakeExecutor{responses: append([]Response(nil), responses...)}
+	return &FakeExecutor{
+		responses: append([]Response(nil), responses...),
+		errors:    nil,
+		calls:     nil,
+		mu:        sync.Mutex{},
+	}
 }
 
+// QueueResponse adds a response to the queue.
 func (f *FakeExecutor) QueueResponse(response Response) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.responses = append(f.responses, response)
 }
 
+// QueueError adds an error to the error queue.
 func (f *FakeExecutor) QueueError(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.errors = append(f.errors, err)
 }
 
+// Calls returns a copy of all recorded calls.
 func (f *FakeExecutor) Calls() []Call {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -66,6 +79,7 @@ func (f *FakeExecutor) Calls() []Call {
 	return calls
 }
 
+// Execute mocks execution by recording the call and returning queued response or error.
 func (f *FakeExecutor) Execute(_ context.Context, credentials executor.Credentials, model string, body []byte, stream bool) (*executor.Result, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -83,7 +97,12 @@ func (f *FakeExecutor) Execute(_ context.Context, credentials executor.Credentia
 		return nil, err
 	}
 
-	response := Response{}
+	response := Response{
+		Header:     nil,
+		Body:       nil,
+		StreamBody: nil,
+		StatusCode: 0,
+	}
 	if len(f.responses) > 0 {
 		response = f.responses[0]
 		f.responses = f.responses[1:]

@@ -86,6 +86,43 @@ func TestGetClineAuthorizationHeader(t *testing.T) {
 	}
 }
 
+func testDefaults(t *testing.T, plat string) {
+	t.Helper()
+
+	h := BuildClineHeaders("", nil)
+	if h["HTTP-Referer"] != "https://cline.bot" {
+		t.Fatalf("HTTP-Referer = %q", h["HTTP-Referer"])
+	}
+
+	if h["X-Title"] != "Cline" {
+		t.Fatalf("X-Title = %q", h["X-Title"])
+	}
+
+	if h["User-Agent"] != "Cline/1.0" {
+		t.Fatalf("User-Agent = %q", h["User-Agent"])
+	}
+
+	if h["X-PLATFORM"] != plat {
+		t.Fatalf("X-PLATFORM = %q, want %q", h["X-PLATFORM"], plat)
+	}
+
+	if h["X-CLIENT-TYPE"] != "vscode" {
+		t.Fatalf("X-CLIENT-TYPE = %q", h["X-CLIENT-TYPE"])
+	}
+
+	if h["X-CORE-VERSION"] != "3.0.0" {
+		t.Fatalf("X-CORE-VERSION = %q", h["X-CORE-VERSION"])
+	}
+
+	if h["X-IS-MULTIROOT"] != "false" {
+		t.Fatalf("X-IS-MULTIROOT = %q", h["X-IS-MULTIROOT"])
+	}
+
+	if _, ok := h["Authorization"]; ok {
+		t.Fatalf("unexpected Authorization header")
+	}
+}
+
 func TestBuildClineHeaders(t *testing.T) {
 	plat := runtime.GOOS
 	if plat == "darwin" {
@@ -93,38 +130,7 @@ func TestBuildClineHeaders(t *testing.T) {
 	}
 
 	t.Run("defaults without rawHeaders and token", func(t *testing.T) {
-		h := BuildClineHeaders("", nil)
-		if h["HTTP-Referer"] != "https://cline.bot" {
-			t.Fatalf("HTTP-Referer = %q", h["HTTP-Referer"])
-		}
-
-		if h["X-Title"] != "Cline" {
-			t.Fatalf("X-Title = %q", h["X-Title"])
-		}
-
-		if h["User-Agent"] != "Cline/1.0" {
-			t.Fatalf("User-Agent = %q", h["User-Agent"])
-		}
-
-		if h["X-PLATFORM"] != plat {
-			t.Fatalf("X-PLATFORM = %q, want %q", h["X-PLATFORM"], plat)
-		}
-
-		if h["X-CLIENT-TYPE"] != "vscode" {
-			t.Fatalf("X-CLIENT-TYPE = %q", h["X-CLIENT-TYPE"])
-		}
-
-		if h["X-CORE-VERSION"] != "3.0.0" {
-			t.Fatalf("X-CORE-VERSION = %q", h["X-CORE-VERSION"])
-		}
-
-		if h["X-IS-MULTIROOT"] != "false" {
-			t.Fatalf("X-IS-MULTIROOT = %q", h["X-IS-MULTIROOT"])
-		}
-
-		if _, ok := h["Authorization"]; ok {
-			t.Fatalf("unexpected Authorization header")
-		}
+		testDefaults(t, plat)
 	})
 
 	t.Run("with token", func(t *testing.T) {

@@ -1,3 +1,4 @@
+// Package stream provides server-sent events (SSE) streaming utilities.
 package stream
 
 import (
@@ -5,6 +6,7 @@ import (
 	"net/http"
 )
 
+// WriteSSEHeaders writes the standard headers required for Server-Sent Events streams.
 func WriteSSEHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
@@ -12,8 +14,13 @@ func WriteSSEHeaders(w http.ResponseWriter) {
 	h.Set("Connection", "keep-alive")
 }
 
+// Pipe reads from src and writes to dst while flushing each chunk if supported.
 func Pipe(dst http.ResponseWriter, src io.Reader) error {
-	flusher, _ := dst.(http.Flusher)
+	flusher, ok := dst.(http.Flusher)
+	if !ok {
+		flusher = nil
+	}
+
 	buf := make([]byte, 32*1024)
 
 	for {

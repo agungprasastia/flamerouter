@@ -1,3 +1,4 @@
+// Package netutil provides common network and HTTP utilities.
 package netutil
 
 import (
@@ -11,15 +12,19 @@ func DoHTTP(client *http.Client, req *http.Request) (*http.Response, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil {
 		return nil, errors.New("http: nil response returned")
 	}
+
 	if resp.Body == nil {
 		return nil, errors.New("http: nil response body returned")
 	}
+
 	return resp, nil
 }
