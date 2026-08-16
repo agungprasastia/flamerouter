@@ -1888,7 +1888,8 @@ var Registry = []Provider{
 	{
 		ID:       "opencode",
 		Alias:    "oc",
-		Category: "apikey",
+		Category: "free",
+		HasFree:  true,
 		Display: Display{
 			Name:         "OpenCode Free",
 			Icon:         "terminal",

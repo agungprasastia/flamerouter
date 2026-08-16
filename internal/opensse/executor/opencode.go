@@ -15,8 +15,8 @@ func init() {
 
 type OpenCodeExecutor struct{ Base }
 
-func ocRandomHex(n int) string {
-	b := make([]byte, n)
+func ocRandomUUID() string {
+	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
@@ -54,8 +54,8 @@ func (e *OpenCodeExecutor) Execute(ctx context.Context, cred Credentials, model 
 	h.Set("Authorization", "Bearer "+tok)
 	h.Set("User-Agent", "opencode")
 	h.Set("x-opencode-client", "desktop")
-	h.Set("x-opencode-session", "ses_"+ocRandomHex(16))
-	h.Set("x-opencode-request", "msg_"+ocRandomHex(16))
+	h.Set("x-opencode-session", "ses_"+ocRandomUUID())
+	h.Set("x-opencode-request", "msg_"+ocRandomUUID())
 	h.Set("x-opencode-project", "global")
 
 	if stream {

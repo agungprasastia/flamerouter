@@ -29,11 +29,18 @@ if (!jwtSecret) {
 // Clean up any stale process before starting
 if (process.platform === "win32") {
   try {
-    execSync("taskkill /F /IM gateway.exe /IM flamerouter.exe", { stdio: "ignore" });
+    execSync("taskkill /F /IM gateway.exe /IM flamerouter.exe /IM main.exe /IM air.exe", { stdio: "ignore" });
   } catch (_) {}
 }
 
 console.log("\x1b[36m%s\x1b[0m", `[FlameRouter] Starting Go Gateway on port ${backendPort}...`);
+
+// Check if air is installed for hot reload
+let useAir = false;
+try {
+  execSync("air -v", { stdio: "ignore" });
+  useAir = true;
+} catch (_) {}
 
 // 1. Spawn Go backend process
 const sharedEnv = {
@@ -42,11 +49,21 @@ const sharedEnv = {
   JWT_SECRET: jwtSecret,
 };
 const goEnv = { ...sharedEnv, PORT: backendPort };
-const goProc = spawn("go", ["run", "./cmd/flamerouter", "serve"], {
-  stdio: ["inherit", "inherit", "inherit"],
-  env: goEnv,
-  shell: true,
-});
+const goProc = useAir
+  ? spawn("air", ["-c", ".air.toml"], {
+      stdio: ["inherit", "inherit", "inherit"],
+      env: goEnv,
+      shell: true,
+    })
+  : spawn("go", ["run", "./cmd/flamerouter", "serve"], {
+      stdio: ["inherit", "inherit", "inherit"],
+      env: goEnv,
+      shell: true,
+    });
+
+if (useAir) {
+  console.log("\x1b[35m%s\x1b[0m", "[FlameRouter] Air hot-reload enabled for Go backend.");
+}
 
 function cleanup() {
   if (goProc && !goProc.killed) {

@@ -130,7 +130,7 @@ func TestSettingsAndProxyPoolsAPI(t *testing.T) {
 		t.Fatalf("custom models %d", rr.Code)
 	}
 
-	body = bytes.NewBufferString(`{"model":"oc/deepseek-v4-flash-free"}`)
+	body = bytes.NewBufferString(`{"model":"oc/laguna-s-2.1-free"}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/models/test", body)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

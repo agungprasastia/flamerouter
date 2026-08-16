@@ -292,6 +292,8 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 		ex := exec
 		if ex == nil {
 			ex = executor.GetExecutor(providerID)
+		} else if executor.HasSpecializedExecutor(providerID) {
+			ex = executor.GetExecutor(providerID)
 		}
 		res, err := ex.Execute(ctx, cred, modelName, payload, streamReq)
 		if err != nil {
@@ -447,6 +449,8 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 
 		ex := exec
 		if ex == nil {
+			ex = executor.GetExecutor(providerID)
+		} else if executor.HasSpecializedExecutor(providerID) {
 			ex = executor.GetExecutor(providerID)
 		}
 		res, err := ex.Execute(ctx, cred, modelName, payload, true)
