@@ -1281,16 +1281,23 @@ var Registry = []Provider{
 	},
 }
 
-var providerMap = map[string]*Provider{}
+var (
+	providerMap      = map[string]*Provider{}
+	providerAliasMap = map[string]string{}
+)
 
 func init() {
 	for i := range Registry {
 		p := &Registry[i]
 		providerMap[p.ID] = p
+		if p.Alias != "" {
+			providerAliasMap[p.Alias] = p.ID
+		}
 		for _, m := range p.Models {
 			_ = m
 		}
 	}
+	providerAliasMap["oa"] = "openai"
 }
 
 func GetProvider(id string) *Provider {
@@ -1301,12 +1308,33 @@ func GetProvider(id string) *Provider {
 }
 
 func GetProviderByAlias(alias string) *Provider {
+	if id, ok := providerAliasMap[alias]; ok {
+		return GetProvider(id)
+	}
 	for _, p := range Registry {
 		if p.Alias == alias {
 			return &p
 		}
 	}
 	return nil
+}
+
+func ResolveAlias(aliasOrID string) string {
+	if id, ok := providerAliasMap[aliasOrID]; ok {
+		return id
+	}
+	if p := GetProvider(aliasOrID); p != nil {
+		return p.ID
+	}
+	return aliasOrID
+}
+
+func ProviderAliases() map[string]string {
+	res := make(map[string]string, len(providerAliasMap))
+	for k, v := range providerAliasMap {
+		res[k] = v
+	}
+	return res
 }
 
 func ListProviders() []Provider {

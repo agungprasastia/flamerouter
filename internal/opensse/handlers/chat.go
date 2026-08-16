@@ -19,6 +19,7 @@ import (
 	"flamerouter/internal/opensse/model"
 	"flamerouter/internal/opensse/rtk"
 	"flamerouter/internal/opensse/stream"
+	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
 	"flamerouter/internal/tokenrefresh"
 	"flamerouter/internal/translator"
@@ -142,7 +143,7 @@ func ChatWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st
 		http.Error(w, `{"error":"model must be provider/model format"}`, http.StatusBadRequest)
 		return nil
 	}
-	providerID := model.ResolveProviderAlias(mref.Provider, nil)
+	providerID := model.ResolveProviderAlias(mref.Provider, provider.ProviderAliases())
 
 	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, opts.AccountStrategy, opts.StickyLimit, opts.Usage)
 }
@@ -177,7 +178,7 @@ func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, mode
 	if mref.Provider == "" {
 		return fmt.Errorf("%w: %q", errInvalidModel, modelStr)
 	}
-	providerID := model.ResolveProviderAlias(mref.Provider, nil)
+	providerID := model.ResolveProviderAlias(mref.Provider, provider.ProviderAliases())
 	if streamReq {
 		// SSE headers only after first successful upstream stream (see streamModel).
 		// Avoid WriteHeader(200) before success so total-fail can still http.Error cleanly.
@@ -255,10 +256,9 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 			payload = body
 		}
 
-		// Prefer specialized executor per provider (kiro/cursor/github/...)
-		ex := executor.GetExecutor(providerID)
+		ex := exec
 		if ex == nil {
-			ex = exec
+			ex = executor.GetExecutor(providerID)
 		}
 		res, err := ex.Execute(ctx, cred, modelName, payload, streamReq)
 		if err != nil {
@@ -399,9 +399,9 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 		}
 		payload, _ := json.Marshal(translatedBody)
 
-		ex := executor.GetExecutor(providerID)
+		ex := exec
 		if ex == nil {
-			ex = exec
+			ex = executor.GetExecutor(providerID)
 		}
 		res, err := ex.Execute(ctx, cred, modelName, payload, true)
 		if err != nil {

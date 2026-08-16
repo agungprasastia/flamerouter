@@ -1,5 +1,7 @@
 package store
 
+import "database/sql"
+
 type CustomModel struct {
 	ID, Provider, ModelID, DisplayName, Capabilities string
 }
@@ -36,6 +38,25 @@ func (s *Store) CreateCustomModel(provider, modelID, displayName, capabilities s
 }
 
 func (s *Store) DeleteCustomModel(id string) error {
-	_, err := s.db.Exec(`DELETE FROM custom_models WHERE id=?`, id)
-	return err
+	res, err := s.db.Exec(`DELETE FROM custom_models WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) DeleteCustomModelByModel(provider, modelID string) error {
+	res, err := s.db.Exec(`DELETE FROM custom_models WHERE provider=? AND model_id=?`, provider, modelID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }

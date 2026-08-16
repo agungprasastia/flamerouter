@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"flamerouter/internal/provider"
 )
@@ -89,6 +90,10 @@ func (s *Server) handleGetProvider(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+	if len(conns) == 0 && provider.GetProvider(id) == nil {
+		writeErr(w, http.StatusNotFound, "connection not found")
+		return
+	}
 	list := make([]connDTO, 0, len(conns))
 	for _, c := range conns {
 		list = append(list, connDTO{
@@ -118,10 +123,10 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		IsActive            *bool          `json:"isActive"`
-		Name                string         `json:"name"`
-		Priority            int            `json:"priority"`
-		BaseURL             string         `json:"baseUrl"`
+		IsActive             *bool          `json:"isActive"`
+		Name                 string         `json:"name"`
+		Priority             *int           `json:"priority"`
+		BaseURL              string         `json:"baseUrl"`
 		ProviderSpecificData map[string]any `json:"providerSpecificData"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -136,7 +141,10 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = conn.Name
 	}
-	priority := req.Priority
+	priority := conn.Priority
+	if req.Priority != nil {
+		priority = *req.Priority
+	}
 	baseURL := req.BaseURL
 	if baseURL == "" {
 		baseURL = conn.BaseURL
@@ -215,6 +223,68 @@ func (s *Server) handleCreateProviderConnection(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
+}
+
+// POST /api/providers — create connection from 9router dashboard body {provider, apiKey, name, ...}
+func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"`
+		APIKey   string `json:"apiKey"`
+		APIKey2  string `json:"api_key"`
+		Name     string `json:"name"`
+		Display  string `json:"displayName"`
+		AuthType string `json:"authType"`
+		AuthType2 string `json:"auth_type"`
+		BaseURL  string `json:"baseUrl"`
+		Base2    string `json:"base_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	providerID := strings.TrimSpace(req.Provider)
+	if providerID == "" {
+		writeErr(w, http.StatusBadRequest, "provider required")
+		return
+	}
+	apiKey := req.APIKey
+	if apiKey == "" {
+		apiKey = req.APIKey2
+	}
+	base := req.BaseURL
+	if base == "" {
+		base = req.Base2
+	}
+	authType := req.AuthType
+	if authType == "" {
+		authType = req.AuthType2
+	}
+	if authType == "" {
+		authType = "api_key"
+	}
+	name := req.Name
+	if name == "" {
+		name = req.Display
+	}
+	if name == "" {
+		if p := provider.GetProvider(providerID); p != nil {
+			name = p.Display.Name
+		}
+	}
+	if name == "" {
+		name = providerID
+	}
+	id, err := s.st.CreateConnection(providerID, authType, name, apiKey, base)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"connection": map[string]any{
+			"id": id, "provider": providerID, "authType": authType, "name": name,
+			"isActive": true, "priority": 0, "testStatus": "unknown",
+		},
+	})
 }
 
 // GET /api/providers/{id}/models — registry models for provider

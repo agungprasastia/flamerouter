@@ -88,6 +88,7 @@ func (s *Server) routes() {
 
 	// Providers — static paths BEFORE {id}
 	s.mux.HandleFunc("GET /api/providers", s.handleListProviders)
+	s.mux.HandleFunc("POST /api/providers", s.handleCreateProvider)
 	s.mux.HandleFunc("POST /api/providers/connections", s.handleConnections)
 	s.mux.HandleFunc("POST /api/providers/validate", s.handleProviderValidate)
 	s.mux.HandleFunc("GET /api/providers/client", s.handleProvidersClient)
@@ -124,6 +125,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/models/disabled", s.handleListDisabledModels)
 	s.mux.HandleFunc("PATCH /api/models/disabled", s.handleToggleDisabledModel)
 	s.mux.HandleFunc("GET /api/models/alias", s.handleListAliases)
+	s.mux.HandleFunc("PUT /api/models/alias", s.handleUpdateAlias)
 	s.mux.HandleFunc("DELETE /api/models/alias", s.handleDeleteAlias)
 	s.mux.HandleFunc("GET /api/models/availability", s.handleModelAvailability)
 	s.mux.HandleFunc("POST /api/models/test", s.handleTestModel)
@@ -260,9 +262,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/codex/", s.handleCodexRewrite)
 	s.mux.HandleFunc("/v1/", s.handleCORS)
 
-	// SPA last — more-specific routes win over /
-	s.mux.HandleFunc("/", s.handleSPA)
-}
+	}
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {

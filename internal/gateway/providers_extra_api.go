@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -533,24 +534,59 @@ func (s *Server) handleProviderRegistry(w http.ResponseWriter, r *http.Request) 
 	writeJSONOK(w, map[string]any{"registry": out})
 }
 
-// DELETE /api/models/alias — delete model alias
-func (s *Server) handleDeleteAlias(w http.ResponseWriter, r *http.Request) {
+// PUT /api/models/alias — set model alias (9router dashboard body: {model, alias})
+func (s *Server) handleUpdateAlias(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Model string `json:"model"`
 		Alias string `json:"alias"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Alias == "" {
-		writeErr(w, http.StatusBadRequest, "alias required")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Model == "" || req.Alias == "" {
+		writeErr(w, http.StatusBadRequest, "model and alias required")
 		return
 	}
-	if err := s.st.DeleteAlias(req.Alias); err != nil {
+	if err := s.st.SetAlias(req.Alias, req.Model); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	writeJSONOK(w, map[string]any{"success": true, "model": req.Model, "alias": req.Alias})
+}
+
+// DELETE /api/models/alias — delete model alias (?alias= or {alias})
+func (s *Server) handleDeleteAlias(w http.ResponseWriter, r *http.Request) {
+	alias := r.URL.Query().Get("alias")
+	if alias == "" {
+		var req struct {
+			Alias string `json:"alias"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Alias == "" {
+			writeErr(w, http.StatusBadRequest, "alias required")
+			return
+		}
+		alias = req.Alias
+	}
+	if err := s.st.DeleteAlias(alias); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
 	writeJSONOK(w, map[string]any{"ok": true})
 }
 
-// DELETE /api/models/custom — delete custom model
+// DELETE /api/models/custom — delete custom model (?providerAlias=&id= or {id})
 func (s *Server) handleDeleteCustomModel(w http.ResponseWriter, r *http.Request) {
+	providerAlias := r.URL.Query().Get("providerAlias")
+	modelID := r.URL.Query().Get("id")
+	if providerAlias != "" && modelID != "" {
+		if err := s.st.DeleteCustomModelByModel(providerAlias, modelID); err != nil {
+			if err == sql.ErrNoRows {
+				writeErr(w, http.StatusNotFound, "custom model not found")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "db")
+			return
+		}
+		writeJSONOK(w, map[string]any{"ok": true})
+		return
+	}
 	var req struct {
 		ID string `json:"id"`
 	}
@@ -559,6 +595,10 @@ func (s *Server) handleDeleteCustomModel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.st.DeleteCustomModel(req.ID); err != nil {
+		if err == sql.ErrNoRows {
+			writeErr(w, http.StatusNotFound, "custom model not found")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}

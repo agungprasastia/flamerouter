@@ -1,9 +1,5 @@
 # FlameRouter — Agent Instructions
 
-Go rewrite of **9router**. Backend parity is the bar: match 9router behavior, not invent better defaults.
-
-Sibling reference (same parent folder): `../9router` — especially `open-sse/AGENTS.md` and `CLAUDE.md`.
-
 ## What this is
 
 Local AI routing gateway: one OpenAI-compatible surface (`/v1/*`) + management APIs (`/api/*`) + optional dashboard SPA.
