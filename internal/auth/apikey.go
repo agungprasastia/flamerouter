@@ -23,6 +23,11 @@ func (a *APIKeys) crc(machineID, keyID string) string {
 	return hex.EncodeToString(mac.Sum(nil))[:8]
 }
 
+func (a *APIKeys) Format(machineID, keyID string) string {
+	c := a.crc(machineID, keyID)
+	return fmt.Sprintf("sk-%s-%s-%s", machineID, keyID, c)
+}
+
 func (a *APIKeys) Generate(machineID string) (key, keyID string) {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 6)

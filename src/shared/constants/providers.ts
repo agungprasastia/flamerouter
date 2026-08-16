@@ -244,3 +244,7 @@ export const USAGE_SUPPORTED_PROVIDERS = REGISTRY.filter(
 export const USAGE_APIKEY_PROVIDERS = REGISTRY.filter(
   (r) => r.features?.usageApikey,
 ).map((r) => r.id);
+
+export const PROVIDERS = AI_PROVIDERS;
+export default AI_PROVIDERS;
+

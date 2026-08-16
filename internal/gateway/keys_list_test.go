@@ -20,11 +20,13 @@ func TestHandleKeys_GET_ListsKeys(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
-	var keys []map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &keys); err != nil {
+	var res struct {
+		Keys []map[string]any `json:"keys"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
 		t.Fatal(err)
 	}
-	if len(keys) < 1 {
+	if len(res.Keys) < 1 {
 		t.Fatal("expected >=1 key")
 	}
 }

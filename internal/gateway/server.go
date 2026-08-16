@@ -299,6 +299,7 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 		type out struct {
 			ID        string `json:"id"`
 			Name      string `json:"name"`
+			Key       string `json:"key"`
 			KeyID     string `json:"keyId"`
 			MachineID string `json:"machineId"`
 			IsActive  bool   `json:"isActive"`
@@ -306,13 +307,14 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		list := make([]out, 0, len(keys))
 		for _, k := range keys {
+			fullKey := s.keys.Format(k.MachineID, k.KeyID)
 			list = append(list, out{
-				ID: k.ID, Name: k.Name, KeyID: k.KeyID,
+				ID: k.ID, Name: k.Name, Key: fullKey, KeyID: k.KeyID,
 				MachineID: k.MachineID, IsActive: k.IsActive, CreatedAt: k.CreatedAt,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(list)
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": list})
 	case http.MethodPost:
 		var req struct {
 			Name string `json:"name"`

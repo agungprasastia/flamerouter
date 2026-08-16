@@ -1,5 +1,4 @@
-// Default remote plugins for Claude Cowork (3p managedMcpServers, HTTPS only).
-const DEFAULT_PLUGINS = [
+export const DEFAULT_PLUGINS = [
   {
     name: "exa",
     title: "Exa",
@@ -26,7 +25,7 @@ const DEFAULT_PLUGINS = [
 ];
 
 // Local stdio plugins bridged via inline SSE endpoint on the app's port.
-const LOCAL_STDIO_PLUGINS = [
+export const LOCAL_STDIO_PLUGINS = [
   {
     name: "browsermcp",
     title: "Browser MCP",
@@ -86,8 +85,9 @@ function buildManagedMcpServers(plugins) {
   return out;
 }
 
-module.exports = {
+export default {
   DEFAULT_PLUGINS,
   LOCAL_STDIO_PLUGINS,
   buildManagedMcpServers,
 };
+

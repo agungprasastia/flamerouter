@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,10 +50,24 @@ func Load() (*Config, error) {
 		dataDir = filepath.Join(home, ".flamerouter")
 	}
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		secretFile := filepath.Join(dataDir, "jwt-secret")
+		if data, err := os.ReadFile(secretFile); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+			jwtSecret = strings.TrimSpace(string(data))
+		} else {
+			b := make([]byte, 32)
+			_, _ = rand.Read(b)
+			jwtSecret = hex.EncodeToString(b)
+			_ = os.MkdirAll(dataDir, 0700)
+			_ = os.WriteFile(secretFile, []byte(jwtSecret), 0600)
+		}
+	}
+
 	cfg := &Config{
 		Port:                      port,
 		DataDir:                   dataDir,
-		JWTSecret:                 os.Getenv("JWT_SECRET"),
+		JWTSecret:                 jwtSecret,
 		InitialPassword:           envOr("INITIAL_PASSWORD", "123456"),
 		APIKeySecret:              envOr("API_KEY_SECRET", "endpoint-proxy-api-key-secret"),
 		MachineIDSalt:             envOr("MACHINE_ID_SALT", "endpoint-proxy-salt"),
@@ -66,10 +82,6 @@ func Load() (*Config, error) {
 		TrustProxy:                strings.EqualFold(os.Getenv("TRUST_PROXY"), "true"),
 		AuthCookieSecure:          strings.EqualFold(os.Getenv("AUTH_COOKIE_SECURE"), "true"),
 		VideoFetchTimeoutMs:       envMs("VIDEO_FETCH_TIMEOUT_MS", 120*1000),
-	}
-	if cfg.JWTSecret == "" {
-		// allow empty only in tests that set it; production should set JWT_SECRET
-		cfg.JWTSecret = "change-me-to-a-long-random-secret"
 	}
 	return cfg, nil
 }

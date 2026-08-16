@@ -5,12 +5,6 @@ import os from "os";
 const APP_NAME = "flamerouter";
 
 function defaultDir() {
-  if (process.platform === "win32") {
-    return path.join(
-      process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"),
-      APP_NAME,
-    );
-  }
   return path.join(os.homedir(), `.${APP_NAME}`);
 }
 

@@ -54,6 +54,20 @@ const tunnelBenefitIcons = {
   lock: Lock,
 };
 
+function maskKey(key?: string, keyId?: string, machineId?: string) {
+  if (key && typeof key === "string") {
+    if (key.length <= 12) return "••••••••••••••••";
+    return `${key.slice(0, 7)}...${key.slice(-4)}`;
+  }
+  if (keyId && machineId) {
+    return `sk-${machineId.slice(0, 6)}...${keyId}`;
+  }
+  if (keyId) {
+    return `sk-...${keyId}`;
+  }
+  return "••••••••••••••••";
+}
+
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1342,7 +1356,9 @@ export default function APIPageClient({ machineId }) {
                     <p className="text-sm font-medium">{key.name}</p>
                     <div className="flex items-center gap-2 mt-1">
                       <code className="min-w-0 break-all font-mono text-xs text-text-muted">
-                        {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
+                        {visibleKeys.has(key.id)
+                          ? (key.key || (key.keyId ? `sk-${key.machineId?.slice(0, 6)}...${key.keyId}` : "••••••••••••••••"))
+                          : maskKey(key.key, key.keyId, key.machineId)}
                       </code>
                       <button
                         onClick={() => toggleKeyVisibility(key.id)}
@@ -1355,7 +1371,7 @@ export default function APIPageClient({ machineId }) {
                         {visibleKeys.has(key.id) ? <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" /> : <Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
                       </button>
                       <button
-                        onClick={() => copy(key.key, key.id)}
+                        onClick={() => copy(key.key || key.keyId || key.id, key.id)}
                         aria-label={`Copy ${key.name}`}
                         className="inline-flex items-center gap-1 rounded p-1 text-text-muted transition-all hover:bg-black/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:hover:bg-white/5"
                       >

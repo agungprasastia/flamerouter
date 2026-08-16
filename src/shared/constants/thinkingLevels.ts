@@ -1,8 +1,24 @@
 // Resolve valid thinking levels per model — drives UI level picker (suffix "model(level)").
-// Reuses capabilities.js (thinkingFormat/canDisable) so this file only maps format→levels (DRY).
-import { getCapabilitiesForModel } from "./capabilities.js";
-import { matchPattern } from "./pricing.js";
-import { resolveKiroEffortPath } from "../config/kiroConstants.js";
+import { getCapabilitiesForModel } from "./capabilities";
+import { matchPattern } from "./pricing";
+
+export function resolveKiroEffortPath(model: string) {
+  if (typeof model !== "string") return null;
+  const normalized = model.toLowerCase().replace(/-/g, ".");
+  if (/(?:^|[/.])gpt[/.]5[/.]6(?:[/.]|$)/.test(normalized)) {
+    return "reasoning";
+  }
+  if (!normalized.includes("claude")) return null;
+  const match = normalized.match(/(?:^|[/.])claude(?:[/.][a-z]+)*[/.](\d+)(?:[/.](\d+))?(?:[/.]|$)/);
+  if (!match) return null;
+  const [, majorText, minorText] = match;
+  const major = Number(majorText);
+  const minor = minorText === undefined ? null : Number(minorText);
+  const dateSuffixMinor = minor !== null && minor >= 1000;
+  return major < 4 || (major === 4 && (minor === null || minor <= 5 || dateSuffixMinor))
+    ? null
+    : "output_config";
+}
 
 // Shared level sets (deduped) — verified against provider docs + wire in thinkingUnified.applyFormat.
 const L = {
@@ -16,7 +32,7 @@ const L = {
 };
 
 // thinkingFormat → valid selectable levels (source of truth for UI options).
-const FORMAT_LEVELS = {
+const FORMAT_LEVELS: Record<string, string[]> = {
   openai: L.openai,
   "claude-adaptive": L.levelMax,
   "claude-budget": L.budgetX,
@@ -42,7 +58,7 @@ const PATTERN_THINKING = [
 ];
 
 // Returns valid thinking levels for a model, or null when the model has no reasoning.
-export function getThinkingLevels(provider, model) {
+export function getThinkingLevels(provider: string, model: string) {
   if (provider === "kiro" && resolveKiroEffortPath(model) === null) return null;
   const caps = getCapabilitiesForModel(provider, model);
   if (!caps.reasoning) return null;
