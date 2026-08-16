@@ -10,6 +10,7 @@ import (
 
 func init() {
 	translator.Register(translator.FormatOpenAI, translator.FormatResponses, nil, openaiToResponsesChunk)
+	translator.Register(translator.FormatOpenAI, translator.FormatOpenAIResponses, nil, openaiToResponsesChunk)
 }
 
 func openaiToResponsesChunk(chunk map[string]any, state *concerns.ResponseState) []map[string]any {

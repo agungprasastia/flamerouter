@@ -8,9 +8,9 @@ import (
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/opensse/model"
+	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
 	"flamerouter/internal/translator"
-	"flamerouter/internal/translator/concerns"
 )
 
 func Responses(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
@@ -44,8 +44,8 @@ func CompactResponses(ctx context.Context, w http.ResponseWriter, body []byte, s
 func convertResponsesToChat(body map[string]any) map[string]any {
 	result := make(map[string]any)
 
-	if model, ok := body["model"]; ok {
-		result["model"] = model
+	if modelVal, ok := body["model"]; ok {
+		result["model"] = modelVal
 	}
 
 	if stream, ok := body["stream"]; ok {
@@ -68,6 +68,13 @@ func convertResponsesToChat(body map[string]any) map[string]any {
 				}
 			}
 			result["messages"] = messages
+		} else if inputStr, ok := input.(string); ok && inputStr != "" {
+			result["messages"] = []any{
+				map[string]any{
+					"role":    "user",
+					"content": inputStr,
+				},
+			}
 		}
 	}
 
@@ -85,6 +92,21 @@ func convertResponsesToChat(body map[string]any) map[string]any {
 	}
 	if maxTokens, ok := body["max_output_tokens"]; ok {
 		result["max_tokens"] = maxTokens
+	}
+	if topP, ok := body["top_p"]; ok {
+		result["top_p"] = topP
+	}
+	if tools, ok := body["tools"]; ok {
+		result["tools"] = tools
+	}
+	if toolChoice, ok := body["tool_choice"]; ok {
+		result["tool_choice"] = toolChoice
+	}
+	if respFormat, ok := body["response_format"]; ok {
+		result["response_format"] = respFormat
+	}
+	if streamOpts, ok := body["stream_options"]; ok {
+		result["stream_options"] = streamOpts
 	}
 
 	return result
@@ -119,24 +141,7 @@ func handleResponsesChat(ctx context.Context, w http.ResponseWriter, body []byte
 		http.Error(w, `{"error":"model must be provider/model format"}`, http.StatusBadRequest)
 		return nil
 	}
-	providerID := model.ResolveProviderAlias(mref.Provider, nil)
+	providerID := model.ResolveProviderAlias(mref.Provider, provider.ProviderAliases())
 
 	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, "", 0, nil)
-}
-
-func translateResponsesChunk(chunk map[string]any, state *concerns.ResponseState) map[string]any {
-	item := map[string]any{
-		"type": "response.output_item.added",
-		"output_index": 0,
-		"item": map[string]any{
-			"id":    state.MessageID,
-			"type":  "message",
-			"role":  "assistant",
-			"status": "in_progress",
-			"content": []any{},
-		},
-	}
-	_ = chunk
-	_ = item
-	return nil
 }

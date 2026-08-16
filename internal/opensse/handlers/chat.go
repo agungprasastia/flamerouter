@@ -197,6 +197,8 @@ func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, mode
 func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte, providerID, modelName string, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions, strategy string, stickyLimit int, usageSink UsageSink) error {
 	excludeIDs := make(map[string]bool)
 	var lastErr error
+	var lastStatus int
+	var lastBody []byte
 	targetFormat := getTargetFormat(providerID)
 
 	for {
@@ -205,6 +207,12 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 			if len(excludeIDs) == 0 {
 				http.Error(w, `{"error":"no active connection for provider `+providerID+`"}`, http.StatusBadRequest)
 				return nil
+			}
+			if lastStatus >= 400 && len(lastBody) > 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(lastStatus)
+				w.Write(lastBody)
+				return lastErr
 			}
 			http.Error(w, `{"error":"all accounts unavailable"}`, http.StatusServiceUnavailable)
 			return lastErr
@@ -273,8 +281,25 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 		}
 		defer res.Body.Close()
 
+		if res.StatusCode >= 400 {
+			respBody, _ := io.ReadAll(res.Body)
+			lastStatus = res.StatusCode
+			lastBody = respBody
+			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, string(respBody), 0)
+			if shouldFallback {
+				excludeIDs[conn.ID] = true
+				lastErr = fmt.Errorf("%w: status %d", errUpstreamFailed, res.StatusCode)
+				continue
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(res.StatusCode)
+			w.Write(respBody)
+			return fmt.Errorf("%w: status %d", errUpstreamFailed, res.StatusCode)
+		}
+
 		if streamReq {
 			stream.WriteSSEHeaders(w)
+			flusher, _ := w.(http.Flusher)
 			if translator.NeedsTranslation(sourceFormat, targetFormat) {
 				state := concerns.NewResponseState()
 				scanner := bufio.NewScanner(res.Body)
@@ -295,7 +320,14 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 					for _, t := range translated {
 						j, _ := json.Marshal(t)
 						w.Write([]byte("data: " + string(j) + "\n\n"))
+						if flusher != nil {
+							flusher.Flush()
+						}
 					}
+				}
+				w.Write([]byte("data: [DONE]\n\n"))
+				if flusher != nil {
+					flusher.Flush()
 				}
 			} else {
 				_ = stream.Pipe(w, res.Body)
@@ -307,18 +339,7 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 		respBody, _ := io.ReadAll(res.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(res.StatusCode)
-
-		if res.StatusCode >= 400 {
-			errText := string(respBody)
-			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, errText, 0)
-			if shouldFallback {
-				excludeIDs[conn.ID] = true
-				lastErr = fmt.Errorf("%w: status %d", errUpstreamFailed, res.StatusCode)
-				continue
-			}
-		} else {
-			fb.ClearError(conn.ID)
-		}
+		fb.ClearError(conn.ID)
 
 		if translator.NeedsTranslation(sourceFormat, targetFormat) {
 			var respMap map[string]any
