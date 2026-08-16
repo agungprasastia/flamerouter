@@ -22,8 +22,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != 20128 {
-		t.Fatalf("Port=%d want 20128", cfg.Port)
+	if cfg.Port != 20130 {
+		t.Fatalf("Port=%d want 20130", cfg.Port)
 	}
 	if filepath.Base(cfg.DataDir) != ".flamerouter" {
 		t.Fatalf("DataDir base=%q want .flamerouter", filepath.Base(cfg.DataDir))

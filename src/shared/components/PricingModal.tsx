@@ -2,7 +2,7 @@
 /* eslint-disable react-hooks/immutability */
 
 import { useState, useEffect } from "react";
-import { getDefaultPricing, formatCost } from "open-sse/providers/pricing";
+import { getDefaultPricing, formatCost } from "@/shared/constants/pricing";
 
 export default function PricingModal({ isOpen, onClose, onSave }) {
   const [pricingData, setPricingData] = useState({});

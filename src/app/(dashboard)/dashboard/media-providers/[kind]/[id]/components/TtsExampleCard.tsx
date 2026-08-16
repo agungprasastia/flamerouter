@@ -8,8 +8,8 @@ import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { TTS_PROVIDER_CONFIG } from "@/shared/constants/ttsProviders";
 import { translate } from "@/i18n/runtime";
-import { getTtsVoicesForModel } from "open-sse/config/ttsModels";
-import { GOOGLE_TTS_LANGUAGES } from "open-sse/config/googleTtsLanguages";
+import { getTtsVoicesForModel } from "@/shared/constants/ttsModels";
+import { GOOGLE_TTS_LANGUAGES } from "@/shared/constants/googleTtsLanguages";
 import { Row } from "./exampleShared";
 
 const DEFAULT_TTS_RESPONSE_EXAMPLE = `// Audio will appear here after running.

@@ -2,11 +2,12 @@
 
 ## What this is
 
-Local AI routing gateway: one OpenAI-compatible surface (`/v1/*`) + management APIs (`/api/*`) + optional dashboard SPA.
+Local AI routing gateway: one OpenAI-compatible surface (`/v1/*`) + management APIs (`/api/*`) + Next.js dashboard UI.
 
 | | |
 |--|--|
-| Port | `20128` (`PORT`) |
+| Backend Gateway Port | `20130` (`PORT`) |
+| Frontend Dashboard Port | `20129` (`NEXT_PUBLIC_BASE_URL`) |
 | Data | `~/.flamerouter` (`DATA_DIR`) |
 | Module | `flamerouter` — **never** `github.com/...` |
 | CLI | `flamerouter serve` \| `flamerouter version` (not bare `go run` without subcommand) |

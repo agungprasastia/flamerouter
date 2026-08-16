@@ -5,11 +5,11 @@ import { platform, arch } from "os";
 import {
   ANTIGRAVITY_OAUTH_CLIENT,
   GOOGLE_OAUTH_CLIENT,
-} from "open-sse/providers/shared";
+} from "@/shared/constants/providers";
 import {
   PROVIDER_OAUTH,
   PROVIDERS as REGISTRY_PROVIDERS,
-} from "open-sse/providers/index";
+} from "@/shared/constants/providersRegistry";
 
 /**
  * Get the platform enum value based on the current OS.
@@ -202,7 +202,7 @@ export const WINDSURF_CONFIG = {
 // Zed hosted LLM aggregator — RSA keypair native-app auth (NOT OAuth).
 // Client generates ephemeral RSA-2048 keypair; user signs in at zed.dev/native_app_signin;
 // Zed redirects to local callback with access_token RSA-encrypted against our public key.
-// See open-sse/shared/zedAuth.js for the keypair/decrypt helpers.
+// clean
 export const ZED_HOSTED_CONFIG = {
   webBaseUrl: "https://zed.dev",
   cloudBaseUrl: "https://cloud.zed.dev",

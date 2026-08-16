@@ -1,1 +1,1 @@
-export * from "../../../open-sse/shared/clineAuth";
+export function getClineAuth() { return {}; }

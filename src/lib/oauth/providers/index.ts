@@ -1,5 +1,5 @@
 // Ensure outbound fetch respects HTTP(S)_PROXY/ALL_PROXY in Node runtime
-import "open-sse/index";
+// clean
 
 import { generatePKCE } from "../utils/pkce";
 import {

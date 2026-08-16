@@ -2,7 +2,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useState, useEffect, useCallback } from "react";
-import { getCapabilitiesForModel } from "open-sse/providers/capabilities";
+import { getCapabilitiesForModel } from "@/shared/constants/capabilities";
 
 // Module cache: one /api/models fetch shared by every useModelCaps instance.
 let cache = null; // { byFull, byId } | null

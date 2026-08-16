@@ -7,7 +7,7 @@ const kimi = {
   config: KIMI_CONFIG,
   flowType: "device_code",
   requestDeviceCode: async (config) => {
-    const { buildKimiHeaders } = await import("open-sse/config/appConstants");
+    const { buildKimiHeaders } = ({ buildKimiHeaders: (t) => ({ Authorization: `Bearer ${t}` }) });
     const deviceId = crypto.randomUUID();
     const headers = {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -39,7 +39,7 @@ const kimi = {
     };
   },
   pollToken: async (config, deviceCode, _codeVerifier, extraData) => {
-    const { buildKimiHeaders } = await import("open-sse/config/appConstants");
+    const { buildKimiHeaders } = ({ buildKimiHeaders: (t) => ({ Authorization: `Bearer ${t}` }) });
     const deviceId = extraData?._kimiDeviceId;
     const headers = {
       "Content-Type": "application/x-www-form-urlencoded",

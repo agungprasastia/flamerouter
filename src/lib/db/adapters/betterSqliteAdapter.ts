@@ -1,13 +1,19 @@
-import Database from "better-sqlite3";
 import { PRAGMA_SQL } from "../schema";
 
 // Periodic checkpoint to keep WAL file small (avoid huge -wal/-shm growth)
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
 export function createBetterSqliteAdapter(filePath) {
+  let Database;
+  try {
+    const mod = require("better-sqlite3");
+    Database = mod.default || mod;
+  } catch {
+    throw new Error("better-sqlite3 is not installed");
+  }
+
   const db = new Database(filePath);
   db.exec(PRAGMA_SQL);
-  // Schema is created/synced by migrate.js after adapter init
 
   const stmtCache = new Map();
 
@@ -40,7 +46,6 @@ export function createBetterSqliteAdapter(filePath) {
     } catch {}
   }
 
-  // Ensure WAL is flushed and -wal/-shm files removed on shutdown
   const onShutdown = () => gracefulClose();
   process.once("beforeExit", onShutdown);
   process.once("SIGINT", () => {

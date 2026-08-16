@@ -26,7 +26,8 @@ FlameRouter is a **pure-Go rewrite** of [9router](https://github.com/agungprasas
 
 | | |
 |--|--|
-| Default port | `20128` |
+| Gateway Port (Backend) | `20130` (`PORT`) |
+| Dashboard Port (Frontend) | `20129` (`NEXT_PUBLIC_BASE_URL`) |
 | Data directory | `~/.flamerouter` (override with `DATA_DIR`) |
 | Binary entry | `flamerouter serve` · `flamerouter version` |
 | Module | `flamerouter` (no CGO; SQLite via `modernc.org/sqlite`) |
@@ -54,20 +55,15 @@ FlameRouter is a **pure-Go rewrite** of [9router](https://github.com/agungprasas
 
 ### Run (development)
 
-```bash
-# optional: copy env
-cp .env.example .env   # Windows: copy .env.example .env
-
-go run ./cmd/flamerouter serve
-# or: make serve
-```
-
-- Gateway + dashboard → **http://localhost:20128**
-- Login password → value of `INITIAL_PASSWORD` (default: `123456` — **change it**)
+Cukup jalankan satu perintah ini, **Backend Go + Frontend Next.js langsung menyala bersamaan**:
 
 ```bash
-go run ./cmd/flamerouter version
+npm run dev
 ```
+
+- **Frontend Dashboard** → **http://localhost:20129**
+- **Backend API Gateway** → **http://127.0.0.1:20130**
+- Login password default → `123456` (dikonfigurasi di `INITIAL_PASSWORD`)
 
 ### Build
 

@@ -1,4 +1,4 @@
-import { getModelsByProviderId } from "open-sse/config/providerModels";
+import { getModelsByProviderId } from "@/shared/constants/providerModels";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 export const QUOTA_CACHE_KEY = "quotaCacheData";
