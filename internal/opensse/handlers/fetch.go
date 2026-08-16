@@ -82,6 +82,10 @@ func directFetch(ctx context.Context, w http.ResponseWriter, rawURL string, opts
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return err
 	}
+	if resp == nil || resp.Body == nil {
+		jsonError(w, http.StatusBadGateway, "nil response from upstream")
+		return fmt.Errorf("nil response from upstream")
+	}
 
 	defer resp.Body.Close()
 

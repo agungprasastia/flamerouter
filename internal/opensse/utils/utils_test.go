@@ -27,9 +27,11 @@ func TestDetectClient(t *testing.T) {
 		{"unknown-agent/1", nil, ""},
 	}
 	for _, tc := range cases {
-		r, _ := http.NewRequest(http.MethodPost, "/", nil)
+		r, err := http.NewRequest(http.MethodPost, "/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
 		r.Header.Set("User-Agent", tc.ua)
-
 		for k, v := range tc.headers {
 			r.Header.Set(k, v)
 		}
@@ -129,7 +131,10 @@ func TestShouldBypass(t *testing.T) {
 }
 
 func TestDetectClientCopilotNotInitiatorAlone(t *testing.T) {
-	r, _ := http.NewRequest(http.MethodPost, "/", nil)
+	r, err := http.NewRequest(http.MethodPost, "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	r.Header.Set("User-Agent", "Mozilla/5.0")
 	r.Header.Set("x-initiator", "user")
 
@@ -137,7 +142,10 @@ func TestDetectClientCopilotNotInitiatorAlone(t *testing.T) {
 		t.Fatalf("x-initiator alone must not be github-copilot, got %q", got)
 	}
 
-	r2, _ := http.NewRequest(http.MethodPost, "/", nil)
+	r2, err := http.NewRequest(http.MethodPost, "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	r2.Header.Set("User-Agent", "GitHubCopilotChat/1")
 
 	if got := DetectClient(r2); got != "github-copilot" {

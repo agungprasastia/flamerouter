@@ -228,7 +228,7 @@ func flattenClaudeToolInteractions(messages []any) []any {
 }
 
 func convertClaudeToKiroMessages(messages []any, tools []any, model string) ([]any, string) {
-	var history []any
+	history := make([]any, 0, len(messages))
 
 	var currentMessage string
 

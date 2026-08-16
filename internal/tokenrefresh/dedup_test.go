@@ -90,7 +90,7 @@ func TestCacheHitWithinTTL(t *testing.T) {
 
 	// First call
 	res1, err := rm.Refresh(context.Background(), "testprovider", "token-ttl")
-	if err != nil {
+	if err != nil || res1 == nil {
 		t.Fatalf("first refresh failed: %v", err)
 	}
 
@@ -104,7 +104,7 @@ func TestCacheHitWithinTTL(t *testing.T) {
 
 	// Immediate second call should hit cache
 	res2, err := rm.Refresh(context.Background(), "testprovider", "token-ttl")
-	if err != nil {
+	if err != nil || res2 == nil {
 		t.Fatalf("second refresh failed: %v", err)
 	}
 
@@ -172,7 +172,7 @@ func TestConcurrentCallsFailedRefreshDoesNotCacheError(t *testing.T) {
 
 	// Call 2 should retry fresh upstream since failure isn't cached
 	res, err := rm.Refresh(context.Background(), "testprovider", "err-token")
-	if err != nil {
+	if err != nil || res == nil {
 		t.Fatalf("call 2 failed: %v", err)
 	}
 

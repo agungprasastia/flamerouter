@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"flamerouter/internal/netutil"
 	"io"
 	"net/http"
 	"strings"
@@ -121,7 +122,7 @@ func getCodexRateLimitResetCredits(accessToken string, psd map[string]any) (map[
 
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	res, err := client.Do(req)
+	res, err := netutil.DoHTTP(client, req)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +201,7 @@ func consumeCodexRateLimitResetCredit(accessToken, redeemRequestID string) map[s
 
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	res, err := client.Do(req)
+	res, err := netutil.DoHTTP(client, req)
 	if err != nil {
 		return map[string]any{"ok": false, "message": err.Error(), "status": 500}
 	}

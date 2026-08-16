@@ -983,8 +983,11 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 		}
 
 		tok, err := oauth.PollDeviceToken(r.Context(), cfg, dc, req.Interval)
-		if err != nil {
-			msg := err.Error()
+		if err != nil || tok == nil {
+			msg := "token poll failed"
+			if err != nil {
+				msg = err.Error()
+			}
 			pending := strings.Contains(msg, "authorization_pending") || strings.Contains(msg, "slow_down") || strings.Contains(msg, "pending")
 			writeJSONOK(w, map[string]any{"success": false, "error": msg, "pending": pending})
 

@@ -118,6 +118,10 @@ func parseOpenAIMessages(messages []any) string {
 		items = append(items, extracted{role: role, text: content})
 	}
 
+	if len(items) == 0 {
+		return ""
+	}
+
 	lastUser := -1
 
 	for i := len(items) - 1; i >= 0; i-- {

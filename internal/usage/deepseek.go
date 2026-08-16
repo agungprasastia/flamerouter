@@ -40,7 +40,7 @@ func fetchDeepseekUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, e
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("DeepSeek error: %v", err)}, nil
 	}

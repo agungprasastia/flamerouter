@@ -31,7 +31,7 @@ func fetchVercelUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Vercel AI Gateway error: %v", err)}, nil
 	}

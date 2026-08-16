@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"flamerouter/internal/netutil"
 	"io"
 	"net/http"
 	"net/url"
@@ -169,7 +170,7 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 
 	req.Header.Set("User-Agent", "FlameRouter")
 
-	res, err := client.Do(req)
+	res, err := netutil.DoHTTP(client, req)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return

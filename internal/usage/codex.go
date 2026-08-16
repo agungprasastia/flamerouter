@@ -28,7 +28,7 @@ func fetchCodexUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 	req.Header.Set("Accept", "application/json")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Failed to fetch Codex usage: %v", err)}, nil
 	}

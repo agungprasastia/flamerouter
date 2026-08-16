@@ -390,6 +390,9 @@ func (e *DefaultExecutor) Execute(ctx context.Context, cred Credentials, model s
 	if err != nil {
 		return nil, err
 	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("nil response from upstream")
+	}
 
 	return &Result{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }

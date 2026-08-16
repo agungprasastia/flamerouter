@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"runtime"
@@ -68,6 +69,9 @@ func (s *Server) handleAntigravityMitm(w http.ResponseWriter, r *http.Request) {
 		// action enable/disable/trust-cert stored in dnsStatus map
 		if action, _ := patch["action"].(string); action != "" {
 			settings, _ := m.GetSettings(toolID)
+			if settings == nil {
+				settings = make(map[string]any)
+			}
 
 			dns, _ := settings["dnsStatus"].(map[string]any)
 			if dns == nil {
@@ -280,8 +284,11 @@ func probeMCP(url string) map[string]any {
 	}
 
 	initRes, err := client.Do(initReq)
-	if err != nil {
-		msg := err.Error()
+	if err != nil || initRes == nil || initRes.Body == nil {
+		msg := "unknown error"
+		if err != nil {
+			msg = err.Error()
+		}
 		if strings.Contains(msg, "Timeout") || strings.Contains(msg, "deadline") {
 			msg = "timeout"
 		}
@@ -313,25 +320,35 @@ func probeMCP(url string) map[string]any {
 	// notifications/initialized
 	notif, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized", "params": map[string]any{}})
 
-	nReq, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(notif))
-	for k, v := range listHeaders {
-		nReq.Header.Set(k, v)
-	}
+	nReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(notif))
+	if err == nil {
+		for k, v := range listHeaders {
+			nReq.Header.Set(k, v)
+		}
 
-	if res, err := client.Do(nReq); err == nil {
-		res.Body.Close()
+		if res, errDo := client.Do(nReq); errDo == nil && res != nil && res.Body != nil {
+			_ = res.Body.Close()
+		}
 	}
 
 	listBody, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
 
-	listReq, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(listBody))
+	listReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(listBody))
+	if err != nil {
+		return map[string]any{"error": err.Error(), "tools": []any{}}
+	}
+
 	for k, v := range listHeaders {
 		listReq.Header.Set(k, v)
 	}
 
 	listRes, err := client.Do(listReq)
-	if err != nil {
-		return map[string]any{"error": err.Error(), "tools": []any{}}
+	if err != nil || listRes == nil || listRes.Body == nil {
+		msg := "unknown error"
+		if err != nil {
+			msg = err.Error()
+		}
+		return map[string]any{"error": msg, "tools": []any{}}
 	}
 
 	defer listRes.Body.Close()
@@ -497,8 +514,11 @@ func fetchCoworkMCPRegistry() ([]map[string]any, error) {
 		req.Header.Set("Accept", "application/json")
 
 		res, err := client.Do(req)
-		if err != nil {
-			return nil, err
+		if err != nil || res == nil || res.Body == nil {
+			if err != nil {
+				return nil, err
+			}
+			return nil, errors.New("empty response")
 		}
 
 		if res.StatusCode < 200 || res.StatusCode >= 300 {

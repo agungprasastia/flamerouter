@@ -3,6 +3,7 @@ package gateway
 import (
 	"database/sql"
 	"encoding/json"
+	"flamerouter/internal/netutil"
 	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
 	"io"
@@ -245,9 +246,9 @@ func (s *Server) handleSuggestedModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := client.Do(req)
+	resp, err := netutil.DoHTTP(client, req)
 	if err != nil || resp.StatusCode >= 400 {
-		if resp != nil {
+		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
 
@@ -514,7 +515,7 @@ func (s *Server) handleKiloFreeModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := client.Do(req)
+	resp, err := netutil.DoHTTP(client, req)
 	if err != nil {
 		if kiloCache != nil {
 			writeJSONOK(w, map[string]any{"models": kiloCache, "cached": true, "warning": err.Error()})

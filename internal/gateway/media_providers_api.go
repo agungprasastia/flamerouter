@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/netutil"
 	"io"
 	"net/http"
 	"sort"
@@ -274,7 +275,7 @@ func httpGetJSON(url, authHeader, authVal string) ([]byte, error) {
 
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := netutil.DoHTTP(client, req)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +405,7 @@ func fetchMinimaxVoices(endpoint, apiKey, voiceType string) ([]map[string]any, e
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := netutil.DoHTTP(client, req)
 	if err != nil {
 		return nil, err
 	}

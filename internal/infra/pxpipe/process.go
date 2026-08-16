@@ -173,6 +173,9 @@ func (p *Process) Health() bool {
 	if err != nil {
 		return false
 	}
+	if resp == nil || resp.Body == nil {
+		return false
+	}
 
 	defer resp.Body.Close()
 

@@ -225,7 +225,7 @@ func flattenKiroToolInteractions(messages []any) []any {
 }
 
 func convertKiroMessages(messages []any, tools []any, model string, clientProvidedTools bool) ([]any, string) {
-	var history []any
+	history := make([]any, 0, len(messages))
 
 	var currentMessage string
 

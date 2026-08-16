@@ -30,7 +30,7 @@ func fetchGrokCliUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, er
 
 	setGrokHeaders(reqBilling.Header, opts.AccessToken, opts.ProviderSpecificData)
 
-	resBilling, err := opts.HTTPClient.Do(reqBilling)
+	resBilling, err := doHTTP(opts.HTTPClient, reqBilling)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Grok CLI usage error: %v", err)}, nil
 	}
@@ -66,7 +66,7 @@ func fetchGrokCliUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, er
 	if err == nil {
 		setGrokHeaders(reqUser.Header, opts.AccessToken, opts.ProviderSpecificData)
 
-		if resUser, err := opts.HTTPClient.Do(reqUser); err == nil {
+		if resUser, err := doHTTP(opts.HTTPClient, reqUser); err == nil {
 			defer resUser.Body.Close()
 
 			if resUser.StatusCode >= 200 && resUser.StatusCode < 300 {

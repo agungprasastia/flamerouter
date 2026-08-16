@@ -166,7 +166,7 @@ func (m *Manager) watchdog(stop <-chan struct{}) {
 				req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
 				if err == nil {
 					resp, err := client.Do(req)
-					if err == nil {
+					if err == nil && resp != nil && resp.Body != nil {
 						_ = resp.Body.Close()
 					}
 				}

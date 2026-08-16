@@ -2,6 +2,7 @@ package tokenrefresh
 
 import (
 	"context"
+	"errors"
 	"flamerouter/internal/oauth"
 	"fmt"
 	"sync"
@@ -107,14 +108,16 @@ func (rm *RefreshManager) refreshWithRetry(ctx context.Context, provider, refres
 		}
 
 		result, err := refresher.Refresh(ctx, refreshToken)
-		if err == nil && result.Error == "" {
+		if err == nil && result != nil && result.Error == "" {
 			return result, nil
 		}
 
 		if err != nil {
 			lastErr = err
-		} else {
+		} else if result != nil {
 			lastErr = fmt.Errorf("%s", result.Error)
+		} else {
+			lastErr = errors.New("empty result returned")
 		}
 	}
 

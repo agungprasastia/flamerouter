@@ -58,7 +58,7 @@ func fetchKimiUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Kimi Coding connected. Unable to fetch usage: %v", err)}, nil
 	}

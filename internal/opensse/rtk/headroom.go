@@ -61,6 +61,9 @@ func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, fo
 	if err != nil {
 		return nil
 	}
+	if resp == nil || resp.Body == nil {
+		return nil
+	}
 
 	defer resp.Body.Close()
 

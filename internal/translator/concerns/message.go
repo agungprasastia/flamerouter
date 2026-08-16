@@ -64,7 +64,7 @@ func DedupeToolUseBlocks(messages []any) []any {
 
 		seen := make(map[string]bool)
 
-		var deduped []any
+		deduped := make([]any, 0, len(blocks))
 
 		for _, block := range blocks {
 			b, ok := block.(map[string]any)

@@ -139,6 +139,9 @@ func normalizeQoderMessages(rawMessages []any) ([]map[string]any, string) {
 }
 
 func lastQoderUserText(messages []map[string]any) string {
+	if len(messages) == 0 {
+		return ""
+	}
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
 		if role, _ := m["role"].(string); role == "user" {
@@ -504,6 +507,9 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 	resp, err := e.client().Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("nil response from upstream")
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

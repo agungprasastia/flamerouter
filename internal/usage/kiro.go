@@ -58,7 +58,7 @@ func fetchKiroUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 					return nil, err
 				}
 				setKiroHeaders(req.Header, opts.AccessToken, isAPIKey, isExternalIDP)
-				return opts.HTTPClient.Do(req)
+				return doHTTP(opts.HTTPClient, req)
 			},
 		},
 		{
@@ -79,7 +79,7 @@ func fetchKiroUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 				setKiroHeaders(req.Header, opts.AccessToken, isAPIKey, isExternalIDP)
 				req.Header.Set("Content-Type", "application/x-amz-json-1.0")
 				req.Header.Set("x-amz-target", "AmazonCodeWhispererService.GetUsageLimits")
-				return opts.HTTPClient.Do(req)
+				return doHTTP(opts.HTTPClient, req)
 			},
 		},
 		{
@@ -98,7 +98,7 @@ func fetchKiroUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error
 					return nil, err
 				}
 				setKiroHeaders(req.Header, opts.AccessToken, isAPIKey, isExternalIDP)
-				return opts.HTTPClient.Do(req)
+				return doHTTP(opts.HTTPClient, req)
 			},
 		},
 	}

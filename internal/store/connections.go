@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -152,6 +153,10 @@ func (s *Store) CreateConnection(provider, authType, name, apiKey, baseURL strin
 
 // CreateOAuthConnection inserts a connection with tokens + optional PSD.
 func (s *Store) CreateOAuthConnection(provider, authType, name, accessToken, refreshToken, expiresAt string, psd map[string]any) (string, error) {
+	if s == nil || s.db == nil {
+		return "", fmt.Errorf("store database not initialized")
+	}
+
 	id := newID()
 	psdJSON := "{}"
 

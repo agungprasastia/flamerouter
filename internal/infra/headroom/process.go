@@ -136,6 +136,10 @@ func (p *Process) Health() bool {
 		}
 	}
 
+	if resp == nil || resp.Body == nil {
+		return false
+	}
+
 	defer resp.Body.Close()
 
 	return resp.StatusCode < 500

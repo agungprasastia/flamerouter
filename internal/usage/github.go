@@ -37,7 +37,7 @@ func fetchGitHubUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	req.Header.Set("Editor-Version", "vscode/1.100.0")
 	req.Header.Set("Editor-Plugin-Version", "copilot-chat/0.26.7")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Failed to fetch GitHub usage: %v", err)}, nil
 	}

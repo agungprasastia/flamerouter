@@ -220,7 +220,7 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 			if err == nil {
 				req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
-				if resp, err := http.DefaultClient.Do(req); err == nil {
+				if resp, err := http.DefaultClient.Do(req); err == nil && resp != nil && resp.Body != nil {
 					defer resp.Body.Close()
 
 					var uinfo map[string]any
@@ -243,7 +243,7 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 			req.Header.Set("User-Agent", "antigravity/ide/2.1.1 darwin/arm64")
 			req.Header.Set("x-request-source", "local")
 
-			if resp, err := http.DefaultClient.Do(req); err == nil {
+			if resp, err := http.DefaultClient.Do(req); err == nil && resp != nil && resp.Body != nil {
 				defer resp.Body.Close()
 
 				var loadData struct {
@@ -355,6 +355,9 @@ func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, r
 	if err != nil {
 		return nil, err
 	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("empty token exchange response")
+	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
@@ -419,6 +422,9 @@ func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToke
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("empty refresh response")
 	}
 	defer resp.Body.Close()
 

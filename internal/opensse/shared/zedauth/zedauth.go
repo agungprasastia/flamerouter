@@ -203,6 +203,10 @@ func FetchZedLLMToken(ctx context.Context, accessToken, clientID string) (string
 		return "", fmt.Errorf("failed to execute zed llm token request: %w", err)
 	}
 
+	if resp == nil || resp.Body == nil {
+		return "", fmt.Errorf("empty response received from zed server")
+	}
+
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(resp.Body)

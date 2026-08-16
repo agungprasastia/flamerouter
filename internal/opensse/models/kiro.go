@@ -176,6 +176,9 @@ func (r *KiroResolver) fetchRaw(ctx context.Context, conn *store.Connection) ([]
 	if err != nil {
 		return nil, 0, err
 	}
+	if resp == nil || resp.Body == nil {
+		return nil, 0, fmt.Errorf("nil response from upstream")
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {

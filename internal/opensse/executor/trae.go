@@ -334,6 +334,9 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 	if err != nil {
 		return nil, err
 	}
+	if res == nil || res.Body == nil {
+		return nil, fmt.Errorf("nil response from upstream")
+	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		DrainBody(res.Body)

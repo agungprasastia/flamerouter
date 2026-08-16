@@ -60,7 +60,7 @@ func fetchOllamaUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Ollama Cloud error: %v", err)}, nil
 	}
@@ -87,7 +87,7 @@ func fetchOllamaUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 		reqMe.Header.Set("Accept", "application/json")
 		reqMe.Header.Set("Content-Length", "0")
 
-		if resMe, errMeDo := opts.HTTPClient.Do(reqMe); errMeDo == nil {
+		if resMe, errMeDo := doHTTP(opts.HTTPClient, reqMe); errMeDo == nil {
 			defer resMe.Body.Close()
 
 			if resMe.StatusCode >= 200 && resMe.StatusCode < 300 {
@@ -171,7 +171,7 @@ func queryGlm(ctx context.Context, opts FetchOptions, quotaURL string) (*QuotaRe
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("GLM error: %v", err)}, nil
 	}

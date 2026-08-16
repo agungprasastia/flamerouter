@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -91,6 +92,9 @@ func (b *Base) DoPOST(ctx context.Context, url string, headers http.Header, payl
 	resp, err := b.client().Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("nil response from upstream")
 	}
 
 	return &Result{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil

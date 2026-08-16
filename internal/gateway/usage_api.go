@@ -282,6 +282,10 @@ func (s *Server) handleRequestDetails(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, d)
 	}
 
+	if filtered == nil {
+		filtered = []store.RequestDetail{}
+	}
+
 	totalItems := len(filtered)
 	totalPages := 1
 

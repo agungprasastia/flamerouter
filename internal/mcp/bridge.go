@@ -128,6 +128,10 @@ func (b *Bridge) Send(name string, msg []byte) error {
 // Subscribe returns a channel that receives plugin stdout lines.
 // Caller must call Unsubscribe when done.
 func (b *Bridge) Subscribe(name string) (chan []byte, error) {
+	if b == nil {
+		return nil, fmt.Errorf("bridge not initialized")
+	}
+
 	b.mu.Lock()
 	p := b.plugins[name]
 	b.mu.Unlock()

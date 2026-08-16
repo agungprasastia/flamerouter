@@ -164,6 +164,10 @@ func (o *OIDCHandler) fetchDiscovery(issuer string) (*oidcDiscovery, error) {
 		return nil, err
 	}
 
+	if res == nil || res.Body == nil {
+		return nil, fmt.Errorf("empty discovery response from %s", u)
+	}
+
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
@@ -445,6 +449,9 @@ func (o *OIDCHandler) exchangeCode(tokenEndpoint string, cfg *oidcConfig, code, 
 	if err != nil {
 		return nil, err
 	}
+	if res == nil || res.Body == nil {
+		return nil, fmt.Errorf("empty response from token endpoint")
+	}
 
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
@@ -601,6 +608,9 @@ func (o *OIDCHandler) probeClientSecret(tokenEndpoint, clientID, clientSecret, r
 	res, err := o.client.Do(req)
 	if err != nil {
 		return secretProbe{tested: true, message: err.Error()}
+	}
+	if res == nil || res.Body == nil {
+		return secretProbe{tested: true, message: "empty response from token endpoint"}
 	}
 
 	defer res.Body.Close()
@@ -802,6 +812,9 @@ func (o *OIDCHandler) fetchJWKSKey(jwksURI, kid, alg string) (any, error) {
 	res, err := o.client.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if res == nil || res.Body == nil {
+		return nil, fmt.Errorf("failed to fetch JWKS: empty response")
 	}
 
 	defer res.Body.Close()

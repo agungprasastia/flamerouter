@@ -57,7 +57,7 @@ func fetchAntigravityUsage(ctx context.Context, opts FetchOptions) (*QuotaResult
 	req.Header.Set("X-Client-Name", "antigravity")
 	req.Header.Set("X-Client-Version", "1.0.0")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Antigravity error: %v", err)}, nil
 	}
@@ -176,7 +176,7 @@ func getGoogleSubscriptionInfo(ctx context.Context, client *http.Client, token, 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	res, err := client.Do(req)
+	res, err := doHTTP(client, req)
 	if err != nil {
 		return nil
 	}

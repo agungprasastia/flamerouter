@@ -32,7 +32,7 @@ func fetchQoderUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Qoder connected. Unable to fetch usage: %v", err)}, nil
 	}

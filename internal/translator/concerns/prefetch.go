@@ -338,6 +338,9 @@ func fetchImageAsBase64(rawURL string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	if resp == nil || resp.Body == nil {
+		return "", "", fmt.Errorf("empty image response")
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {

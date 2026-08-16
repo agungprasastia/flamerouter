@@ -543,7 +543,7 @@ func prepareClaudeRequest(body map[string]any, provider, apiKey, connectionId, r
 	if messages, ok := body["messages"].([]any); ok {
 		lenMsgs := len(messages)
 
-		var filtered []any
+		filtered := make([]any, 0, lenMsgs)
 
 		for i, msgRaw := range messages {
 			msg, ok := msgRaw.(map[string]any)

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/netutil"
 	"fmt"
 	"net"
 	"net/http"
@@ -189,7 +190,7 @@ func (s *Server) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 			req.Header.Set("x-relay-target", "https://httpbin.org")
 			req.Header.Set("x-relay-path", "/get")
 
-			res, err := http.DefaultClient.Do(req)
+			res, err := netutil.DoHTTP(http.DefaultClient, req)
 			if err != nil {
 				result.err = err.Error()
 				result.status = 500
@@ -224,7 +225,7 @@ func (s *Server) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				result.err = err.Error()
 			} else {
-				res, err := client.Do(req)
+				res, err := netutil.DoHTTP(client, req)
 				if err != nil {
 					result.err = err.Error()
 					result.status = 500

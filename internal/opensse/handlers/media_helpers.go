@@ -39,6 +39,9 @@ func resolveProviderConn(st *store.Store, fb *fallback.Fallback, modelStr string
 }
 
 func mediaCredentials(conn *store.Connection) executor.Credentials {
+	if conn == nil {
+		return executor.Credentials{}
+	}
 	return executor.Credentials{
 		APIKey:               conn.APIKey,
 		AccessToken:          firstNonEmpty(conn.AccessToken, conn.APIKey),
@@ -86,6 +89,9 @@ func postOpenAIPath(ctx context.Context, cred executor.Credentials, path string,
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("nil response from upstream")
 	}
 
 	return &executor.Result{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
@@ -146,6 +152,9 @@ func postMultipart(ctx context.Context, cred executor.Credentials, path string, 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("nil response from upstream")
 	}
 
 	return &executor.Result{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil

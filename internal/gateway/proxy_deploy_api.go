@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"encoding/json"
+	"flamerouter/internal/netutil"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -215,15 +216,21 @@ func (s *Server) handleCloudflareDeploy(w http.ResponseWriter, r *http.Request) 
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	part, _ := mw.CreateFormFile("index.js", "index.js")
-	_, _ = io.WriteString(part, strings.TrimSpace(cfRelayWorker)+"\n")
-	metaPart, _ := mw.CreateFormFile("metadata", "metadata.json")
-	meta, _ := json.Marshal(map[string]any{
-		"main_module":        "index.js",
-		"compatibility_date": "2024-03-20",
-		"observability":      map[string]any{"enabled": true},
-	})
-	_, _ = metaPart.Write(meta)
+	part, errPart := mw.CreateFormFile("index.js", "index.js")
+	if errPart == nil {
+		_, _ = io.WriteString(part, strings.TrimSpace(cfRelayWorker)+"\n")
+	}
+
+	metaPart, errMeta := mw.CreateFormFile("metadata", "metadata.json")
+	if errMeta == nil {
+		meta, _ := json.Marshal(map[string]any{
+			"main_module":        "index.js",
+			"compatibility_date": "2024-03-20",
+			"observability":      map[string]any{"enabled": true},
+		})
+		_, _ = metaPart.Write(meta)
+	}
+
 	_ = mw.Close()
 
 	uploadReq, err := http.NewRequestWithContext(r.Context(), http.MethodPut, workerURL, &buf)
@@ -235,7 +242,7 @@ func (s *Server) handleCloudflareDeploy(w http.ResponseWriter, r *http.Request) 
 	uploadReq.Header.Set("Authorization", "Bearer "+req.APIToken)
 	uploadReq.Header.Set("Content-Type", mw.FormDataContentType())
 
-	uploadRes, err := http.DefaultClient.Do(uploadReq)
+	uploadRes, err := netutil.DoHTTP(http.DefaultClient, uploadReq)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
@@ -262,32 +269,36 @@ func (s *Server) handleCloudflareDeploy(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// enable workers.dev subdomain (best-effort)
-	subReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, workerURL+"/subdomain", strings.NewReader(`{"enabled":true}`))
-	subReq.Header.Set("Authorization", "Bearer "+req.APIToken)
-	subReq.Header.Set("Content-Type", "application/json")
+	subReq, errSub := http.NewRequestWithContext(r.Context(), http.MethodPost, workerURL+"/subdomain", strings.NewReader(`{"enabled":true}`))
+	if errSub == nil {
+		subReq.Header.Set("Authorization", "Bearer "+req.APIToken)
+		subReq.Header.Set("Content-Type", "application/json")
 
-	if res, err := http.DefaultClient.Do(subReq); err == nil {
-		res.Body.Close()
+		if res, err := netutil.DoHTTP(http.DefaultClient, subReq); err == nil && res != nil && res.Body != nil {
+			_ = res.Body.Close()
+		}
 	}
 
 	deployURL := ""
-	acctSubReq, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
+	acctSubReq, errAcct := http.NewRequestWithContext(r.Context(), http.MethodGet,
 		fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/workers/subdomain", req.AccountID), nil)
-	acctSubReq.Header.Set("Authorization", "Bearer "+req.APIToken)
+	if errAcct == nil {
+		acctSubReq.Header.Set("Authorization", "Bearer "+req.APIToken)
 
-	if res, err := http.DefaultClient.Do(acctSubReq); err == nil {
-		defer res.Body.Close()
+		if res, err := netutil.DoHTTP(http.DefaultClient, acctSubReq); err == nil && res != nil && res.Body != nil {
+			defer res.Body.Close()
 
-		var data struct {
-			Result struct {
-				Subdomain string `json:"subdomain"`
-			} `json:"result"`
-		}
+			var data struct {
+				Result struct {
+					Subdomain string `json:"subdomain"`
+				} `json:"result"`
+			}
 
-		_ = json.NewDecoder(res.Body).Decode(&data)
+			_ = json.NewDecoder(res.Body).Decode(&data)
 
-		if data.Result.Subdomain != "" {
-			deployURL = fmt.Sprintf("https://%s.%s.workers.dev", req.ProjectName, data.Result.Subdomain)
+			if data.Result.Subdomain != "" {
+				deployURL = fmt.Sprintf("https://%s.%s.workers.dev", req.ProjectName, data.Result.Subdomain)
+			}
 		}
 	}
 
@@ -359,11 +370,15 @@ func (s *Server) handleDenoDeploy(w http.ResponseWriter, r *http.Request) {
 			"runtime": map[string]any{"type": "dynamic", "entrypoint": "main.ts"},
 		},
 	})
-	createReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, denoAPI+"/apps", bytes.NewReader(createBody))
+	createReq, errCreate := http.NewRequestWithContext(r.Context(), http.MethodPost, denoAPI+"/apps", bytes.NewReader(createBody))
+	if errCreate != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": errCreate.Error()})
+		return
+	}
 	createReq.Header.Set("Authorization", "Bearer "+req.DenoToken)
 	createReq.Header.Set("Content-Type", "application/json")
 
-	createRes, err := http.DefaultClient.Do(createReq)
+	createRes, err := netutil.DoHTTP(http.DefaultClient, createReq)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
@@ -396,11 +411,15 @@ func (s *Server) handleDenoDeploy(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	})
-	deployReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, denoAPI+"/apps/"+app.ID+"/deploy", bytes.NewReader(deployBody))
+	deployReq, errDeploy := http.NewRequestWithContext(r.Context(), http.MethodPost, denoAPI+"/apps/"+app.ID+"/deploy", bytes.NewReader(deployBody))
+	if errDeploy != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": errDeploy.Error()})
+		return
+	}
 	deployReq.Header.Set("Authorization", "Bearer "+req.DenoToken)
 	deployReq.Header.Set("Content-Type", "application/json")
 
-	deployRes, err := http.DefaultClient.Do(deployReq)
+	deployRes, err := netutil.DoHTTP(http.DefaultClient, deployReq)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
@@ -411,11 +430,13 @@ func (s *Server) handleDenoDeploy(w http.ResponseWriter, r *http.Request) {
 	if deployRes.StatusCode < 200 || deployRes.StatusCode >= 300 {
 		text, _ := io.ReadAll(io.LimitReader(deployRes.Body, 4096))
 		// cleanup app
-		del, _ := http.NewRequestWithContext(r.Context(), http.MethodDelete, denoAPI+"/apps/"+app.ID, nil)
-		del.Header.Set("Authorization", "Bearer "+req.DenoToken)
+		del, errDel := http.NewRequestWithContext(r.Context(), http.MethodDelete, denoAPI+"/apps/"+app.ID, nil)
+		if errDel == nil {
+			del.Header.Set("Authorization", "Bearer "+req.DenoToken)
 
-		if res, e := http.DefaultClient.Do(del); e == nil {
-			res.Body.Close()
+			if res, e := netutil.DoHTTP(http.DefaultClient, del); e == nil && res != nil && res.Body != nil {
+				_ = res.Body.Close()
+			}
 		}
 
 		writeJSON(w, deployRes.StatusCode, map[string]any{"error": fmt.Sprintf("Deploy failed (%d): %s", deployRes.StatusCode, text)})
@@ -434,10 +455,13 @@ func (s *Server) handleDenoDeploy(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < 30 && (status == "queued" || status == "building"); i++ {
 		time.Sleep(2 * time.Second)
 
-		stReq, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, denoAPI+"/revisions/"+revision.ID, nil)
+		stReq, errSt := http.NewRequestWithContext(r.Context(), http.MethodGet, denoAPI+"/revisions/"+revision.ID, nil)
+		if errSt != nil {
+			break
+		}
 		stReq.Header.Set("Authorization", "Bearer "+req.DenoToken)
 
-		stRes, err := http.DefaultClient.Do(stReq)
+		stRes, err := netutil.DoHTTP(http.DefaultClient, stReq)
 		if err != nil {
 			break
 		}
@@ -447,17 +471,18 @@ func (s *Server) handleDenoDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		_ = json.NewDecoder(stRes.Body).Decode(&stData)
-		stRes.Body.Close()
+		_ = stRes.Body.Close()
 
 		status = stData.Status
 	}
 
 	if status != "succeeded" {
-		del, _ := http.NewRequestWithContext(r.Context(), http.MethodDelete, denoAPI+"/apps/"+app.ID, nil)
-		del.Header.Set("Authorization", "Bearer "+req.DenoToken)
-
-		if res, e := http.DefaultClient.Do(del); e == nil {
-			res.Body.Close()
+		del, errDel := http.NewRequestWithContext(r.Context(), http.MethodDelete, denoAPI+"/apps/"+app.ID, nil)
+		if errDel == nil {
+			del.Header.Set("Authorization", "Bearer "+req.DenoToken)
+			if res, e := http.DefaultClient.Do(del); e == nil && res != nil && res.Body != nil {
+				_ = res.Body.Close()
+			}
 		}
 
 		if status == "queued" || status == "building" {
@@ -532,11 +557,15 @@ func (s *Server) handleVercelDeploy(w http.ResponseWriter, r *http.Request) {
 		"projectSettings": map[string]any{"framework": nil},
 		"target":          "production",
 	})
-	deployReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, vercelAPI+"/v13/deployments", bytes.NewReader(deployPayload))
+	deployReq, errDeploy := http.NewRequestWithContext(r.Context(), http.MethodPost, vercelAPI+"/v13/deployments", bytes.NewReader(deployPayload))
+	if errDeploy != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": errDeploy.Error()})
+		return
+	}
 	deployReq.Header.Set("Authorization", "Bearer "+req.VercelToken)
 	deployReq.Header.Set("Content-Type", "application/json")
 
-	deployRes, err := http.DefaultClient.Do(deployReq)
+	deployRes, err := netutil.DoHTTP(http.DefaultClient, deployReq)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
@@ -580,12 +609,14 @@ func (s *Server) handleVercelDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	// disable SSO protection (best-effort)
 	patchBody, _ := json.Marshal(map[string]any{"ssoProtection": nil})
-	patchReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPatch, vercelAPI+"/v9/projects/"+projectID, bytes.NewReader(patchBody))
-	patchReq.Header.Set("Authorization", "Bearer "+req.VercelToken)
-	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq, errPatch := http.NewRequestWithContext(r.Context(), http.MethodPatch, vercelAPI+"/v9/projects/"+projectID, bytes.NewReader(patchBody))
+	if errPatch == nil {
+		patchReq.Header.Set("Authorization", "Bearer "+req.VercelToken)
+		patchReq.Header.Set("Content-Type", "application/json")
 
-	if res, err := http.DefaultClient.Do(patchReq); err == nil {
-		res.Body.Close()
+		if res, err := netutil.DoHTTP(http.DefaultClient, patchReq); err == nil && res != nil && res.Body != nil {
+			_ = res.Body.Close()
+		}
 	}
 
 	// poll ready
@@ -594,10 +625,13 @@ func (s *Server) handleVercelDeploy(w http.ResponseWriter, r *http.Request) {
 	var readyURL string
 
 	for time.Now().Before(deadline) {
-		stReq, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, vercelAPI+"/v13/deployments/"+deploymentID, nil)
+		stReq, errSt := http.NewRequestWithContext(r.Context(), http.MethodGet, vercelAPI+"/v13/deployments/"+deploymentID, nil)
+		if errSt != nil {
+			break
+		}
 		stReq.Header.Set("Authorization", "Bearer "+req.VercelToken)
 
-		stRes, err := http.DefaultClient.Do(stReq)
+		stRes, err := netutil.DoHTTP(http.DefaultClient, stReq)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
@@ -609,7 +643,7 @@ func (s *Server) handleVercelDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		_ = json.NewDecoder(stRes.Body).Decode(&stData)
-		stRes.Body.Close()
+		_ = stRes.Body.Close()
 
 		if stData.ReadyState == "READY" {
 			readyURL = stData.URL

@@ -38,6 +38,9 @@ func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken str
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
+	if res == nil {
+		return "", "", time.Time{}, fmt.Errorf("nil refresh result")
+	}
 
 	return res.AccessToken, res.RefreshToken, res.ExpiresAt, nil
 }
@@ -277,7 +280,9 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 
 		if translator.NeedsTranslation(sourceFormat, targetFormat) {
 			var bodyMap map[string]any
-			_ = json.Unmarshal(body, &bodyMap)
+			if err := json.Unmarshal(body, &bodyMap); err != nil || bodyMap == nil {
+				bodyMap = make(map[string]any)
+			}
 			// Pre-pass modality/prefetch also runs inside TranslateRequest
 			translatedBody = translator.DefaultRegistry.TranslateRequest(sourceFormat, targetFormat, bodyMap, translator.TranslateOptions{
 				Model:    modelName,
@@ -465,7 +470,9 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 		cred := connCredentials(conn)
 
 		var m map[string]any
-		_ = json.Unmarshal(body, &m)
+		if err := json.Unmarshal(body, &m); err != nil || m == nil {
+			m = make(map[string]any)
+		}
 		m["model"] = providerID + "/" + modelName
 		m["stream"] = true
 

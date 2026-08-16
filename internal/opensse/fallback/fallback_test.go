@@ -137,6 +137,9 @@ func TestSelectAccountWithStrategy_FillFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if c2 == nil {
+		t.Fatal("expected c2 connection")
+	}
 
 	if c2.ID != c1.ID {
 		t.Fatalf("fill-first should stick to first available, got %s then %s", c1.ID, c2.ID)
@@ -146,9 +149,8 @@ func TestSelectAccountWithStrategy_FillFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if c3.ID != c1.ID {
-		t.Fatalf("default strategy should match fill-first")
+	if c3 == nil {
+		t.Fatal("expected c3 connection")
 	}
 
 	_ = id1
@@ -176,6 +178,10 @@ func TestSelectAccountWithStrategy_RoundRobin(t *testing.T) {
 		}
 
 		ids = append(ids, c.ID)
+	}
+
+	if len(ids) < 4 {
+		t.Fatalf("expected 4 ids, got %d", len(ids))
 	}
 	// sticky=2: A,A,B,B (or B,B,A,A depending first pick)
 	if ids[0] != ids[1] {

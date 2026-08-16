@@ -10,12 +10,14 @@ import (
 
 var (
 	mcpBridgeOnce sync.Once
-	mcpBridge     *mcp.Bridge
+	mcpBridge     = mcp.New()
 )
 
 func getMCPBridge() *mcp.Bridge {
 	mcpBridgeOnce.Do(func() {
-		mcpBridge = mcp.New()
+		if mcpBridge == nil {
+			mcpBridge = mcp.New()
+		}
 	})
 
 	return mcpBridge

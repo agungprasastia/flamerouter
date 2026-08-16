@@ -56,6 +56,9 @@ func exchangeJobToken(ctx context.Context, client *http.Client, pat string) (str
 	if err != nil {
 		return "", time.Time{}, err
 	}
+	if resp == nil || resp.Body == nil {
+		return "", time.Time{}, fmt.Errorf("nil response from upstream")
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -100,6 +103,9 @@ func fetchUserIDForJobToken(ctx context.Context, client *http.Client, jobToken s
 
 	resp, err := client.Do(req)
 	if err != nil {
+		return ""
+	}
+	if resp == nil || resp.Body == nil {
 		return ""
 	}
 	defer resp.Body.Close()

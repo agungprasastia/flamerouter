@@ -48,7 +48,7 @@ func queryCodebuddy(ctx context.Context, opts FetchOptions, providerId, quotaURL
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("CodeBuddy (%s) error: %v", providerId, err)}, nil
 	}

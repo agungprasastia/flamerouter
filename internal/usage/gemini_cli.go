@@ -56,7 +56,7 @@ func fetchGeminiUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Gemini CLI error: %v", err)}, nil
 	}

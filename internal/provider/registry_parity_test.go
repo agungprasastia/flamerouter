@@ -49,6 +49,9 @@ func TestProviderRegistryModelsParity(t *testing.T) {
 
 	// 3. Verify specific new models from 9router
 	codex := provider.GetProvider("codex")
+	if codex == nil {
+		t.Fatal("codex provider not found")
+	}
 	hasGPT56 := false
 
 	for _, m := range codex.Models {
@@ -63,6 +66,9 @@ func TestProviderRegistryModelsParity(t *testing.T) {
 	}
 
 	kiro := provider.GetProvider("kiro")
+	if kiro == nil {
+		t.Fatal("kiro provider not found")
+	}
 	hasClaude5 := false
 
 	for _, m := range kiro.Models {

@@ -12,6 +12,9 @@ import (
 )
 
 func StartDeviceFlow(ctx context.Context, config *OAuthConfig) (*DeviceCodeResponse, error) {
+	if config == nil {
+		return nil, fmt.Errorf("oauth config is nil")
+	}
 	if config.DeviceURL == "" {
 		return nil, fmt.Errorf("provider %s does not support device flow", config.Provider)
 	}
@@ -31,6 +34,9 @@ func StartDeviceFlow(ctx context.Context, config *OAuthConfig) (*DeviceCodeRespo
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("empty device flow response")
 	}
 	defer resp.Body.Close()
 
@@ -52,6 +58,9 @@ func StartDeviceFlow(ctx context.Context, config *OAuthConfig) (*DeviceCodeRespo
 }
 
 func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string, interval int) (*Token, error) {
+	if config == nil {
+		return nil, fmt.Errorf("oauth config is nil")
+	}
 	data := url.Values{}
 	data.Set("client_id", config.ClientID)
 	data.Set("device_code", deviceCode)
@@ -74,6 +83,9 @@ func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
+			continue
+		}
+		if resp == nil || resp.Body == nil {
 			continue
 		}
 

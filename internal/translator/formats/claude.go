@@ -324,7 +324,7 @@ func FixToolUseOrdering(messages []any) []any {
 		msg["content"] = newContent
 	}
 
-	var merged []any
+	merged := make([]any, 0, len(messages))
 
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)

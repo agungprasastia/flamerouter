@@ -13,11 +13,17 @@ import (
 
 // ExchangeGithubDeviceToken polls GitHub device flow then optionally fetches Copilot token.
 func ExchangeGithubDeviceToken(ctx context.Context, deviceCode string, wantCopilot bool) (*Token, map[string]any, error) {
-	cfg := ProviderConfigs["github"]
+	cfg, ok := ProviderConfigs["github"]
+	if !ok || cfg == nil {
+		return nil, nil, fmt.Errorf("github oauth config not found")
+	}
 
 	tok, err := PollDeviceToken(ctx, cfg, deviceCode, 5)
 	if err != nil {
 		return nil, nil, err
+	}
+	if tok == nil {
+		return nil, nil, fmt.Errorf("device token polling returned nil token")
 	}
 
 	extra := map[string]any{}
@@ -50,6 +56,9 @@ func fetchCopilotToken(ctx context.Context, githubToken string) (string, int64, 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", 0, err
+	}
+	if resp == nil || resp.Body == nil {
+		return "", 0, fmt.Errorf("empty copilot token response")
 	}
 
 	defer resp.Body.Close()
@@ -88,7 +97,7 @@ func RefreshKiroToken(ctx context.Context, refreshToken string, psd map[string]a
 
 	// Default: social refresh
 	urlStr := "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
-	if cfg := ProviderConfigs["kiro"]; cfg.RefreshURL != "" {
+	if cfg, ok := ProviderConfigs["kiro"]; ok && cfg != nil && cfg.RefreshURL != "" {
 		urlStr = cfg.RefreshURL
 	}
 
@@ -113,6 +122,9 @@ func RefreshKiroToken(ctx context.Context, refreshToken string, psd map[string]a
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("empty kiro refresh response")
 	}
 
 	defer resp.Body.Close()
@@ -198,6 +210,9 @@ func refreshKiroOIDC(ctx context.Context, refreshToken string, psd map[string]an
 	if err != nil {
 		return nil, err
 	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("empty kiro oidc refresh response")
+	}
 
 	defer resp.Body.Close()
 
@@ -232,12 +247,15 @@ func refreshKiroOIDC(ctx context.Context, refreshToken string, psd map[string]an
 // StartDeviceFlowForProvider starts device flow with provider-specific quirks.
 func StartDeviceFlowForProvider(ctx context.Context, provider string) (*DeviceCodeResponse, error) {
 	cfg, ok := ProviderConfigs[provider]
-	if !ok {
+	if !ok || cfg == nil {
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
 	// github/copilot share device endpoint
 	if provider == "copilot" {
 		cfg = ProviderConfigs["github"]
+		if cfg == nil {
+			return nil, fmt.Errorf("github oauth config missing for copilot")
+		}
 	}
 
 	return StartDeviceFlow(ctx, cfg)

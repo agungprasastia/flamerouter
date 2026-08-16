@@ -216,6 +216,9 @@ func (r *GrokCliResolver) fetchRaw(ctx context.Context, conn *store.Connection) 
 	if err != nil {
 		return nil, 0, err
 	}
+	if resp == nil || resp.Body == nil {
+		return nil, 0, fmt.Errorf("nil response from upstream")
+	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)

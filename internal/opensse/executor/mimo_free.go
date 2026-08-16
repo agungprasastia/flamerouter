@@ -204,6 +204,9 @@ func (e *MimoFreeExecutor) bootstrapJWT(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if resp == nil || resp.Body == nil {
+		return "", fmt.Errorf("nil response from upstream")
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

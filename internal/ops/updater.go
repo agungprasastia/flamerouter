@@ -36,6 +36,9 @@ func CheckVersion() (current, latest string, updateAvailable bool, err error) {
 	if err != nil {
 		return current, "", false, err
 	}
+	if resp == nil || resp.Body == nil {
+		return current, "", false, fmt.Errorf("release check: empty response")
+	}
 
 	defer resp.Body.Close()
 
@@ -87,6 +90,9 @@ func SelfUpdate() error {
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
+	}
+	if resp == nil || resp.Body == nil {
+		return fmt.Errorf("download %s: empty response", assetURL)
 	}
 
 	defer resp.Body.Close()

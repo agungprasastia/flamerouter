@@ -8,6 +8,7 @@ import (
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/opensse/model"
 	"flamerouter/internal/store"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -58,7 +59,10 @@ func Video(ctx context.Context, w http.ResponseWriter, r *http.Request, body []b
 	preferredID := r.Header.Get("x-connection-id")
 
 	conn, errMsg := pickVideoConn(st, fb, providerID, preferredID)
-	if errMsg != "" {
+	if errMsg != "" || conn == nil {
+		if errMsg == "" {
+			errMsg = "connection not found"
+		}
 		jsonError(w, http.StatusBadRequest, errMsg)
 		return nil
 	}
@@ -70,6 +74,10 @@ func Video(ctx context.Context, w http.ResponseWriter, r *http.Request, body []b
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return err
+	}
+	if res == nil || res.Body == nil {
+		jsonError(w, http.StatusBadGateway, "nil response from upstream")
+		return fmt.Errorf("nil response from upstream")
 	}
 
 	defer res.Body.Close()
@@ -98,7 +106,10 @@ func VideoPoll(ctx context.Context, w http.ResponseWriter, r *http.Request, requ
 	preferredID := r.Header.Get("x-connection-id")
 
 	conn, errMsg := pickVideoConn(st, fb, providerID, preferredID)
-	if errMsg != "" {
+	if errMsg != "" || conn == nil {
+		if errMsg == "" {
+			errMsg = "connection not found"
+		}
 		jsonError(w, http.StatusBadRequest, errMsg)
 		return nil
 	}
@@ -110,6 +121,10 @@ func VideoPoll(ctx context.Context, w http.ResponseWriter, r *http.Request, requ
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return err
+	}
+	if res == nil || res.Body == nil {
+		jsonError(w, http.StatusBadGateway, "nil response from upstream")
+		return fmt.Errorf("nil response from upstream")
 	}
 
 	defer res.Body.Close()

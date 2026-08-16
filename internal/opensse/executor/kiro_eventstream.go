@@ -132,8 +132,11 @@ func (s *kiroStreamState) processEvent(w io.Writer, eventType string, payload ma
 			if strings.Contains(content, "</thinking>") {
 				s.inThinking = false
 				parts := strings.SplitN(content, "</thinking>", 2)
-
-				content = strings.TrimPrefix(parts[1], "\n")
+				if len(parts) > 1 {
+					content = strings.TrimPrefix(parts[1], "\n")
+				} else {
+					content = ""
+				}
 			} else {
 				content = ""
 			}
@@ -141,7 +144,11 @@ func (s *kiroStreamState) processEvent(w io.Writer, eventType string, payload ma
 			s.inThinking = true
 			if strings.Contains(content, "</thinking>") {
 				s.inThinking = false
-				before := strings.SplitN(content, "<thinking>", 2)[0]
+				beforeParts := strings.SplitN(content, "<thinking>", 2)
+				before := ""
+				if len(beforeParts) > 0 {
+					before = beforeParts[0]
+				}
 
 				after := ""
 				if parts := strings.SplitN(content, "</thinking>", 2); len(parts) > 1 {
@@ -150,7 +157,12 @@ func (s *kiroStreamState) processEvent(w io.Writer, eventType string, payload ma
 
 				content = before + after
 			} else {
-				content = strings.SplitN(content, "<thinking>", 2)[0]
+				beforeParts := strings.SplitN(content, "<thinking>", 2)
+				if len(beforeParts) > 0 {
+					content = beforeParts[0]
+				} else {
+					content = ""
+				}
 			}
 		}
 

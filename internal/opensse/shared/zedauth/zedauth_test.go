@@ -242,7 +242,10 @@ func TestFetchZedLLMTokenSuccess(t *testing.T) {
 	// Use custom client test by overriding endpoint via test client
 	client := server.Client()
 	reqBody, _ := json.Marshal(map[string]string{"client_id": "client_test_123"})
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, strings.NewReader(string(reqBody)))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, strings.NewReader(string(reqBody)))
+	if err != nil {
+		t.Fatalf("new request failed: %v", err)
+	}
 	req.Header.Set("Authorization", zedauth.BuildZedUserAuthHeader("test_access_token"))
 	req.Header.Set(zedauth.ZED_HEADERS["clientSupportsStatus"], "1")
 	req.Header.Set(zedauth.ZED_HEADERS["clientSupportsStreamEnded"], "1")
@@ -251,6 +254,9 @@ func TestFetchZedLLMTokenSuccess(t *testing.T) {
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
+	}
+	if resp == nil || resp.Body == nil {
+		t.Fatal("nil response from test server")
 	}
 	defer resp.Body.Close()
 

@@ -25,7 +25,10 @@ func ImageGeneration(ctx context.Context, w http.ResponseWriter, body []byte, st
 	modelStr, _ := m["model"].(string)
 
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
-	if errMsg != "" {
+	if errMsg != "" || conn == nil {
+		if errMsg == "" {
+			errMsg = "connection not found"
+		}
 		jsonError(w, http.StatusBadRequest, errMsg)
 		return nil
 	}

@@ -1,0 +1,94 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    # --- Correctness / bug detection ---
+    - errcheck        # semua error wajib di-handle (mirip Result<T,E> tak boleh diabaikan)
+    - govet
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - typecheck
+    - gocritic
+    - bodyclose       # HTTP response body wajib ditutup
+    - rowserrcheck    # sql.Rows.Err() wajib dicek
+    - sqlclosecheck
+    - noctx           # wajib pakai context pada request
+    - nilerr          # deteksi "return nil" padahal error != nil
+    - nilnil          # deteksi return (nil, nil) yang ambigu
+
+    # --- Type & exhaustiveness (mendekati exhaustive match Rust) ---
+    - exhaustive       # switch atas enum/const harus lengkap
+    - exhaustruct       # struct literal harus mengisi semua field (opsional, ketat)
+
+    # --- Security ---
+    - gosec
+
+    # --- Style / disiplin kode ---
+    - revive
+    - unconvert
+    - unparam
+    - wastedassign
+    - prealloc
+    - misspell
+    - goimports
+    - gofumpt          # superset gofmt, lebih ketat
+    - whitespace
+    - wsl
+    - dupl
+    - gocyclo
+    - funlen
+    - nestif
+    - cyclop
+
+    # --- Naming & docs ---
+    - stylecheck
+    - godot            # komentar harus diakhiri titik
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  govet:
+    enable-all: true
+  gocyclo:
+    min-complexity: 10
+  cyclop:
+    max-complexity: 10
+  funlen:
+    lines: 60
+    statements: 40
+  nestif:
+    min-complexity: 4
+  dupl:
+    threshold: 100
+  exhaustive:
+    default-signifies-exhaustive: false
+  revive:
+    severity: error
+    rules:
+      - name: exported
+        severity: error
+      - name: error-return
+      - name: error-naming
+      - name: unreachable-code
+      - name: unused-parameter
+      - name: indent-error-flow
+      - name: superfluous-else
+  gosec:
+    excludes: []
+  staticcheck:
+    checks: ["all"]
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  # Jangan sembunyikan warning apapun, biar AI/CI benar-benar menegakkan aturan.
+
+severity:
+  default-severity: error

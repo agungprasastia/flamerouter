@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flamerouter/internal/translator"
 	"flamerouter/internal/translator/concerns"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -70,6 +71,9 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, cred Credentials, mod
 	resp, err := e.client().Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("nil response from upstream")
 	}
 
 	if resp.StatusCode >= 400 {

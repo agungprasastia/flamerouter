@@ -97,7 +97,7 @@ func (m *ModelRewriter) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	if len(body) > 0 && (strings.Contains(r.Header.Get("Content-Type"), "json") || looksJSON(body)) {
 		var obj map[string]any
-		if json.Unmarshal(body, &obj) == nil {
+		if json.Unmarshal(body, &obj) == nil && obj != nil {
 			if model, ok := obj["model"].(string); ok && model != "" {
 				m.mu.RLock()
 				if to, ok := m.aliases[model]; ok && to != "" {
@@ -152,6 +152,13 @@ func (m *ModelRewriter) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(`{"error":{"message":"` + escapeJSON(err.Error()) + `","type":"mitm_error"}}`))
 
+		return
+	}
+	if res == nil || res.Body == nil {
+		log.Printf("[mitm:%s] empty response from router", m.name)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":{"message":"empty router response","type":"mitm_error"}}`))
 		return
 	}
 

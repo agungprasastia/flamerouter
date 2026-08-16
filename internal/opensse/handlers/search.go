@@ -99,6 +99,10 @@ func searxngSearch(ctx context.Context, w http.ResponseWriter, query string, opt
 		jsonError(w, http.StatusBadGateway, fmt.Sprintf("searxng unreachable: %v", err))
 		return err
 	}
+	if resp == nil || resp.Body == nil {
+		jsonError(w, http.StatusBadGateway, "searxng nil response")
+		return fmt.Errorf("searxng nil response")
+	}
 
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

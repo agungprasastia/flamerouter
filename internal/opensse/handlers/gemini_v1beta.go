@@ -8,6 +8,7 @@ import (
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -141,6 +142,9 @@ func forwardGeminiNative(ctx context.Context, w http.ResponseWriter, r *http.Req
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
+	}
+	if resp == nil || resp.Body == nil {
+		return fmt.Errorf("nil response from upstream")
 	}
 
 	defer resp.Body.Close()

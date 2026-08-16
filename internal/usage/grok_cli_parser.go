@@ -265,7 +265,7 @@ func fetchGrokGrpcCredits(ctx context.Context, opts FetchOptions) (float64, *str
 	req.Header.Set("X-Grpc-Web", "1")
 	req.Header.Set("Accept", "application/grpc-web+proto")
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return 0, nil, false
 	}

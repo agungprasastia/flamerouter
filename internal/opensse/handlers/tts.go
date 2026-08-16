@@ -26,7 +26,10 @@ func TTS(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Stor
 	modelStr, _ := m["model"].(string)
 
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
-	if errMsg != "" {
+	if errMsg != "" || conn == nil {
+		if errMsg == "" {
+			errMsg = "connection not found"
+		}
 		jsonError(w, http.StatusBadRequest, errMsg)
 		return nil
 	}
@@ -86,7 +89,10 @@ func STT(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Stor
 	modelStr, _ := m["model"].(string)
 
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
-	if errMsg != "" {
+	if errMsg != "" || conn == nil {
+		if errMsg == "" {
+			errMsg = "connection not found"
+		}
 		jsonError(w, http.StatusBadRequest, errMsg)
 		return nil
 	}
@@ -158,7 +164,10 @@ func STTMultipart(ctx context.Context, w http.ResponseWriter, r *http.Request, s
 	modelStr := r.FormValue("model")
 
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
-	if errMsg != "" {
+	if errMsg != "" || conn == nil {
+		if errMsg == "" {
+			errMsg = "connection not found"
+		}
 		jsonError(w, http.StatusBadRequest, errMsg)
 		return nil
 	}

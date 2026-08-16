@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flamerouter/internal/config"
 	"flamerouter/internal/infra/headroom"
+	"flamerouter/internal/netutil"
 	"io"
 	"net"
 	"net/http"
@@ -214,7 +215,7 @@ func (s *Server) handleHeadroomProxy(w http.ResponseWriter, r *http.Request) {
 
 	outReq.Header.Del("Host")
 
-	res, err := http.DefaultClient.Do(outReq)
+	res, err := netutil.DoHTTP(http.DefaultClient, outReq)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return

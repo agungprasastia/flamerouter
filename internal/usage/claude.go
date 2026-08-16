@@ -49,7 +49,7 @@ func fetchClaudeUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, err
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
 	req.Header.Set("anthropic-version", claudeAPIVersion)
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Claude connected. Unable to fetch usage: %v", err)}, nil
 	}
@@ -127,7 +127,7 @@ func fetchClaudeUsageLegacy(ctx context.Context, opts FetchOptions) (*QuotaResul
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 	req.Header.Set("anthropic-version", claudeAPIVersion)
 
-	res, err := opts.HTTPClient.Do(req)
+	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
 		return &QuotaResult{Message: fmt.Sprintf("Claude connected. Unable to fetch usage: %v", err)}, nil
 	}
@@ -156,7 +156,7 @@ func fetchClaudeUsageLegacy(ctx context.Context, opts FetchOptions) (*QuotaResul
 			uReq.Header.Set("Authorization", "Bearer "+opts.AccessToken)
 			uReq.Header.Set("anthropic-version", claudeAPIVersion)
 
-			if uRes, err := opts.HTTPClient.Do(uReq); err == nil {
+			if uRes, err := doHTTP(opts.HTTPClient, uReq); err == nil {
 				defer uRes.Body.Close()
 
 				if uRes.StatusCode >= 200 && uRes.StatusCode < 300 {

@@ -173,6 +173,9 @@ func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, force
 	if err != nil {
 		return "", err
 	}
+	if resp == nil || resp.Body == nil {
+		return "", fmt.Errorf("nil response from upstream")
+	}
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
