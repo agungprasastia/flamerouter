@@ -3,7 +3,17 @@
 import { create } from "zustand";
 import { CLIENT_STORE_TTL_MS } from "@/shared/constants/config";
 
-const useSettingsStore = create((set, get) => ({
+export interface SettingsState {
+  settings: any;
+  loading: boolean;
+  error: string | null;
+  lastFetched: number;
+  invalidate: () => void;
+  fetchSettings: (opts?: { force?: boolean }) => Promise<any>;
+  patchSettings: (patch: any) => Promise<any>;
+}
+
+const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: null,
   loading: false,
   error: null,

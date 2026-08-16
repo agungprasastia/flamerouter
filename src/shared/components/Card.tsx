@@ -1,6 +1,19 @@
 "use client";
 
+import React, { ReactNode, HTMLAttributes } from "react";
 import { cn } from "@/shared/utils/cn";
+
+export interface CardProps extends HTMLAttributes<HTMLDivElement> {
+  children?: ReactNode;
+  title?: ReactNode | string;
+  subtitle?: ReactNode | string;
+  icon?: string | ReactNode;
+  action?: ReactNode;
+  padding?: "none" | "xs" | "sm" | "md" | "lg" | string;
+  hover?: boolean;
+  elev?: boolean;
+  className?: string;
+}
 
 export default function Card({
   children,
@@ -13,8 +26,8 @@ export default function Card({
   elev = false,
   className,
   ...props
-}) {
-  const paddings = {
+}: CardProps) {
+  const paddings: Record<string, string> = {
     none: "",
     xs: "p-3",
     sm: "p-4",
@@ -29,7 +42,7 @@ export default function Card({
         elev && "shadow-[var(--shadow-elev)]",
         hover &&
           "hover:-translate-y-0.5 hover:border-brand-500/40 transition-[transform,border-color] cursor-pointer",
-        paddings[padding],
+        paddings[padding] || paddings.md,
         className,
       )}
       {...props}
@@ -39,9 +52,13 @@ export default function Card({
           <div className="flex items-center gap-3">
             {icon && (
               <div className="p-2 rounded-[6px_1px_6px_1px] bg-bg text-primary">
-                <span className="material-symbols-outlined text-[20px]">
-                  {icon}
-                </span>
+                {typeof icon === "string" ? (
+                  <span className="material-symbols-outlined text-[20px]">
+                    {icon}
+                  </span>
+                ) : (
+                  icon
+                )}
               </div>
             )}
             <div>
@@ -61,7 +78,7 @@ export default function Card({
   );
 }
 
-Card.Section = function CardSection({ children, className, ...props }) {
+Card.Section = function CardSection({ children, className, ...props }: any) {
   return (
     <div
       className={cn(
@@ -76,7 +93,7 @@ Card.Section = function CardSection({ children, className, ...props }) {
   );
 };
 
-Card.Row = function CardRow({ children, className, ...props }) {
+Card.Row = function CardRow({ children, className, ...props }: any) {
   return (
     <div
       className={cn(
@@ -97,7 +114,7 @@ Card.ListItem = function CardListItem({
   actions,
   className,
   ...props
-}) {
+}: any) {
   return (
     <div
       className={cn(

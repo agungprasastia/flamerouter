@@ -1123,3 +1123,4 @@ module.exports = {
   hasDnsPrivilege,
   removeAllDNSEntriesSync,
 };
+export {};

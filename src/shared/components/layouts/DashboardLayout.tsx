@@ -126,7 +126,7 @@ export default function DashboardLayout({ children }) {
 
       {/* Sidebar - Desktop */}
       <div className="hidden lg:flex">
-        <Sidebar />
+        <Sidebar onClose={() => {}} />
       </div>
 
       {/* Sidebar - Mobile */}

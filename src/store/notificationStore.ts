@@ -5,14 +5,35 @@
 
 import { create } from "zustand";
 
+export interface NotificationEntry {
+  id: number;
+  type: string;
+  message: string;
+  title?: string | null;
+  duration: number;
+  dismissible: boolean;
+  createdAt: number;
+}
+
+export interface NotificationStore {
+  notifications: NotificationEntry[];
+  addNotification: (notification: Partial<NotificationEntry> & { message: string }) => number;
+  removeNotification: (id: number) => void;
+  clearAll: () => void;
+  success: (message: string, title?: string) => number;
+  error: (message: string, title?: string) => number;
+  warning: (message: string, title?: string) => number;
+  info: (message: string, title?: string) => number;
+}
+
 let idCounter = 0;
 
-export const useNotificationStore = create((set, get) => ({
+export const useNotificationStore = create<NotificationStore>((set, get) => ({
   notifications: [],
 
   addNotification: (notification) => {
     const id = ++idCounter;
-    const entry = {
+    const entry: NotificationEntry = {
       id,
       type: notification.type || "info",
       message: notification.message,

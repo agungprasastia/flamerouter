@@ -1,6 +1,22 @@
 "use client";
 
+import React, { InputHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/shared/utils/cn";
+
+export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+  label?: string;
+  type?: string;
+  placeholder?: string;
+  value?: any;
+  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  error?: string | null;
+  hint?: string | null;
+  icon?: string | ReactNode;
+  disabled?: boolean;
+  required?: boolean;
+  className?: string;
+  inputClassName?: string;
+}
 
 export default function Input({
   label,
@@ -16,7 +32,7 @@ export default function Input({
   className,
   inputClassName,
   ...props
-}) {
+}: InputProps) {
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
       {label && (
@@ -28,9 +44,13 @@ export default function Input({
       <div className="relative">
         {icon && (
           <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-text-muted">
-            <span className="material-symbols-outlined text-[20px]">
-              {icon}
-            </span>
+            {typeof icon === "string" ? (
+              <span className="material-symbols-outlined text-[20px]">
+                {icon}
+              </span>
+            ) : (
+              icon
+            )}
           </div>
         )}
         <input

@@ -1,10 +1,16 @@
 "use client";
 
+import React, { HTMLAttributes } from "react";
 import { cn } from "@/shared/utils/cn";
 
+export interface SpinnerProps {
+  size?: "sm" | "md" | "lg" | "xl" | string;
+  className?: string;
+}
+
 // Spinner loading
-export function Spinner({ size = "md", className }) {
-  const sizes = {
+export function Spinner({ size = "md", className }: SpinnerProps) {
+  const sizes: Record<string, string> = {
     sm: "size-4",
     md: "size-6",
     lg: "size-8",
@@ -15,7 +21,7 @@ export function Spinner({ size = "md", className }) {
     <span
       className={cn(
         "material-symbols-outlined animate-spin text-brand-500",
-        sizes[size],
+        sizes[size] || sizes.md,
         className,
       )}
     >
@@ -25,7 +31,7 @@ export function Spinner({ size = "md", className }) {
 }
 
 // Full page loading
-export function PageLoading({ message = "Loading..." }) {
+export function PageLoading({ message = "Loading..." }: { message?: string }) {
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-bg">
       <Spinner size="xl" />
@@ -35,7 +41,7 @@ export function PageLoading({ message = "Loading..." }) {
 }
 
 // Skeleton loading
-export function Skeleton({ className, ...props }) {
+export function Skeleton({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn("animate-pulse rounded-[4px] bg-surface-2", className)}
@@ -58,7 +64,7 @@ export function CardSkeleton() {
   );
 }
 
-export default function Loading({ type = "spinner", ...props }) {
+export default function Loading({ type = "spinner", ...props }: { type?: string; [key: string]: any }) {
   switch (type) {
     case "page":
       return <PageLoading {...props} />;

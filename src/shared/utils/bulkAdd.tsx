@@ -17,13 +17,21 @@
 // path is unreachable from the bulk modal. Upgrade path: a backend
 // "skip-if-exists" flag on POST /api/providers if single-add ever needs it.
 
+export interface BulkAddOpts {
+  isCloudflareAi?: boolean;
+}
+
+export interface BulkAddEntry {
+  name: string;
+  apiKey: string;
+  skipped: boolean;
+  providerSpecificData?: Record<string, any>;
+}
+
 /**
  * Parse one pipe-separated bulk line into { baseName, apiKey, providerSpecificData? }.
- * @param {string} line
- * @param {{isCloudflareAi?: boolean}} [opts]
- * @returns {{baseName: string, apiKey: string, providerSpecificData?: object}|null}
  */
-function parseLine(line, opts = {}) {
+function parseLine(line: string, opts: BulkAddOpts = {}) {
   const { isCloudflareAi = false } = opts;
   const parts = line.split("|");
 
@@ -53,13 +61,12 @@ function parseLine(line, opts = {}) {
 
 /**
  * Plan a bulk add: parse lines, assign collision-free "<base> <n>" names.
- *
- * @param {string[]} lines raw paste lines
- * @param {string[]|null|undefined} existingNames connection names already saved
- * @param {{isCloudflareAi?: boolean}} [opts]
- * @returns {{name: string, apiKey: string, skipped: boolean, providerSpecificData?: object}[]}
  */
-export function planBulkAdd(lines, existingNames, opts = {}) {
+export function planBulkAdd(
+  lines: string[],
+  existingNames?: string[] | null,
+  opts: BulkAddOpts = {},
+): BulkAddEntry[] {
   const { isCloudflareAi = false } = opts;
 
   const safeExisting = Array.isArray(existingNames) ? existingNames : [];
@@ -67,7 +74,7 @@ export function planBulkAdd(lines, existingNames, opts = {}) {
     safeExisting.map((n) => (typeof n === "string" ? n.toLowerCase() : "")),
   );
 
-  const out = [];
+  const out: BulkAddEntry[] = [];
   for (const raw of lines) {
     const line = typeof raw === "string" ? raw.trim() : "";
     if (!line) continue;
@@ -80,7 +87,7 @@ export function planBulkAdd(lines, existingNames, opts = {}) {
     // Gap-fill from 1: smallest free "<base> <n>" not in `used`.
     // O(batch * existing) — fine for bulk add (tens to low hundreds of keys).
     let idx = 1;
-    let name;
+    let name: string;
     for (;;) {
       name = `${base} ${idx}`;
       if (!used.has(name.toLowerCase())) break;
@@ -88,7 +95,7 @@ export function planBulkAdd(lines, existingNames, opts = {}) {
     }
     used.add(name.toLowerCase());
 
-    const entry = { name, apiKey: parsed.apiKey, skipped: false };
+    const entry: BulkAddEntry = { name, apiKey: parsed.apiKey, skipped: false };
     if (parsed.providerSpecificData)
       entry.providerSpecificData = parsed.providerSpecificData;
     out.push(entry);

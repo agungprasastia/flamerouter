@@ -1,6 +1,18 @@
 "use client";
 
+import React from "react";
 import { cn } from "@/shared/utils/cn";
+
+export interface AvatarProps {
+  src?: string | null;
+  alt?: string;
+  name?: string;
+  size?: "xs" | "sm" | "md" | "lg" | "xl" | string;
+  className?: string;
+  providerId?: string;
+  fallbackText?: string;
+  fallbackColor?: string;
+}
 
 export default function Avatar({
   src,
@@ -8,8 +20,11 @@ export default function Avatar({
   name,
   size = "md",
   className,
-}) {
-  const sizes = {
+  providerId,
+  fallbackText,
+  fallbackColor,
+}: AvatarProps) {
+  const sizes: Record<string, string> = {
     xs: "size-6 text-xs",
     sm: "size-8 text-sm",
     md: "size-10 text-base",
@@ -18,7 +33,8 @@ export default function Avatar({
   };
 
   // Get initials from name
-  const getInitials = (name) => {
+  const getInitials = (name?: string) => {
+    if (fallbackText) return fallbackText;
     if (!name) return "?";
     const parts = name.split(" ");
     if (parts.length >= 2) {
@@ -28,7 +44,8 @@ export default function Avatar({
   };
 
   // Generate color from name
-  const getColorFromName = (name) => {
+  const getColorFromName = (name?: string) => {
+    if (fallbackColor) return fallbackColor;
     if (!name) return "bg-primary";
     const colors = [
       "bg-red-500",
@@ -59,7 +76,7 @@ export default function Avatar({
         className={cn(
           "rounded-full bg-cover bg-center bg-no-repeat",
           "ring-2 ring-white dark:ring-surface-dark shadow-sm",
-          sizes[size],
+          sizes[size] || sizes.md,
           className,
         )}
         style={{ backgroundImage: `url(${src})` }}
@@ -74,7 +91,7 @@ export default function Avatar({
       className={cn(
         "rounded-full flex items-center justify-center font-semibold text-white",
         "ring-2 ring-white dark:ring-surface-dark shadow-sm",
-        sizes[size],
+        sizes[size] || sizes.md,
         getColorFromName(name),
         className,
       )}

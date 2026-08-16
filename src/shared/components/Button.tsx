@@ -1,5 +1,6 @@
 "use client";
 
+import React, { ReactNode, ButtonHTMLAttributes } from "react";
 import { cn } from "@/shared/utils/cn";
 
 const variants = {
@@ -22,12 +23,24 @@ const sizes = {
   lg: "h-11 px-6 text-sm rounded-[10px]",
 };
 
-const renderIcon = (value) =>
+const renderIcon = (value: ReactNode | string) =>
   typeof value === "string" ? (
     <span className="material-symbols-outlined text-[18px]">{value}</span>
   ) : (
     value
   );
+
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  children?: ReactNode;
+  variant?: keyof typeof variants | string;
+  size?: keyof typeof sizes | string;
+  icon?: ReactNode | string;
+  iconRight?: ReactNode | string;
+  disabled?: boolean;
+  loading?: boolean;
+  fullWidth?: boolean;
+  className?: string;
+}
 
 export default function Button({
   children,
@@ -40,14 +53,14 @@ export default function Button({
   fullWidth = false,
   className,
   ...props
-}) {
+}: ButtonProps) {
   return (
     <button
       className={cn(
         "inline-flex items-center justify-center gap-2 font-semibold transition-all duration-150 ease-out cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
         "active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100",
-        variants[variant],
-        sizes[size],
+        variants[variant as keyof typeof variants] || variants.primary,
+        sizes[size as keyof typeof sizes] || sizes.md,
         fullWidth && "w-full",
         className,
       )}

@@ -78,7 +78,11 @@ const systemItems = [
   { href: "/dashboard/skills", label: "Skills", icon: Blocks },
 ];
 
-export default function Sidebar({ onClose }) {
+export interface SidebarProps {
+  onClose?: () => void;
+}
+
+export default function Sidebar({ onClose }: SidebarProps) {
   const pathname = usePathname();
   const [mediaOpen, setMediaOpen] = useState(false);
   const [isDisconnected, setIsDisconnected] = useState(false);
@@ -489,6 +493,16 @@ Sidebar.propTypes = {
   onClose: PropTypes.func,
 };
 
+interface ManualUpdatePanelProps {
+  latestVersion?: string;
+  installCmd: string;
+  copied?: boolean;
+  onCopyAndShutdown: () => void;
+  onCancel: () => void;
+  countdown?: number;
+  isDisconnected?: boolean;
+}
+
 function ManualUpdatePanel({
   latestVersion,
   installCmd,
@@ -497,7 +511,7 @@ function ManualUpdatePanel({
   onCancel,
   countdown,
   isDisconnected,
-}) {
+}: ManualUpdatePanelProps) {
   const isCountingDown = countdown > 0;
   return (
     <div className="w-full max-w-lg rounded-xl bg-neutral-900/95 border border-white/10 p-6 text-white">
@@ -574,13 +588,3 @@ function ManualUpdatePanel({
     </div>
   );
 }
-
-ManualUpdatePanel.propTypes = {
-  latestVersion: PropTypes.string,
-  installCmd: PropTypes.string.isRequired,
-  copied: PropTypes.bool,
-  onCopyAndShutdown: PropTypes.func.isRequired,
-  onCancel: PropTypes.func.isRequired,
-  countdown: PropTypes.number,
-  isDisconnected: PropTypes.bool,
-};

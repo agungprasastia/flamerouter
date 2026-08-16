@@ -1,9 +1,21 @@
 "use client";
 
-import { useEffect } from "react";
+import React, { ReactNode, useEffect } from "react";
 import { cn } from "@/shared/utils/cn";
 import Button from "./Button";
 import Tooltip from "./Tooltip";
+
+export interface ModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title?: ReactNode | string;
+  children?: ReactNode;
+  footer?: ReactNode;
+  size?: "sm" | "md" | "lg" | "xl" | "full" | string;
+  closeOnOverlay?: boolean;
+  showTrafficLights?: boolean;
+  className?: string;
+}
 
 export default function Modal({
   isOpen,
@@ -15,8 +27,8 @@ export default function Modal({
   closeOnOverlay = true,
   showTrafficLights = true,
   className,
-}) {
-  const sizes = {
+}: ModalProps) {
+  const sizes: Record<string, string> = {
     sm: "max-w-sm",
     md: "max-w-md",
     lg: "max-w-lg",
@@ -36,7 +48,7 @@ export default function Modal({
   }, [isOpen]);
 
   useEffect(() => {
-    const handleEscape = (e) => {
+    const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isOpen) onClose();
     };
     document.addEventListener("keydown", handleEscape);
@@ -60,7 +72,7 @@ export default function Modal({
           "border border-border-subtle",
           "rounded-[10px_2px_10px_2px] shadow-[var(--shadow-elev)]",
           "fade-in",
-          sizes[size],
+          sizes[size] || sizes.md,
           className,
         )}
       >
@@ -132,7 +144,7 @@ export function ConfirmModal({
   cancelText = "Cancel",
   variant = "danger",
   loading = false,
-}) {
+}: any) {
   return (
     <Modal
       isOpen={isOpen}

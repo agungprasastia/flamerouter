@@ -1,18 +1,27 @@
 "use client";
 
 import { useState } from "react";
-import PropTypes from "prop-types";
 import {
   getProviderIconSrc,
   markProviderIconMissing,
 } from "@/shared/utils/providerIcon";
 
-function resolveSrc(src, providerId) {
+function resolveSrc(src?: string | null, providerId?: string | null) {
   if (providerId) return getProviderIconSrc(providerId);
   if (!src) return null;
   const m = String(src).match(/^\/providers\/([^/]+)\.png$/i);
   if (m) return getProviderIconSrc(m[1]);
   return src;
+}
+
+export interface ProviderIconProps {
+  src?: string | null;
+  providerId?: string | null;
+  alt?: string;
+  size?: number;
+  className?: string;
+  fallbackText?: string;
+  fallbackColor?: string;
 }
 
 export default function ProviderIcon({
@@ -23,7 +32,7 @@ export default function ProviderIcon({
   className = "",
   fallbackText = "?",
   fallbackColor,
-}) {
+}: ProviderIconProps) {
   const effectiveSrc = resolveSrc(src, providerId);
   const [errored, setErrored] = useState(false);
 
@@ -61,13 +70,6 @@ export default function ProviderIcon({
     />
   );
 }
-
-ProviderIcon.propTypes = {
-  src: PropTypes.string,
-  providerId: PropTypes.string,
-  alt: PropTypes.string,
-  size: PropTypes.number,
-  className: PropTypes.string,
   fallbackText: PropTypes.string,
   fallbackColor: PropTypes.string,
 };

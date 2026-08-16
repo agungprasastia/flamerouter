@@ -1,6 +1,26 @@
 "use client";
 
+import React, { SelectHTMLAttributes } from "react";
 import { cn } from "@/shared/utils/cn";
+
+export interface SelectOption {
+  value: any;
+  label: any;
+}
+
+export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
+  label?: string;
+  options?: SelectOption[];
+  value?: any;
+  onChange?: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  placeholder?: string;
+  error?: string | null;
+  hint?: string | null;
+  disabled?: boolean;
+  required?: boolean;
+  className?: string;
+  selectClassName?: string;
+}
 
 export default function Select({
   label,
@@ -15,7 +35,7 @@ export default function Select({
   className,
   selectClassName,
   ...props
-}) {
+}: SelectProps) {
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
       {label && (

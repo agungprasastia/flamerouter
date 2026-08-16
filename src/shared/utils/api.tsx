@@ -2,17 +2,23 @@
  * API utility functions for making HTTP requests
  */
 
-const DEFAULT_HEADERS = {
+const DEFAULT_HEADERS: Record<string, string> = {
   "Content-Type": "application/json",
 };
 
+export interface FetchOptions extends RequestInit {
+  headers?: Record<string, string>;
+}
+
+export interface ApiError extends Error {
+  status?: number;
+  data?: any;
+}
+
 /**
  * Make a GET request
- * @param {string} url - API endpoint
- * @param {object} options - Fetch options
- * @returns {Promise<object>}
  */
-export async function get(url, options = {}) {
+export async function get(url: string, options: FetchOptions = {}) {
   const response = await fetch(url, {
     method: "GET",
     headers: { ...DEFAULT_HEADERS, ...options.headers },
@@ -23,12 +29,8 @@ export async function get(url, options = {}) {
 
 /**
  * Make a POST request
- * @param {string} url - API endpoint
- * @param {object} data - Request body
- * @param {object} options - Fetch options
- * @returns {Promise<object>}
  */
-export async function post(url, data, options = {}) {
+export async function post(url: string, data?: any, options: FetchOptions = {}) {
   const response = await fetch(url, {
     method: "POST",
     headers: { ...DEFAULT_HEADERS, ...options.headers },
@@ -40,12 +42,8 @@ export async function post(url, data, options = {}) {
 
 /**
  * Make a PUT request
- * @param {string} url - API endpoint
- * @param {object} data - Request body
- * @param {object} options - Fetch options
- * @returns {Promise<object>}
  */
-export async function put(url, data, options = {}) {
+export async function put(url: string, data?: any, options: FetchOptions = {}) {
   const response = await fetch(url, {
     method: "PUT",
     headers: { ...DEFAULT_HEADERS, ...options.headers },
@@ -57,11 +55,8 @@ export async function put(url, data, options = {}) {
 
 /**
  * Make a DELETE request
- * @param {string} url - API endpoint
- * @param {object} options - Fetch options
- * @returns {Promise<object>}
  */
-export async function del(url, options = {}) {
+export async function del(url: string, options: FetchOptions = {}) {
   const response = await fetch(url, {
     method: "DELETE",
     headers: { ...DEFAULT_HEADERS, ...options.headers },
@@ -72,14 +67,12 @@ export async function del(url, options = {}) {
 
 /**
  * Handle API response
- * @param {Response} response - Fetch response
- * @returns {Promise<object>}
  */
-async function handleResponse(response) {
+async function handleResponse(response: Response) {
   const data = await response.json();
 
   if (!response.ok) {
-    const error = new Error(data.error || "An error occurred");
+    const error = new Error(data.error || "An error occurred") as ApiError;
     error.status = response.status;
     error.data = data;
     throw error;

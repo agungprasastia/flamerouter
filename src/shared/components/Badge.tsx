@@ -1,5 +1,6 @@
 "use client";
 
+import React, { ReactNode } from "react";
 import { cn } from "@/shared/utils/cn";
 
 const variants = {
@@ -17,6 +18,15 @@ const sizes = {
   lg: "px-3 py-1.5 text-sm",
 };
 
+export interface BadgeProps {
+  children?: ReactNode;
+  variant?: keyof typeof variants | string;
+  size?: keyof typeof sizes | string;
+  dot?: boolean;
+  icon?: string | ReactNode;
+  className?: string;
+}
+
 export default function Badge({
   children,
   variant = "default",
@@ -24,13 +34,13 @@ export default function Badge({
   dot = false,
   icon,
   className,
-}) {
+}: BadgeProps) {
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1.5 rounded-[4px] font-semibold font-mono tracking-[0.04em]",
-        variants[variant],
-        sizes[size],
+        variants[variant as keyof typeof variants] || variants.default,
+        sizes[size as keyof typeof sizes] || sizes.md,
         className,
       )}
     >
@@ -48,7 +58,11 @@ export default function Badge({
         />
       )}
       {icon && (
-        <span className="material-symbols-outlined text-[14px]">{icon}</span>
+        typeof icon === "string" ? (
+          <span className="material-symbols-outlined text-[14px]">{icon}</span>
+        ) : (
+          icon
+        )
       )}
       {children}
     </span>

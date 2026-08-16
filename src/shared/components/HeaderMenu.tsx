@@ -7,7 +7,15 @@ import ChangelogModal from "./ChangelogModal";
 import { ConfirmModal } from "./Modal";
 import { Ellipsis, History, LogOut, Moon, Power, Sun } from "lucide-react";
 
-function MenuItem({ icon, label, onClick, trailing, danger }) {
+interface MenuItemProps {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  trailing?: React.ReactNode;
+  danger?: boolean;
+}
+
+function MenuItem({ icon, label, onClick, trailing, danger }: MenuItemProps) {
   return (
     <button
       onClick={onClick}
@@ -24,15 +32,7 @@ function MenuItem({ icon, label, onClick, trailing, danger }) {
   );
 }
 
-MenuItem.propTypes = {
-  icon: PropTypes.node.isRequired,
-  label: PropTypes.string.isRequired,
-  onClick: PropTypes.func.isRequired,
-  trailing: PropTypes.node,
-  danger: PropTypes.bool,
-};
-
-export default function HeaderMenu({ onLogout }) {
+export default function HeaderMenu({ onLogout }: { onLogout: () => void }) {
   const [isOpen, setIsOpen] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
@@ -158,7 +158,3 @@ export default function HeaderMenu({ onLogout }) {
     </>
   );
 }
-
-HeaderMenu.propTypes = {
-  onLogout: PropTypes.func.isRequired,
-};

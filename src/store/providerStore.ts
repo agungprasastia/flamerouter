@@ -3,7 +3,22 @@
 import { create } from "zustand";
 import { CLIENT_STORE_TTL_MS } from "@/shared/constants/config";
 
-const useProviderStore = create((set, get) => ({
+export interface ProviderState {
+  providers: any[];
+  loading: boolean;
+  error: string | null;
+  lastFetched: number;
+  setProviders: (providers: any[]) => void;
+  addProvider: (provider: any) => void;
+  updateProvider: (id: string, updates: any) => void;
+  removeProvider: (id: string) => void;
+  invalidate: () => void;
+  setLoading: (loading: boolean) => void;
+  setError: (error: string | null) => void;
+  fetchProviders: (opts?: { force?: boolean }) => Promise<void>;
+}
+
+const useProviderStore = create<ProviderState>((set, get) => ({
   providers: [],
   loading: false,
   error: null,

@@ -382,7 +382,7 @@ export default function Header({
           </div>
         )}
         <HeaderSearch />
-        <ThemeToggle />
+        <ThemeToggle className="" />
         <HeaderLanguage />
         <HeaderMenu onLogout={handleLogout} />
       </div>
@@ -391,10 +391,10 @@ export default function Header({
 }
 
 function HeaderSearch() {
-  const visible = useHeaderSearchStore((s) => s.visible);
-  const query = useHeaderSearchStore((s) => s.query);
-  const placeholder = useHeaderSearchStore((s) => s.placeholder);
-  const setQuery = useHeaderSearchStore((s) => s.setQuery);
+  const visible = useHeaderSearchStore((s: any) => s.visible);
+  const query = useHeaderSearchStore((s: any) => s.query);
+  const placeholder = useHeaderSearchStore((s: any) => s.placeholder);
+  const setQuery = useHeaderSearchStore((s: any) => s.setQuery);
 
   if (!visible) return null;
 

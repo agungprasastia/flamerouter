@@ -40,8 +40,8 @@ export default function ProviderInfoCard({
       key,
       label: schema.label,
       value: schema.format(config[key]),
-      isLink: schema.isLink,
-      mono: schema.mono,
+      isLink: (schema as any).isLink,
+      mono: (schema as any).mono,
       raw: config[key],
     }));
 
