@@ -20,17 +20,17 @@ FlameRouter is a **pure-Go rewrite** of [9router](https://github.com/agungprasas
 - **API gateway** — OpenAI-compatible surface (`/v1/*`) that routes to 100+ providers
 - **Credential management** — OAuth flows, API key generation, provider connections
 - **Usage tracking** — SQLite-backed stats, charts, pricing hooks
-- **Dashboard** — embedded SPA for managing everything (React + Vite)
+- **Dashboard** — full-featured Next.js 16 + React 19 web interface
 
 ### At a glance
 
 | | |
 |--|--|
-| Gateway Port (Backend) | `20130` (`PORT`) |
-| Dashboard Port (Frontend) | `20129` (`NEXT_PUBLIC_BASE_URL`) |
+| Gateway Port (Backend) | `20130` (`PORT` / `BACKEND_PORT`) |
+| Dashboard Port (Frontend) | `20129` (`PORT` for Next.js / `NEXT_PUBLIC_BASE_URL`) |
 | Data directory | `~/.flamerouter` (override with `DATA_DIR`) |
-| Binary entry | `flamerouter serve` · `flamerouter version` |
-| Module | `flamerouter` (no CGO; SQLite via `modernc.org/sqlite`) |
+| Backend Entry | `go run ./cmd/flamerouter serve` |
+| Module | `flamerouter` (Go 1.22+, SQLite via `modernc.org/sqlite` without CGO) |
 
 ---
 
@@ -42,7 +42,7 @@ FlameRouter is a **pure-Go rewrite** of [9router](https://github.com/agungprasas
 | **Multi-provider routing** | 100+ providers, format translation, combo / account fallback |
 | **Auth** | Dashboard session (JWT cookie), optional API keys (`sk-…`), OAuth for many providers |
 | **Ops** | Usage stats/charts, pricing hooks, proxy pools, tunnels, MITM/headroom/pxpipe APIs |
-| **Dashboard SPA** | Login, providers, usage, keys, settings (embedded in the binary) |
+| **Dashboard UI** | Next.js App Router (login, providers, keys, combos, media providers, usage, settings) |
 
 ---
 
@@ -50,14 +50,15 @@ FlameRouter is a **pure-Go rewrite** of [9router](https://github.com/agungprasas
 
 ### Requirements
 
-- [Go](https://go.dev/dl/) **1.22+** (use a current toolchain)
-- Node.js 20+ *(only if developing the dashboard)*
+- [Go](https://go.dev/dl/) **1.22+**
+- [Node.js](https://nodejs.org/) **20+** & npm
 
-### Run (development)
+### Run (Development)
 
-Cukup jalankan satu perintah ini, **Backend Go + Frontend Next.js langsung menyala bersamaan**:
+Jalankan perintah ini dari root folder untuk menyalakan **Backend Go** + **Frontend Next.js** secara otomatis:
 
 ```bash
+npm install
 npm run dev
 ```
 
@@ -65,25 +66,27 @@ npm run dev
 - **Backend API Gateway** → **http://127.0.0.1:20130**
 - Login password default → `123456` (dikonfigurasi di `INITIAL_PASSWORD`)
 
+### Run Separately (Manual)
+
+**Terminal 1 (Backend Go Gateway):**
+```bash
+go run ./cmd/flamerouter serve
+```
+
+**Terminal 2 (Frontend Next.js):**
+```bash
+npm run dev:next-only
+```
+
 ### Build
 
 ```bash
-# API + embedded UI
-go build -o flamerouter ./cmd/flamerouter
-# Windows: go build -o flamerouter.exe ./cmd/flamerouter
-# or: make build
+# Build binary backend Go
+go build -o flamerouter.exe ./cmd/flamerouter
 
-./flamerouter serve
+# Build production frontend Next.js
+npm run build
 ```
-
-To refresh the embedded UI after changing `web/`:
-
-```bash
-make ui-build          # or: cd web && npm install && npm run build
-go build -o flamerouter ./cmd/flamerouter
-```
-
-> `npm run build` compiles the Vite app and copies assets into `internal/gateway/ui/dist` (embedded at compile time).
 
 ---
 
@@ -91,53 +94,31 @@ go build -o flamerouter ./cmd/flamerouter
 
 Environment variables are documented in [`.env.example`](.env.example). Important ones:
 
-| Variable | Purpose |
-|----------|---------|
-| `PORT` | Listen port (default `20128`) |
-| `DATA_DIR` | SQLite and app data (default `~/.flamerouter`) |
-| `BASE_URL` | Public base URL (callbacks / links) |
-| `JWT_SECRET` | Dashboard session signing |
-| `INITIAL_PASSWORD` | First/bootstrap dashboard password |
-| `API_KEY_SECRET` / `MACHINE_ID_SALT` | API key generation |
-| `REQUIRE_API_KEY` | Require client API keys on `/v1/*` |
-| `AUTH_COOKIE_SECURE` | Set secure cookie flag |
-| `SHUTDOWN_SECRET` | Optional secret for remote shutdown |
-
-> OAuth client credentials for desktop-style providers are baked in (same approach as 9router desktop).
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` (Go) / `BACKEND_PORT` | `20130` | Gateway backend listen port |
+| `PORT` (Next.js) | `20129` | Dashboard frontend port |
+| `DATA_DIR` | `~/.flamerouter` | SQLite DB, settings, tokens storage |
+| `BASE_URL` | `http://localhost:20130` | Gateway base URL |
+| `JWT_SECRET` | *(auto-generated)* | Dashboard session JWT secret |
+| `INITIAL_PASSWORD` | `123456` | Bootstrap dashboard password |
+| `API_KEY_SECRET` | `endpoint-proxy-api-key-secret` | API key signature secret |
+| `MACHINE_ID_SALT` | `endpoint-proxy-salt` | Machine ID generation salt |
+| `REQUIRE_API_KEY` | `false` | Require client API keys on `/v1/*` |
 
 ---
 
 ## Dashboard
 
-### Production (embedded)
-
-After `serve`, open:
-
 | URL | Description |
 |-----|-------------|
-| [localhost:20128/login](http://localhost:20128/login) | Login page |
-| [localhost:20128/dashboard](http://localhost:20128/dashboard) | Dashboard home |
-
-**MVP pages:** home · providers · usage · keys · settings
-
-### Dashboard development
-
-Two terminals:
-
-```bash
-# Terminal 1 — API
-go run ./cmd/flamerouter serve
-
-# Terminal 2 — Vite (hot reload)
-cd web
-npm install
-npm run dev
-```
-
-| | |
-|--|--|
-| Dev UI | **http://127.0.0.1:5173** |
-| Proxy targets | `/api`, `/v1`, `/v1beta`, `/codex` → `http://127.0.0.1:20128` |
+| [http://localhost:20129/login](http://localhost:20129/login) | Login page |
+| [http://localhost:20129/dashboard](http://localhost:20129/dashboard) | Dashboard home |
+| [http://localhost:20129/dashboard/providers](http://localhost:20129/dashboard/providers) | Manage AI Provider Connections & OAuth |
+| [http://localhost:20129/dashboard/combos](http://localhost:20129/dashboard/combos) | Model routing combo rules & fallbacks |
+| [http://localhost:20129/dashboard/keys](http://localhost:20129/dashboard/keys) | Gateway API keys (`sk-...`) |
+| [http://localhost:20129/dashboard/usage](http://localhost:20129/dashboard/usage) | Live usage stats & charts |
+| [http://localhost:20129/dashboard/settings](http://localhost:20129/dashboard/settings) | Proxy, system, and authentication settings |
 
 ---
 
@@ -179,21 +160,34 @@ Prefix `/api/*` — health, auth, settings, keys, combos, providers, usage, OAut
 
 ```
 flamerouter/
-├── cmd/flamerouter/          # CLI entrypoint (serve / version)
+├── cmd/flamerouter/          # Go CLI & Gateway entrypoint (serve / version)
 ├── internal/
-│   ├── gateway/              # HTTP server, SPA embed, /api/* routes
-│   │   └── ui/dist/          # Embedded SPA (go:embed) — edit via web/
-│   ├── opensse/              # Executors, chat/media handlers
-│   ├── translator/           # Format translation (schema/ for roles/blocks)
-│   ├── provider/             # Provider registry (100+ entries)
-│   ├── oauth/                # OAuth configs, proxies, device flows
-│   ├── store/                # SQLite (modernc.org/sqlite)
-│   └── auth/                 # API keys (sk-*) + dashboard JWT
-├── web/                      # Dashboard source (Vite + React)
-├── docs/                     # Local plans/specs (gitignored)
+│   ├── auth/                 # API keys (sk-*) + dashboard JWT session
+│   ├── clitools/             # CLI tools setup & integration helpers
+│   ├── config/               # App configuration & env loader
+│   ├── gateway/              # HTTP router, reverse proxies, /api/* routes
+│   ├── infra/                # Headroom, proxy, tunnel, pxpipe, MITM
+│   ├── mcp/                  # MCP bridge support
+│   ├── netutil/              # SSRF protection, machine ID utilities
+│   ├── oauth/                # OAuth configs, token refresher, device flows
+│   ├── opensse/              # Core SSE executor, chat/media dispatchers
+│   ├── ops/                  # Background worker & maintenance ops
+│   ├── provider/             # Provider registry & model catalog (100+ entries)
+│   ├── store/                # SQLite storage engine (modernc.org/sqlite, pure Go)
+│   ├── tokenrefresh/         # Automatic background OAuth token refreshing
+│   ├── translator/           # OpenAI/Claude/Gemini format translation
+│   └── usage/                # Usage tracking, stats, and pricing calculations
+├── src/                      # Next.js 16 App Router UI frontend
+│   ├── app/                  # Pages: dashboard, login, providers, keys, combos...
+│   ├── lib/                  # Client-side API clients & utilities
+│   ├── shared/               # Shared constants, helpers, and schemas
+│   └── store/                # Frontend state management (Zustand)
+├── scripts/
+│   └── dev.mjs               # Unified dev orchestrator (Go + Next.js concurrently)
+├── public/                   # Static assets & provider logos
 ├── .env.example              # Environment variable reference
-├── Makefile                  # serve / build / test / ui-build / all
-└── go.mod                    # Module: flamerouter (no CGO)
+├── package.json              # Frontend npm dependencies & build scripts
+└── go.mod                    # Module: flamerouter (Go 1.22+, no CGO)
 ```
 
 ---
