@@ -2,29 +2,51 @@ import REGISTRY from "@/shared/constants/providersRegistry";
 
 export const CODEX_REVIEW_SUFFIX = "-review";
 
-export function modelQuotaFamily(model: any) {
+export interface RegistryModel {
+  id: string;
+  name?: string;
+  kind?: string;
+  type?: string;
+  upstreamModelId?: string;
+  quotaFamily?: string;
+  family?: string;
+  strip?: string[];
+  targetFormat?: string | null;
+  supportedFormats?: string[] | null;
+  [key: string]: unknown;
+}
+
+export interface RegistryProvider {
+  id: string;
+  alias?: string;
+  name?: string;
+  models?: RegistryModel[];
+  [key: string]: unknown;
+}
+
+export function modelQuotaFamily(model: RegistryModel | null | undefined): string | null {
   return model?.quotaFamily || model?.family || null;
 }
 
-export function modelStrip(model: any) {
+export function modelStrip(model: RegistryModel | null | undefined): string[] {
   return model?.strip || [];
 }
 
-export function modelTargetFormat(model: any) {
+export function modelTargetFormat(model: RegistryModel | null | undefined): string | null {
   return model?.targetFormat || null;
 }
 
-export function modelSupportedFormats(model: any) {
+export function modelSupportedFormats(model: RegistryModel | null | undefined): string[] | null {
   return model?.supportedFormats || null;
 }
 
-export function normalizeModelId(id: string) {
+export function normalizeModelId(id: string): string {
   return typeof id === "string" ? id.replace(/-(\d+)-(\d+)/g, ".$1.$2") : id;
 }
 
 // Build PROVIDER_MODELS from REGISTRY
-export const PROVIDER_MODELS: Record<string, any[]> = {};
-for (const entry of REGISTRY) {
+export const PROVIDER_MODELS: Record<string, RegistryModel[]> = {};
+for (const entry of REGISTRY as RegistryProvider[]) {
   const key = entry.alias || entry.id;
   PROVIDER_MODELS[key] = entry.models || [];
   if (entry.id && !PROVIDER_MODELS[entry.id]) {
@@ -33,11 +55,11 @@ for (const entry of REGISTRY) {
 }
 
 // Helper functions
-export function getProviderModels(aliasOrId: string) {
+export function getProviderModels(aliasOrId: string): RegistryModel[] {
   return PROVIDER_MODELS[aliasOrId] || [];
 }
 
-export function getDefaultModel(aliasOrId: string) {
+export function getDefaultModel(aliasOrId: string): string | null {
   const models = PROVIDER_MODELS[aliasOrId];
   return models?.[0]?.id || null;
 }
@@ -45,7 +67,7 @@ export function getDefaultModel(aliasOrId: string) {
 // Providers whose registry uses dots in version numbers (e.g. "claude-sonnet-4.5").
 const DOT_VERSION_PROVIDERS = new Set(["kr", "kiro"]);
 
-function findModel(models: any[], modelId: string, aliasOrId?: string) {
+function findModel(models: RegistryModel[] | undefined, modelId: string, aliasOrId?: string): RegistryModel | undefined {
   if (!models) return undefined;
   const found = models.find((m) => m.id === modelId);
   if (found) return found;
@@ -59,51 +81,51 @@ export function isValidModel(
   aliasOrId: string,
   modelId: string,
   passthroughProviders = new Set<string>(),
-) {
+): boolean {
   if (passthroughProviders.has(aliasOrId)) return true;
   const models = PROVIDER_MODELS[aliasOrId];
   if (!models) return false;
   return !!findModel(models, modelId, aliasOrId);
 }
 
-export function findModelName(aliasOrId: string, modelId: string) {
+export function findModelName(aliasOrId: string, modelId: string): string {
   const models = PROVIDER_MODELS[aliasOrId];
   if (!models) return modelId;
   const found = findModel(models, modelId, aliasOrId);
   return found?.name || modelId;
 }
 
-export function getModelTargetFormat(aliasOrId: string, modelId: string) {
+export function getModelTargetFormat(aliasOrId: string, modelId: string): string | null {
   const models = PROVIDER_MODELS[aliasOrId];
   if (!models) return null;
   return modelTargetFormat(findModel(models, modelId, aliasOrId));
 }
 
-export function getModelSupportedFormats(aliasOrId: string, modelId: string) {
+export function getModelSupportedFormats(aliasOrId: string, modelId: string): string[] | null {
   const models = PROVIDER_MODELS[aliasOrId];
   if (!models) return null;
   return modelSupportedFormats(findModel(models, modelId, aliasOrId));
 }
 
-export function getModelType(aliasOrId: string, modelId: string) {
+export function getModelType(aliasOrId: string, modelId: string): string | null {
   const models = PROVIDER_MODELS[aliasOrId];
   if (!models) return null;
   const found = findModel(models, modelId, aliasOrId);
   return found?.kind || found?.type || null;
 }
 
-export function getModelUpstreamId(aliasOrId: string, modelId: string) {
+export function getModelUpstreamId(aliasOrId: string, modelId: string): string {
   const sufMatch =
     typeof modelId === "string" ? modelId.match(/\([^()]+\)\s*$/) : null;
   const suffix = sufMatch ? sufMatch[0] : "";
-  const baseId = suffix ? modelId.slice(0, sufMatch.index).trim() : modelId;
+  const baseId = suffix && sufMatch && typeof sufMatch.index === "number" ? modelId.slice(0, sufMatch.index).trim() : modelId;
   const models = PROVIDER_MODELS[aliasOrId];
   const found = findModel(models, baseId, aliasOrId);
   const resolvedId = found?.upstreamModelId || found?.id;
   if (resolvedId) {
     const presetMatch = resolvedId.match(/\([^()]+\)\s*$/);
     const presetSuffix = presetMatch?.[0] || "";
-    const resolvedBase = presetSuffix
+    const resolvedBase = presetSuffix && presetMatch && typeof presetMatch.index === "number"
       ? resolvedId.slice(0, presetMatch.index).trim()
       : resolvedId;
     return resolvedBase + (suffix || presetSuffix);
@@ -118,27 +140,27 @@ export function getModelUpstreamId(aliasOrId: string, modelId: string) {
   return baseId + suffix;
 }
 
-export function getModelQuotaFamily(aliasOrId: string, modelId: string) {
+export function getModelQuotaFamily(aliasOrId: string, modelId: string): string | null {
   const models = PROVIDER_MODELS[aliasOrId];
   return modelQuotaFamily(findModel(models, modelId, aliasOrId));
 }
 
 export const OAUTH_ALIASES = Object.fromEntries(
-  REGISTRY.filter((r: any) => r.alias && r.alias !== r.id).map((r: any) => [
+  (REGISTRY as RegistryProvider[]).filter((r) => r.alias && r.alias !== r.id).map((r) => [
     r.id,
     r.alias,
   ]),
 );
 
 export const PROVIDER_ID_TO_ALIAS = Object.fromEntries(
-  REGISTRY.map((r: any) => [r.id, r.alias || r.id]),
+  (REGISTRY as RegistryProvider[]).map((r) => [r.id, r.alias || r.id]),
 );
 
-export function getModelsByProviderId(providerId: string) {
+export function getModelsByProviderId(providerId: string): RegistryModel[] {
   const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
   return PROVIDER_MODELS[alias] || [];
 }
 
-export function getModelStrip(alias: string, modelId: string) {
+export function getModelStrip(alias: string, modelId: string): string[] {
   return modelStrip(findModel(PROVIDER_MODELS[alias], modelId, alias));
 }

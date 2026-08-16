@@ -1,6 +1,7 @@
+import type { NextRequest } from "next/server";
 import { proxy as dashboardProxy } from "./dashboardGuard";
 
-export default async function proxy(request) {
+export default async function proxy(request: NextRequest) {
   return dashboardProxy(request);
 }
 

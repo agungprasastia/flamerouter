@@ -1,15 +1,16 @@
-const fs = require("fs");
-const path = require("path");
-const zlib = require("zlib");
-const { DATA_DIR } = require("./paths");
-const { LOG_BLACKLIST_URL_PARTS } = require("./config");
+import * as fs from "fs";
+import * as path from "path";
+import * as zlib from "zlib";
+import type { IncomingMessage } from "http";
+import { DATA_DIR } from "./paths";
+import { LOG_BLACKLIST_URL_PARTS } from "./config";
 
 function time() {
   return new Date().toLocaleTimeString("en-US", { hour12: false });
 }
 
-const log = (msg) => console.log(`[${time()}] [MITM] ${msg}`);
-const err = (msg) => console.error(`[${time()}] ❌ [MITM] ${msg}`);
+const log = (msg: unknown) => console.log(`[${time()}] [MITM] ${msg}`);
+const err = (msg: unknown) => console.error(`[${time()}] ❌ [MITM] ${msg}`);
 
 const DUMP_DIR = path.join(DATA_DIR, "logs", "mitm");
 if (!fs.existsSync(DUMP_DIR)) fs.mkdirSync(DUMP_DIR, { recursive: true });
@@ -32,19 +33,18 @@ function clearDumpDir() {
 
 const EMPTY_BODY_RE = /^\s*(\{\s*\}|\[\s*\]|null)?\s*$/;
 
-function slugify(s, max = 80) {
+function slugify(s: string, max = 80) {
   return String(s)
     .replace(/[^a-zA-Z0-9]/g, "_")
     .substring(0, max);
 }
 
-function isBlacklisted(url) {
+function isBlacklisted(url: string) {
   if (!url) return false;
   return LOG_BLACKLIST_URL_PARTS.some((part) => url.includes(part));
 }
 
-// Decode body buffer based on content-encoding header
-function decodeBody(buf, encoding) {
+function decodeBody(buf: Buffer | null | undefined, encoding?: string) {
   if (!buf || buf.length === 0) return buf;
   try {
     const enc = (encoding || "").toLowerCase();
@@ -58,11 +58,11 @@ function decodeBody(buf, encoding) {
 }
 
 // Save raw request: method + url + headers + body
-function dumpRequest(req, bodyBuffer, tag = "raw") {
-  if (isBlacklisted(req.url)) return null;
+function dumpRequest(req: IncomingMessage, bodyBuffer: Buffer, tag = "raw") {
+  if (isBlacklisted(req.url || "")) return null;
   try {
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    const slug = slugify((req.headers.host || "") + req.url);
+    const slug = slugify((req.headers.host || "") + (req.url || ""));
     const file = path.join(DUMP_DIR, `${ts}_${tag}_${slug}.req.json`);
     let parsed = null;
     try {
@@ -92,20 +92,20 @@ function dumpRequest(req, bodyBuffer, tag = "raw") {
 
 // Buffer-based response dumper — collects chunks then decodes + writes once on end()
 // Trade-off: holds response in RAM, but enables gzip/br decoding for readable output.
-function createResponseDumper(req, tag = "raw") {
-  if (isBlacklisted(req.url)) return null;
+function createResponseDumper(req: IncomingMessage, tag = "raw") {
+  if (isBlacklisted(req.url || "")) return null;
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const slug = slugify((req.headers.host || "") + req.url);
+  const slug = slugify((req.headers.host || "") + (req.url || ""));
   const file = path.join(DUMP_DIR, `${ts}_${tag}_${slug}.res.txt`);
   let status = 0;
-  let headers = {};
-  const chunks = [];
+  let headers: Record<string, string | undefined> = {};
+  const chunks: Buffer[] = [];
   return {
-    writeHeader: (s, h) => {
+    writeHeader: (s: number, h: Record<string, string | undefined> | null | undefined) => {
       status = s;
       headers = h || {};
     },
-    writeChunk: (chunk) => {
+    writeChunk: (chunk: Buffer | string | null | undefined) => {
       if (chunk == null) return;
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     },
@@ -113,7 +113,7 @@ function createResponseDumper(req, tag = "raw") {
       try {
         const raw = Buffer.concat(chunks);
         const enc = headers["content-encoding"] || headers["Content-Encoding"];
-        const decoded = decodeBody(raw, enc);
+        const decoded = decodeBody(raw, enc) ?? Buffer.alloc(0);
         const text = decoded.toString("utf8");
         // Skip empty / trivially-empty bodies
         if (EMPTY_BODY_RE.test(text)) return;
@@ -131,4 +131,4 @@ function createResponseDumper(req, tag = "raw") {
   };
 }
 
-module.exports = { log, err, dumpRequest, createResponseDumper, clearDumpDir };
+export { log, err, dumpRequest, createResponseDumper, clearDumpDir };

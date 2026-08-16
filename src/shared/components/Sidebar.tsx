@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import PropTypes from "prop-types";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/shared/utils/cn";
@@ -36,6 +35,7 @@ import {
   Video,
   Volume2,
   Waypoints,
+  LucideIcon,
 } from "lucide-react";
 
 // const VISIBLE_MEDIA_KINDS = ["embedding", "image", "imageToText", "tts", "stt", "webSearch", "webFetch", "video", "music"];
@@ -48,7 +48,7 @@ const COMBINED_WEB_ITEM = {
   href: "/dashboard/media-providers/web",
 };
 
-const mediaIcons = {
+const mediaIcons: Record<string, LucideIcon> = {
   embedding: Waypoints,
   image: Image,
   video: Video,
@@ -78,6 +78,11 @@ const systemItems = [
   { href: "/dashboard/skills", label: "Skills", icon: Blocks },
 ];
 
+export interface UpdateInfo {
+  latestVersion?: string;
+  hasUpdate?: boolean;
+}
+
 export interface SidebarProps {
   onClose?: () => void;
 }
@@ -86,7 +91,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const pathname = usePathname();
   const [mediaOpen, setMediaOpen] = useState(false);
   const [isDisconnected, setIsDisconnected] = useState(false);
-  const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [shutdownCountdown, setShutdownCountdown] = useState(0);
@@ -114,7 +119,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
       .catch(() => {});
   }, []);
 
-  const isActive = (href) => {
+  const isActive = (href: string) => {
     if (href === "/dashboard/endpoint") {
       return (
         pathname === "/dashboard" || pathname.startsWith("/dashboard/endpoint")
@@ -458,7 +463,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
             <ManualUpdatePanel
               latestVersion={updateInfo?.latestVersion}
               installCmd={INSTALL_CMD}
-              copied={copied}
+              copied={copied === INSTALL_CMD}
               onCopyAndShutdown={handleCopyAndShutdown}
               onCancel={handleCancelUpdate}
               countdown={shutdownCountdown}
@@ -489,10 +494,6 @@ export default function Sidebar({ onClose }: SidebarProps) {
   );
 }
 
-Sidebar.propTypes = {
-  onClose: PropTypes.func,
-};
-
 interface ManualUpdatePanelProps {
   latestVersion?: string;
   installCmd: string;
@@ -509,7 +510,7 @@ function ManualUpdatePanel({
   copied,
   onCopyAndShutdown,
   onCancel,
-  countdown,
+  countdown = 0,
   isDisconnected,
 }: ManualUpdatePanelProps) {
   const isCountingDown = countdown > 0;

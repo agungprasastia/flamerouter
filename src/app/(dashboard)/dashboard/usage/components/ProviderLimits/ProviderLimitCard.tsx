@@ -3,19 +3,32 @@
 import { useState } from "react";
 import Card from "@/shared/components/Card";
 import ProviderIcon from "@/shared/components/ProviderIcon";
-import Badge from "@/shared/components/Badge";
+import Badge, { type BadgeProps } from "@/shared/components/Badge";
 import QuotaProgressBar from "./QuotaProgressBar";
-import { calculatePercentage } from "./utils";
+import { calculatePercentage, type QuotaEntry } from "./utils";
 
-const planVariants = {
+type BadgeVariant = NonNullable<BadgeProps["variant"]>;
+
+const planVariants: Record<string, BadgeVariant> = {
   free: "default",
   pro: "primary",
   ultra: "success",
   enterprise: "info",
 };
 
+export interface ProviderLimitCardProps {
+  provider?: string;
+  name?: string;
+  plan?: string;
+  quotas?: QuotaEntry[];
+  message?: string | null;
+  loading?: boolean;
+  error?: string | null;
+  onRefresh?: () => Promise<void> | void;
+}
+
 export default function ProviderLimitCard({
-  provider,
+  provider = "",
   name,
   plan,
   quotas = [],
@@ -23,7 +36,7 @@ export default function ProviderLimitCard({
   loading = false,
   error = null,
   onRefresh,
-}) {
+}: ProviderLimitCardProps) {
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = async () => {
@@ -39,7 +52,7 @@ export default function ProviderLimitCard({
 
   // Get provider info from config
   const getProviderColor = () => {
-    const colors = {
+    const colors: Record<string, string> = {
       github: "#000000",
       antigravity: "#4285F4",
       codex: "#10A37F",
@@ -47,11 +60,11 @@ export default function ProviderLimitCard({
       qoder: "#EC4899",
       claude: "#D97757",
     };
-    return colors[provider?.toLowerCase()] || "#6B7280";
+    return (provider ? colors[provider.toLowerCase()] : undefined) || "#6B7280";
   };
 
   const providerColor = getProviderColor();
-  const planVariant = planVariants[plan?.toLowerCase()] || "default";
+  const planVariant = (plan ? planVariants[plan.toLowerCase()] : undefined) || "default";
 
   return (
     <Card padding="md" className="flex flex-col gap-4">
@@ -149,19 +162,22 @@ export default function ProviderLimitCard({
       {!loading && !error && !message && quotas?.length > 0 && (
         <div className="space-y-4">
           {quotas.map((quota, index) => {
-            // For Antigravity, use remainingPercentage if available, otherwise calculate
+            const total = quota.total ?? 0;
+            const used = quota.used ?? 0;
             const percentage =
               quota.remainingPercentage !== undefined
-                ? Math.round(((quota.total - quota.used) / quota.total) * 100)
-                : calculatePercentage(quota.used, quota.total);
+                ? total > 0
+                  ? Math.round(((total - used) / total) * 100)
+                  : 0
+                : calculatePercentage(used, total);
             const unlimited = quota.total === 0 || quota.total === null;
 
             return (
               <QuotaProgressBar
                 key={`${quota.name}-${index}`}
                 label={quota.name}
-                used={quota.used}
-                total={quota.total}
+                used={used}
+                total={total}
                 percentage={percentage}
                 unlimited={unlimited}
                 resetTime={quota.resetAt}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type ChangeEvent } from "react";
 import {
   Card,
   Button,
@@ -8,8 +8,41 @@ import {
   Input,
   ModelSelectModal,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import { TOOL_HOSTS } from "@/shared/constants/mitmToolHosts";
 import Image from "next/image";
+import type { ApiKeyItem } from "./ApiKeySelect";
+import type { ToolCardDef } from "./DefaultToolCard";
+
+export interface MitmDefaultModel {
+  id?: string;
+  name: string;
+  alias: string;
+  mandatory?: boolean;
+  [key: string]: unknown;
+}
+
+export interface MitmToolDef extends ToolCardDef {
+  id: string;
+  defaultModels?: MitmDefaultModel[];
+}
+
+export interface MitmToolCardProps {
+  tool: MitmToolDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  serverRunning?: boolean;
+  dnsActive?: boolean;
+  hasCachedPassword?: boolean;
+  needsSudoPassword?: boolean;
+  isWin?: boolean;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  hasActiveProviders?: boolean;
+  modelAliases?: Record<string, string>;
+  cloudEnabled?: boolean;
+  onDnsChange?: (data: unknown) => void;
+}
 
 /**
  * Per-tool MITM card — shows DNS status + model mappings.
@@ -21,27 +54,27 @@ export default function MitmToolCard({
   tool,
   isExpanded,
   onToggle,
-  serverRunning,
-  dnsActive,
-  hasCachedPassword,
-  needsSudoPassword,
-  isWin,
-  apiKeys,
-  activeProviders,
-  hasActiveProviders,
+  serverRunning = false,
+  dnsActive = false,
+  hasCachedPassword = false,
+  needsSudoPassword = false,
+  isWin = false,
+  apiKeys = [],
+  activeProviders = [],
+  hasActiveProviders = false,
   modelAliases = {},
-  cloudEnabled,
+  cloudEnabled = false,
   onDnsChange,
-}) {
-  const [loading, setLoading] = useState(false);
-  const [warning, setWarning] = useState(null);
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [sudoPassword, setSudoPassword] = useState("");
-  const [pendingDnsAction, setPendingDnsAction] = useState(null);
-  const [modalError, setModalError] = useState(null);
-  const [modelMappings, setModelMappings] = useState({});
-  const [modalOpen, setModalOpen] = useState(false);
-  const [currentEditingAlias, setCurrentEditingAlias] = useState(null);
+}: MitmToolCardProps) {
+  const [loading, setLoading] = useState<boolean>(false);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
+  const [sudoPassword, setSudoPassword] = useState<string>("");
+  const [pendingDnsAction, setPendingDnsAction] = useState<"disable" | "enable" | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [modelMappings, setModelMappings] = useState<Record<string, string>>({});
+  const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [currentEditingAlias, setCurrentEditingAlias] = useState<string | null>(null);
 
   const mitmHosts = TOOL_HOSTS[tool.id] ?? [];
   const canRunWithoutPassword =
@@ -69,7 +102,7 @@ export default function MitmToolCard({
   };
 
   const saveMappings = useCallback(
-    async (mappings) => {
+    async (mappings: Record<string, string>) => {
       try {
         await fetch("/api/cli-tools/antigravity-mitm/alias", {
           method: "PUT",
@@ -83,20 +116,20 @@ export default function MitmToolCard({
     [tool.id],
   );
 
-  const handleMappingBlur = (alias, value) => {
+  const handleMappingBlur = (alias: string, value: string) => {
     saveMappings({ ...modelMappings, [alias]: value });
   };
 
-  const handleModelMappingChange = (alias, value) => {
+  const handleModelMappingChange = (alias: string, value: string) => {
     setModelMappings((prev) => ({ ...prev, [alias]: value }));
   };
 
-  const openModelSelector = (alias) => {
+  const openModelSelector = (alias: string) => {
     setCurrentEditingAlias(alias);
     setModalOpen(true);
   };
 
-  const handleModelSelect = (model) => {
+  const handleModelSelect = (model: ModelSelectItem) => {
     if (!currentEditingAlias || model.isPlaceholder) return;
     const updated = { ...modelMappings, [currentEditingAlias]: model.value };
     setModelMappings(updated);
@@ -105,7 +138,7 @@ export default function MitmToolCard({
 
   const handleDnsToggle = () => {
     if (!serverRunning) return;
-    const action = dnsActive ? "disable" : "enable";
+    const action: "disable" | "enable" = dnsActive ? "disable" : "enable";
     if (canRunWithoutPassword) {
       doDnsAction(action, "");
     } else {
@@ -115,7 +148,7 @@ export default function MitmToolCard({
     }
   };
 
-  const doDnsAction = async (action, password) => {
+  const doDnsAction = async (action: "disable" | "enable", password?: string) => {
     setLoading(true);
     setWarning(null);
     try {
@@ -147,7 +180,9 @@ export default function MitmToolCard({
       setModalError("Sudo password is required");
       return;
     }
-    doDnsAction(pendingDnsAction, sudoPassword);
+    if (pendingDnsAction) {
+      doDnsAction(pendingDnsAction, sudoPassword);
+    }
   };
 
   return (
@@ -159,19 +194,21 @@ export default function MitmToolCard({
         >
           <div className="flex min-w-0 items-center gap-3">
             <div className="size-8 flex items-center justify-center shrink-0">
-              <Image
-                src={tool.image}
-                alt={tool.name}
-                width={32}
-                height={32}
-                className="size-8 object-contain rounded-lg"
-                sizes="32px"
-                onError={(e) => {
-                  e.target.style.display = "none";
-                }}
-                loading="lazy"
-                decoding="async"
-              />
+              {tool.image ? (
+                <Image
+                  src={tool.image}
+                  alt={tool.name}
+                  width={32}
+                  height={32}
+                  className="size-8 object-contain rounded-lg"
+                  sizes="32px"
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = "none";
+                  }}
+                  loading="lazy"
+                  decoding="async"
+                />
+              ) : null}
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -231,7 +268,7 @@ export default function MitmToolCard({
             </div>
 
             {/* Model Mappings */}
-            {tool.defaultModels?.length > 0 && (
+            {tool.defaultModels && tool.defaultModels.length > 0 && (
               <div className="flex flex-col gap-2">
                 {tool.defaultModels.map((model) => (
                   <div
@@ -288,7 +325,7 @@ export default function MitmToolCard({
               </div>
             )}
 
-            {tool.defaultModels?.length === 0 && (
+            {(!tool.defaultModels || tool.defaultModels.length === 0) && (
               <p className="text-xs text-text-muted px-1">
                 Model mappings will be available soon.
               </p>
@@ -353,7 +390,7 @@ export default function MitmToolCard({
               type="password"
               placeholder="Enter sudo password"
               value={sudoPassword}
-              onChange={(e) => setSudoPassword(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setSudoPassword(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !loading) handleConfirmPassword();
               }}

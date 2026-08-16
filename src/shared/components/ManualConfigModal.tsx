@@ -5,16 +5,28 @@ import Modal from "./Modal";
 import Button from "./Button";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
+export interface ManualConfigFile {
+  filename: string;
+  content: string;
+}
+
+export interface ManualConfigModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title?: string;
+  configs?: ManualConfigFile[];
+}
+
 export default function ManualConfigModal({
   isOpen,
   onClose,
   title = "Manual Configuration",
   configs = [],
-}) {
+}: ManualConfigModalProps) {
   const { copy } = useCopyToClipboard();
-  const [copiedIndex, setCopiedIndex] = useState(null);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
-  const copyConfig = (text, index) => {
+  const copyConfig = (text: string, index: number) => {
     copy(text, `manualconfig-${index}`);
     setCopiedIndex(index);
     setTimeout(() => setCopiedIndex(null), 2000);

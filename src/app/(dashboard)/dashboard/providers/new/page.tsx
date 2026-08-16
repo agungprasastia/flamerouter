@@ -26,9 +26,9 @@ export default function NewProviderPage() {
     displayName: "",
     isActive: true,
   });
-  const [errors, setErrors] = useState({});
+  const [errors, setErrors] = useState<Record<string, string | null>>({});
 
-  const handleChange = (field, value) => {
+  const handleChange = (field: string, value: unknown) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: null }));
@@ -36,7 +36,7 @@ export default function NewProviderPage() {
   };
 
   const validate = () => {
-    const newErrors = {};
+    const newErrors: Record<string, string> = {};
     if (!formData.provider) newErrors.provider = "Please select a provider";
     if (formData.authMethod === "api_key" && !formData.apiKey) {
       newErrors.apiKey = "API Key is required";
@@ -45,7 +45,7 @@ export default function NewProviderPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!validate()) return;
 
@@ -70,7 +70,7 @@ export default function NewProviderPage() {
     }
   };
 
-  const selectedProvider = AI_PROVIDERS[formData.provider];
+  const selectedProvider = (AI_PROVIDERS as Record<string, { id?: string; name?: string; color?: string; icon?: string }>)[formData.provider];
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -101,7 +101,7 @@ export default function NewProviderPage() {
             value={formData.provider}
             onChange={(e) => handleChange("provider", e.target.value)}
             placeholder="Select a provider"
-            error={errors.provider}
+            error={errors.provider ?? undefined}
             required
           />
 
@@ -157,7 +157,7 @@ export default function NewProviderPage() {
               placeholder="Enter your API key"
               value={formData.apiKey}
               onChange={(e) => handleChange("apiKey", e.target.value)}
-              error={errors.apiKey}
+              error={errors.apiKey ?? undefined}
               hint="Your API key will be encrypted and stored securely."
               required
             />

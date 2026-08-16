@@ -2,7 +2,6 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useState, useEffect } from "react";
-import PropTypes from "prop-types";
 import Modal from "@/shared/components/Modal";
 import Input from "@/shared/components/Input";
 import Button from "@/shared/components/Button";
@@ -14,13 +13,46 @@ import {
 } from "@/shared/constants/providers";
 import Select from "@/shared/components/Select";
 
+export interface EditConnectionData {
+  id?: string;
+  name?: string;
+  email?: string;
+  priority?: number;
+  authType?: string;
+  provider: string;
+  providerSpecificData?: Record<string, unknown>;
+}
+
+export interface ProxyPoolItem {
+  id: string;
+  name: string;
+}
+
+export interface ConnectionUpdates {
+  name: string;
+  priority: number;
+  apiKey?: string;
+  testStatus?: string;
+  lastError?: string | null;
+  lastErrorAt?: string | null;
+  providerSpecificData?: Record<string, unknown>;
+}
+
+export interface EditConnectionModalProps {
+  isOpen: boolean;
+  connection?: EditConnectionData | null;
+  proxyPools?: ProxyPoolItem[];
+  onSave: (updates: ConnectionUpdates) => Promise<void> | void;
+  onClose: () => void;
+}
+
 export default function EditConnectionModal({
   isOpen,
   connection,
   proxyPools,
   onSave,
   onClose,
-}) {
+}: EditConnectionModalProps) {
   const [formData, setFormData] = useState({
     name: "",
     priority: 1,
@@ -35,9 +67,9 @@ export default function EditConnectionModal({
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
   const [region, setRegion] = useState("");
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+  const [testResult, setTestResult] = useState<"success" | "failed" | null>(null);
   const [validating, setValidating] = useState(false);
-  const [validationResult, setValidationResult] = useState(null);
+  const [validationResult, setValidationResult] = useState<"success" | "failed" | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -49,27 +81,30 @@ export default function EditConnectionModal({
       });
       // Load Azure-specific data if present
       if (connection.provider === "azure" && connection.providerSpecificData) {
+        const psd = connection.providerSpecificData as Record<string, string | undefined>;
         setAzureData({
-          azureEndpoint: connection.providerSpecificData.azureEndpoint || "",
+          azureEndpoint: psd.azureEndpoint || "",
           apiVersion:
-            connection.providerSpecificData.apiVersion || "2024-10-01-preview",
-          deployment: connection.providerSpecificData.deployment || "",
-          organization: connection.providerSpecificData.organization || "",
+            psd.apiVersion || "2024-10-01-preview",
+          deployment: psd.deployment || "",
+          organization: psd.organization || "",
         });
       }
       if (
         connection.provider === "cloudflare-ai" &&
         connection.providerSpecificData
       ) {
+        const psd = connection.providerSpecificData as Record<string, string | undefined>;
         setCloudflareData({
-          accountId: connection.providerSpecificData.accountId || "",
+          accountId: psd.accountId || "",
         });
       }
       // Load region for providers that support it (e.g. xiaomi-tokenplan)
-      const providerCfg = AI_PROVIDERS?.[connection.provider];
+      const providerCfg = (AI_PROVIDERS as Record<string, any>)?.[connection.provider];
       if (providerCfg?.regions) {
+        const psd = connection.providerSpecificData as Record<string, string | undefined> | undefined;
         const savedRegion =
-          connection.providerSpecificData?.region ||
+          psd?.region ||
           providerCfg.defaultRegion ||
           providerCfg.regions[0]?.id ||
           "";
@@ -88,7 +123,7 @@ export default function EditConnectionModal({
       isAnthropicCompatibleProvider(connection.provider)
     : false;
   const providerRegions = connection
-    ? AI_PROVIDERS?.[connection.provider]?.regions || null
+    ? ((AI_PROVIDERS as Record<string, any>)?.[connection.provider]?.regions as Array<{ id: string; label: string }> | null | undefined) || null
     : null;
 
   // Build providerSpecificData for region-aware providers
@@ -99,7 +134,7 @@ export default function EditConnectionModal({
   };
 
   const handleTest = async () => {
-    if (!connection?.provider) return;
+    if (!connection?.provider || !connection.id) return;
     setTesting(true);
     setTestResult(null);
     try {
@@ -146,7 +181,7 @@ export default function EditConnectionModal({
     if (!connection) return;
     setSaving(true);
     try {
-      const updates = {
+      const updates: ConnectionUpdates = {
         name: formData.name,
         priority: formData.priority,
       };
@@ -357,24 +392,3 @@ export default function EditConnectionModal({
     </Modal>
   );
 }
-
-EditConnectionModal.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  connection: PropTypes.shape({
-    id: PropTypes.string,
-    name: PropTypes.string,
-    email: PropTypes.string,
-    priority: PropTypes.number,
-    authType: PropTypes.string,
-    provider: PropTypes.string,
-    providerSpecificData: PropTypes.object,
-  }),
-  proxyPools: PropTypes.arrayOf(
-    PropTypes.shape({
-      id: PropTypes.string,
-      name: PropTypes.string,
-    }),
-  ),
-  onSave: PropTypes.func.isRequired,
-  onClose: PropTypes.func.isRequired,
-};

@@ -57,15 +57,15 @@ const DEFAULT_SETTINGS = {
   pxpipeTimeoutMs: 15000,
 };
 
-async function readRaw() {
+async function readRaw(): Promise<Record<string, unknown>> {
   const db = await getAdapter();
-  const row = db.get(`SELECT data FROM settings WHERE id = 1`);
-  return row ? parseJson(row.data, {}) : {};
+  const row = db.get<{ data: string }>(`SELECT data FROM settings WHERE id = 1`);
+  return row ? (parseJson<Record<string, unknown>>(row.data, {}) || {}) : {};
 }
 
 // Merge raw settings with defaults; backward-compat for missing keys
-function mergeWithDefaults(raw) {
-  const merged = { ...DEFAULT_SETTINGS, ...(raw || {}) };
+function mergeWithDefaults(raw: Record<string, unknown>): typeof DEFAULT_SETTINGS & Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...DEFAULT_SETTINGS, ...(raw || {}) };
   for (const [key, defVal] of Object.entries(DEFAULT_SETTINGS)) {
     if (merged[key] === undefined) {
       if (
@@ -79,21 +79,21 @@ function mergeWithDefaults(raw) {
       }
     }
   }
-  return merged;
+  return merged as typeof DEFAULT_SETTINGS & Record<string, unknown>;
 }
 
-export async function getSettings() {
+export async function getSettings(): Promise<typeof DEFAULT_SETTINGS & Record<string, unknown>> {
   const raw = await readRaw();
   return mergeWithDefaults(raw);
 }
 
 // Atomic read-merge-write inside transaction (prevents losing concurrent updates)
-export async function updateSettings(updates) {
+export async function updateSettings(updates: Record<string, unknown>): Promise<typeof DEFAULT_SETTINGS & Record<string, unknown>> {
   const db = await getAdapter();
-  let next;
+  let next: Record<string, unknown> = {};
   db.transaction(function () {
-    const row = db.get(`SELECT data FROM settings WHERE id = 1`);
-    const current = row ? parseJson(row.data, {}) : {};
+    const row = db.get<{ data: string }>(`SELECT data FROM settings WHERE id = 1`);
+    const current = row ? (parseJson<Record<string, unknown>>(row.data, {}) || {}) : {};
     next = { ...current, ...updates };
     db.run(
       `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,

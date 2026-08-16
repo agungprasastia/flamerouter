@@ -1,17 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import {
   Card,
   Button,
   ModelSelectModal,
   ManualConfigModal,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
-import ApiKeySelect from "./ApiKeySelect";
+import ApiKeySelect, { type ApiKeyItem } from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import type { ToolCardDef } from "./DefaultToolCard";
 
 const ENDPOINT = "/api/cli-tools/grok-build-settings";
 const MODEL_SLOT = "flamerouter";
@@ -33,6 +35,16 @@ const SUBAGENT_TYPES = [
   },
 ];
 
+export interface ModelFieldProps {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onChange: (val: string) => void;
+  onSelect: () => void;
+  disabled?: boolean;
+  help?: string | ReactNode;
+}
+
 function ModelField({
   label,
   value,
@@ -41,7 +53,7 @@ function ModelField({
   onSelect,
   disabled,
   help,
-}) {
+}: ModelFieldProps) {
   return (
     <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
       <div className="sm:text-right">
@@ -92,22 +104,52 @@ function ModelField({
   );
 }
 
+export interface GrokStatus {
+  installed?: boolean;
+  hasFlameRouter?: boolean;
+  settings?: {
+    model?: {
+      model?: string;
+      base_url?: string;
+      context_window?: number;
+    };
+    subagentModels?: Record<string, { model?: string; contextWindow?: number | null }>;
+  };
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface GrokBuildToolCardProps {
+  tool: ToolCardDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  hasActiveProviders?: boolean;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  cloudEnabled?: boolean;
+  initialStatus?: GrokStatus | null;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+}
+
 export default function GrokBuildToolCard({
   tool,
   isExpanded,
   onToggle,
-  hasActiveProviders,
-  apiKeys,
-  activeProviders,
-  cloudEnabled,
+  hasActiveProviders = false,
+  apiKeys = [],
+  activeProviders = [],
+  cloudEnabled = false,
   initialStatus,
-  tunnelEnabled,
-  tunnelPublicUrl,
-  tailscaleEnabled,
-  tailscaleUrl,
-}) {
+  tunnelEnabled = false,
+  tunnelPublicUrl = "",
+  tailscaleEnabled = false,
+  tailscaleUrl = "",
+}: GrokBuildToolCardProps) {
   const { getCaps } = useModelCaps();
-  const getContextWindow = (model) => getCaps(model)?.contextWindow || null;
+  const getContextWindow = (model: string) => getCaps(model)?.contextWindow || null;
   const initialModel = initialStatus?.settings?.model?.model || "";
   const initialSubagents = Object.fromEntries(
     SUBAGENT_TYPES.map((type) => [
@@ -115,16 +157,16 @@ export default function GrokBuildToolCard({
       initialStatus?.settings?.subagentModels?.[type.id]?.model,
     ]).filter(([, model]) => Boolean(model)),
   );
-  const [grokStatus, setGrokStatus] = useState(initialStatus || null);
+  const [grokStatus, setGrokStatus] = useState<GrokStatus | null>(initialStatus || null);
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedApiKey, setSelectedApiKey] = useState(apiKeys?.[0]?.key || "");
-  const [selectedModel, setSelectedModel] = useState(initialModel);
-  const [subagentModels, setSubagentModels] = useState(initialSubagents);
-  const [modelTarget, setModelTarget] = useState(null); // "main" or subagent type
-  const [modelAliases, setModelAliases] = useState({});
+  const [selectedModel, setSelectedModel] = useState<string>(initialModel);
+  const [subagentModels, setSubagentModels] = useState<Record<string, string>>(initialSubagents);
+  const [modelTarget, setModelTarget] = useState<string | null>(null); // "main" or subagent type
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [statusHydrated, setStatusHydrated] = useState(Boolean(initialStatus));
@@ -141,7 +183,7 @@ export default function GrokBuildToolCard({
         ? "configured"
         : "other";
 
-  const hydrateForm = useCallback((status) => {
+  const hydrateForm = useCallback((status: GrokStatus) => {
     const mainModel = status?.settings?.model?.model || "";
     const configuredSubagents = Object.fromEntries(
       SUBAGENT_TYPES.map((type) => [
@@ -164,16 +206,17 @@ export default function GrokBuildToolCard({
   }, []);
 
   const checkStatus = useCallback(
-    async ({ hydrate = false } = {}) => {
+    async ({ hydrate = false }: { hydrate?: boolean } = {}) => {
       setChecking(true);
       try {
         const res = await fetch(ENDPOINT);
-        const status = await res.json();
+        const status: GrokStatus = await res.json();
         setGrokStatus(status);
         setStatusHydrated(true);
         if (hydrate) hydrateForm(status);
-      } catch (error) {
-        setGrokStatus({ installed: false, error: error.message });
+      } catch (error: unknown) {
+        const err = error as { message?: string };
+        setGrokStatus({ installed: false, error: err.message });
       } finally {
         setChecking(false);
       }
@@ -211,7 +254,7 @@ export default function GrokBuildToolCard({
         selectedApiKey?.trim() ||
         (apiKeys?.length > 0 ? apiKeys[0].key : null) ||
         (!cloudEnabled ? "sk_flamerouter" : null);
-      const mappedSubagents = {};
+      const mappedSubagents: Record<string, { model: string; contextWindow: number | null }> = {};
       for (const type of SUBAGENT_TYPES) {
         const model = subagentModels[type.id]?.trim();
         if (model)
@@ -245,8 +288,9 @@ export default function GrokBuildToolCard({
           text: data.error || "Failed to apply settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to apply settings" });
     } finally {
       setApplying(false);
     }
@@ -269,14 +313,15 @@ export default function GrokBuildToolCard({
           text: data.error || "Failed to reset settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to reset settings" });
     } finally {
       setRestoring(false);
     }
   };
 
-  const handleModelSelect = (model) => {
+  const handleModelSelect = (model: ModelSelectItem) => {
     if (modelTarget === "main") {
       setSelectedModel(model.value);
     } else if (modelTarget) {
@@ -298,7 +343,7 @@ export default function GrokBuildToolCard({
       `[models]\ndefault = "${MODEL_SLOT}"`,
       `[model.${MODEL_SLOT}]\nmodel = "${mainModel}"\nbase_url = "${baseUrl}"\nname = "FlameRouter"\ndescription = "Routed via FlameRouter gateway"\napi_backend = "chat_completions"\napi_key = "${keyToUse}"\ncontext_window = ${getContextWindow(mainModel) || 200000}`,
     ];
-    const mappings = [];
+    const mappings: string[] = [];
     for (const type of SUBAGENT_TYPES) {
       const model = subagentModels[type.id]?.trim();
       if (!model) continue;
@@ -323,19 +368,21 @@ export default function GrokBuildToolCard({
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
-            <Image
-              src={tool.image || "/providers/grok-cli.png"}
-              alt={tool.name}
-              width={32}
-              height={32}
-              className="size-8 object-contain rounded-lg"
-              sizes="32px"
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-              loading="lazy"
-              decoding="async"
-            />
+            {tool.image ? (
+              <Image
+                src={tool.image}
+                alt={tool.name}
+                width={32}
+                height={32}
+                className="size-8 object-contain rounded-lg"
+                sizes="32px"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = "none";
+                }}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -411,7 +458,7 @@ export default function GrokBuildToolCard({
           {!checking && grokStatus?.installed && (
             <>
               <div className="flex flex-col gap-2">
-                {tool.notes?.length > 0 && (
+                {tool.notes && tool.notes.length > 0 && (
                   <div className="mb-2 flex flex-col gap-2">
                     {tool.notes.map((note, index) => (
                       <div

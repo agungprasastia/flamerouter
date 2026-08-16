@@ -1,13 +1,13 @@
-import { getProxyPoolById } from "@/models";
+import { getProxyPoolById } from "@/lib/localDb";
 
 // Safely normalize any value into a trimmed string.
-function normalizeString(value) {
+function normalizeString(value?: unknown): string {
   if (value === undefined || value === null) return "";
   return String(value).trim();
 }
 
 // ─── Proxy pool rotation state (in-memory) ─────────────────────────
-const rotateState = new Map(); // providerId → { index }
+const rotateState = new Map<string, { index: number }>(); // providerId → { index }
 
 /**
  * Pick one proxy pool ID from a list based on strategy.
@@ -15,28 +15,35 @@ const rotateState = new Map(); // providerId → { index }
  * random:      uniform random pick
  * none/single: return first entry
  */
-export function pickProxyPoolId(poolIds, strategy, providerId) {
+export function pickProxyPoolId(poolIds?: string[] | null, strategy?: string, providerId?: string): string | null {
   if (!poolIds || poolIds.length === 0) return null;
-  if (poolIds.length === 1) return poolIds[0];
+  if (poolIds.length === 1) return poolIds[0] ?? null;
 
   if (strategy === "round-robin") {
-    const state = rotateState.get(providerId) || { index: -1 };
+    const key = providerId || "default";
+    const state = rotateState.get(key) || { index: -1 };
     state.index = (state.index + 1) % poolIds.length;
-    rotateState.set(providerId, state);
-    return poolIds[state.index];
+    rotateState.set(key, state);
+    return poolIds[state.index] ?? null;
   }
 
   if (strategy === "random") {
-    return poolIds[Math.floor(Math.random() * poolIds.length)];
+    return poolIds[Math.floor(Math.random() * poolIds.length)] ?? null;
   }
 
-  return poolIds[0]; // "none" or unknown
+  return poolIds[0] ?? null; // "none" or unknown
+}
+
+export interface LegacyProxyConfig {
+  connectionProxyEnabled: boolean;
+  connectionProxyUrl: string;
+  connectionNoProxy: string;
 }
 
 /**
  * Normalize legacy proxy configuration.
  */
-function normalizeLegacyProxy(providerSpecificData = {}) {
+function normalizeLegacyProxy(providerSpecificData: Record<string, unknown> = {}): LegacyProxyConfig {
   const connectionProxyEnabled =
     providerSpecificData?.connectionProxyEnabled === true;
 
@@ -55,6 +62,17 @@ function normalizeLegacyProxy(providerSpecificData = {}) {
   };
 }
 
+export interface ResolvedProxyConfig {
+  source: string;
+  proxyPoolId: string | null;
+  proxyPool: unknown;
+  connectionProxyEnabled: boolean;
+  connectionProxyUrl: string;
+  connectionNoProxy: string;
+  strictProxy?: boolean;
+  vercelRelayUrl?: string;
+}
+
 /**
  * Resolve final proxy configuration.
  *
@@ -63,7 +81,7 @@ function normalizeLegacyProxy(providerSpecificData = {}) {
  * 2. Legacy Proxy
  * 3. No Proxy
  */
-export async function resolveConnectionProxyConfig(providerSpecificData = {}) {
+export async function resolveConnectionProxyConfig(providerSpecificData: Record<string, unknown> = {}): Promise<ResolvedProxyConfig> {
   try {
     const proxyPoolIdRaw = normalizeString(providerSpecificData?.proxyPoolId);
 
@@ -97,7 +115,6 @@ export async function resolveConnectionProxyConfig(providerSpecificData = {}) {
         ) {
           return {
             source: proxyPool.type,
-
             proxyPoolId,
             proxyPool,
 

@@ -2,10 +2,27 @@
 /* eslint-disable react-hooks/immutability */
 
 import { useState, useEffect } from "react";
-import { getDefaultPricing, formatCost } from "@/shared/constants/pricing";
+import { getDefaultPricing } from "@/shared/constants/pricing";
 
-export default function PricingModal({ isOpen, onClose, onSave }) {
-  const [pricingData, setPricingData] = useState({});
+export interface PricingRates {
+  input?: number;
+  output?: number;
+  cached?: number;
+  reasoning?: number;
+  cache_creation?: number;
+  [key: string]: number | undefined;
+}
+
+export type PricingConfig = Record<string, Record<string, PricingRates>>;
+
+export interface PricingModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave?: () => void;
+}
+
+export default function PricingModal({ isOpen, onClose, onSave }: PricingModalProps) {
+  const [pricingData, setPricingData] = useState<PricingConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -21,30 +38,32 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
       const response = await fetch("/api/pricing");
       if (response.ok) {
         const data = await response.json();
-        setPricingData(data);
+        setPricingData(data as PricingConfig);
       } else {
         // Fallback to defaults
         const defaults = getDefaultPricing();
-        setPricingData(defaults);
+        setPricingData(defaults as PricingConfig);
       }
     } catch (error) {
       console.error("Failed to load pricing:", error);
       const defaults = getDefaultPricing();
-      setPricingData(defaults);
+      setPricingData(defaults as PricingConfig);
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePricingChange = (provider, model, field, value) => {
+  const handlePricingChange = (provider: string, model: string, field: string, value: string) => {
     const numValue = parseFloat(value);
     if (isNaN(numValue) || numValue < 0) return;
 
     setPricingData((prev) => {
-      const newData = { ...prev };
+      const newData: PricingConfig = { ...prev };
       if (!newData[provider]) newData[provider] = {};
-      if (!newData[provider][model]) newData[provider][model] = {};
-      newData[provider][model][field] = numValue;
+      const provModels = newData[provider] as Record<string, PricingRates>;
+      if (!provModels[model]) provModels[model] = {};
+      const modelRates = provModels[model] as PricingRates;
+      modelRates[field] = numValue;
       return newData;
     });
   };

@@ -7,37 +7,83 @@ import {
   ModelSelectModal,
   ManualConfigModal,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
-import ApiKeySelect from "./ApiKeySelect";
+import ApiKeySelect, { type ApiKeyItem } from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import type { ToolCardDef } from "./DefaultToolCard";
+
+export interface OpenClawAgent {
+  id: string;
+  name?: string;
+  agentDir?: string;
+  currentModel?: string;
+  [key: string]: unknown;
+}
+
+export interface OpenClawStatus {
+  installed?: boolean;
+  hasFlameRouter?: boolean;
+  settings?: {
+    models?: {
+      providers?: Record<string, { baseUrl?: string; apiKey?: string; [key: string]: unknown }>;
+    };
+    agents?: {
+      defaults?: {
+        model?: {
+          primary?: string;
+        };
+      };
+    };
+  };
+  agents?: OpenClawAgent[];
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface OpenClawToolCardProps {
+  tool: ToolCardDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  baseUrl?: string;
+  hasActiveProviders?: boolean;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  cloudEnabled?: boolean;
+  initialStatus?: OpenClawStatus | null;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+}
 
 export default function OpenClawToolCard({
   tool,
   isExpanded,
   onToggle,
   baseUrl,
-  hasActiveProviders,
-  apiKeys,
-  activeProviders,
-  cloudEnabled,
+  hasActiveProviders = false,
+  apiKeys = [],
+  activeProviders = [],
+  cloudEnabled = false,
   initialStatus,
-  tunnelEnabled,
-  tunnelPublicUrl,
-  tailscaleEnabled,
-  tailscaleUrl,
-}) {
-  const [openclawStatus, setOpenclawStatus] = useState(initialStatus || null);
+  tunnelEnabled = false,
+  tunnelPublicUrl = "",
+  tailscaleEnabled = false,
+  tailscaleUrl = "",
+}: OpenClawToolCardProps) {
+  const [openclawStatus, setOpenclawStatus] = useState<OpenClawStatus | null>(initialStatus || null);
   const [checkingOpenclaw, setCheckingOpenclaw] = useState(false);
   const [applying, setApplying] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
-  const [agentModels, setAgentModels] = useState({}); // { [agentId]: modelId }
-  const [agentModalFor, setAgentModalFor] = useState(null); // agentId opening modal
+  const [agentModels, setAgentModels] = useState<Record<string, string>>({}); // { [agentId]: modelId }
+  const [agentModalFor, setAgentModalFor] = useState<string | null>(null); // agentId opening modal
   const [modalOpen, setModalOpen] = useState(false);
-  const [modelAliases, setModelAliases] = useState({});
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const hasInitializedModel = useRef(false);
@@ -46,7 +92,7 @@ export default function OpenClawToolCard({
     if (!openclawStatus?.installed) return null;
     const currentProvider =
       openclawStatus.settings?.models?.providers?.["flamerouter"];
-    if (!currentProvider) return "not_configured";
+    if (!currentProvider || !currentProvider.baseUrl) return "not_configured";
     return matchKnownEndpoint(currentProvider.baseUrl, {
       tunnelPublicUrl,
       tailscaleUrl,
@@ -104,7 +150,7 @@ export default function OpenClawToolCard({
       }
       // Init per-agent models from enriched agents list
       const agentList = openclawStatus.agents || [];
-      const initAgentModels = {};
+      const initAgentModels: Record<string, string> = {};
       agentList.forEach((agent) => {
         if (agent.currentModel) initAgentModels[agent.id] = agent.currentModel;
       });
@@ -117,16 +163,17 @@ export default function OpenClawToolCard({
     setCheckingOpenclaw(true);
     try {
       const res = await fetch("/api/cli-tools/openclaw-settings");
-      const data = await res.json();
+      const data: OpenClawStatus = await res.json();
       setOpenclawStatus(data);
-    } catch (error) {
-      setOpenclawStatus({ installed: false, error: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setOpenclawStatus({ installed: false, error: err.message });
     } finally {
       setCheckingOpenclaw(false);
     }
   };
 
-  const normalizeLocalhost = (url) =>
+  const normalizeLocalhost = (url: string) =>
     url.replace("://localhost", "://127.0.0.1");
 
   const getLocalBaseUrl = () => {
@@ -175,8 +222,9 @@ export default function OpenClawToolCard({
           text: data.error || "Failed to apply settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to apply settings" });
     } finally {
       setApplying(false);
     }
@@ -201,14 +249,15 @@ export default function OpenClawToolCard({
           text: data.error || "Failed to reset settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to reset settings" });
     } finally {
       setRestoring(false);
     }
   };
 
-  const handleModelSelect = (model) => {
+  const handleModelSelect = (model: ModelSelectItem) => {
     if (agentModalFor) {
       setAgentModels((prev) => ({ ...prev, [agentModalFor]: model.value }));
       setAgentModalFor(null);
@@ -267,19 +316,21 @@ export default function OpenClawToolCard({
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
-            <Image
-              src="/providers/openclaw.png"
-              alt={tool.name}
-              width={32}
-              height={32}
-              className="size-8 object-contain rounded-lg"
-              sizes="32px"
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-              loading="lazy"
-              decoding="async"
-            />
+            {tool.image ? (
+              <Image
+                src="/providers/openclaw.png"
+                alt={tool.name}
+                width={32}
+                height={32}
+                className="size-8 object-contain rounded-lg"
+                sizes="32px"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = "none";
+                }}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -588,3 +639,4 @@ export default function OpenClawToolCard({
     </Card>
   );
 }
+

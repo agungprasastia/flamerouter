@@ -1,22 +1,35 @@
 import { ANTIGRAVITY_CONFIG, getOAuthClientMetadata } from "../constants/oauth";
 
+interface AntigravityConfigLike {
+  clientId?: string;
+  clientSecret?: string;
+  scopes?: string[];
+  authorizeUrl?: string;
+  tokenUrl?: string;
+  userInfoUrl?: string;
+  loadCodeAssistUserAgent?: string;
+  loadCodeAssistEndpoint?: string;
+  onboardUserEndpoint?: string;
+  [key: string]: unknown;
+}
+
 const antigravity = {
   config: ANTIGRAVITY_CONFIG,
   flowType: "authorization_code",
-  buildAuthUrl: (config, redirectUri, state) => {
+  buildAuthUrl: (config: AntigravityConfigLike, redirectUri: string, state: string) => {
     const params = new URLSearchParams({
-      client_id: config.clientId,
+      client_id: config.clientId || "",
       response_type: "code",
       redirect_uri: redirectUri,
-      scope: config.scopes.join(" "),
+      scope: (config.scopes || []).join(" "),
       state: state,
       access_type: "offline",
       prompt: "consent",
     });
     return `${config.authorizeUrl}?${params.toString()}`;
   },
-  exchangeToken: async (config, code, redirectUri) => {
-    const response = await fetch(config.tokenUrl, {
+  exchangeToken: async (config: AntigravityConfigLike, code: string, redirectUri: string) => {
+    const response = await fetch(config.tokenUrl || "", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -24,8 +37,8 @@ const antigravity = {
       },
       body: new URLSearchParams({
         grant_type: "authorization_code",
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
+        client_id: config.clientId || "",
+        client_secret: (config.clientSecret as string) || "",
         code: code,
         redirect_uri: redirectUri,
       }),
@@ -36,20 +49,21 @@ const antigravity = {
       throw new Error(`Token exchange failed: ${error}`);
     }
 
-    return await response.json();
+    return (await response.json()) as Record<string, unknown>;
   },
-  postExchange: async (tokens) => {
+  postExchange: async (tokens: Record<string, unknown>) => {
+    const cfg = ANTIGRAVITY_CONFIG as unknown as AntigravityConfigLike;
     const loadHeaders = {
       Authorization: `Bearer ${tokens.access_token}`,
       "Content-Type": "application/json",
-      "User-Agent": ANTIGRAVITY_CONFIG.loadCodeAssistUserAgent,
+      "User-Agent": cfg.loadCodeAssistUserAgent || "",
       "x-request-source": "local",
     };
     const metadata = getOAuthClientMetadata();
 
     // Fetch user info
     const userInfoRes = await fetch(
-      `${ANTIGRAVITY_CONFIG.userInfoUrl}?alt=json`,
+      `${cfg.userInfoUrl}?alt=json`,
       {
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
@@ -57,22 +71,24 @@ const antigravity = {
         },
       },
     );
-    const userInfo = userInfoRes.ok ? await userInfoRes.json() : {};
+    const userInfo = userInfoRes.ok ? ((await userInfoRes.json()) as Record<string, unknown>) : {};
 
     // Load Code Assist to get project ID and tier
     let projectId = "";
     let tierId = "legacy-tier";
     try {
-      const loadRes = await fetch(ANTIGRAVITY_CONFIG.loadCodeAssistEndpoint, {
+      const loadRes = await fetch(cfg.loadCodeAssistEndpoint || "", {
         method: "POST",
         headers: loadHeaders,
         body: JSON.stringify({ metadata }),
       });
       if (loadRes.ok) {
-        const data = await loadRes.json();
+        const data = (await loadRes.json()) as {
+          cloudaicompanionProject?: { id?: string } | string;
+          allowedTiers?: Array<{ isDefault?: boolean; id?: string }>;
+        };
         projectId =
-          data.cloudaicompanionProject?.id ||
-          data.cloudaicompanionProject ||
+          (typeof data.cloudaicompanionProject === "object" ? data.cloudaicompanionProject?.id : data.cloudaicompanionProject) ||
           "";
         if (Array.isArray(data.allowedTiers)) {
           for (const tier of data.allowedTiers) {
@@ -93,7 +109,7 @@ const antigravity = {
         for (let i = 0; i < 10; i++) {
           try {
             const onboardRes = await fetch(
-              ANTIGRAVITY_CONFIG.onboardUserEndpoint,
+              cfg.onboardUserEndpoint || "",
               {
                 method: "POST",
                 headers: loadHeaders,
@@ -101,27 +117,32 @@ const antigravity = {
               },
             );
             if (onboardRes.ok) {
-              const result = await onboardRes.json();
-              if (result.done === true) break;
+              const resData = (await onboardRes.json()) as { done?: boolean };
+              if (resData.done) break;
             }
-          } catch (e) {
-            break;
+          } catch {
+            /* ignore */
           }
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
       };
-      doOnboard().catch(() => {});
+      doOnboard().catch((e) => console.log("Onboarding error:", e));
     }
 
-    return { userInfo, projectId };
+    return { userInfo, projectId, tierId };
   },
-  mapTokens: (tokens, extra) => ({
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    expiresIn: tokens.expires_in,
-    scope: tokens.scope,
+  mapTokens: (tokens: Record<string, unknown>, extra?: { userInfo?: { email?: string; name?: string }; projectId?: string; tierId?: string } | null) => ({
+    accessToken: tokens.access_token as string,
+    refreshToken: tokens.refresh_token as string,
+    expiresIn: tokens.expires_in as number,
+    scope: tokens.scope as string,
     email: extra?.userInfo?.email,
+    displayName: extra?.userInfo?.name,
     projectId: extra?.projectId,
+    providerSpecificData: {
+      tierId: extra?.tierId || "legacy-tier",
+      projectId: extra?.projectId,
+    },
   }),
 };
 

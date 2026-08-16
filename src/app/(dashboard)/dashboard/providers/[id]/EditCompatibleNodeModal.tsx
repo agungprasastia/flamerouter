@@ -5,13 +5,37 @@ import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 
+export interface CompatibleNodeData {
+  id?: string;
+  name?: string;
+  prefix?: string;
+  apiType?: string;
+  baseUrl?: string;
+  [key: string]: unknown;
+}
+
+export interface EditCompatibleNodePayload {
+  name: string;
+  prefix: string;
+  baseUrl: string;
+  apiType?: string;
+}
+
+interface EditCompatibleNodeModalProps {
+  isOpen: boolean;
+  node: CompatibleNodeData | null;
+  onSave: (payload: EditCompatibleNodePayload) => Promise<void> | void;
+  onClose: () => void;
+  isAnthropic?: boolean;
+}
+
 export default function EditCompatibleNodeModal({
   isOpen,
   node,
   onSave,
   onClose,
   isAnthropic,
-}) {
+}: EditCompatibleNodeModalProps) {
   const [formData, setFormData] = useState({
     name: "",
     prefix: "",
@@ -22,7 +46,7 @@ export default function EditCompatibleNodeModal({
   const [checkKey, setCheckKey] = useState("");
   const [checkModelId, setCheckModelId] = useState("");
   const [validating, setValidating] = useState(false);
-  const [validationResult, setValidationResult] = useState(null);
+  const [validationResult, setValidationResult] = useState<"success" | "failed" | null>(null);
 
   useEffect(() => {
     if (node) {
@@ -53,7 +77,7 @@ export default function EditCompatibleNodeModal({
       return;
     setSaving(true);
     try {
-      const payload = {
+      const payload: EditCompatibleNodePayload = {
         name: formData.name,
         prefix: formData.prefix,
         baseUrl: formData.baseUrl,

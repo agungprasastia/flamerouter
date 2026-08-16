@@ -2,8 +2,18 @@
 
 import { TriangleAlert } from "lucide-react";
 
+export interface SecurityWarningAction {
+  href: string;
+  label: string;
+}
+
+export interface SecurityWarningProps {
+  message: string;
+  action?: SecurityWarningAction;
+}
+
 /** Security warning banner with optional action link */
-export default function SecurityWarning({ message, action }) {
+export default function SecurityWarning({ message, action }: SecurityWarningProps) {
   return (
     <div className="flex items-start gap-2 rounded-[6px_1px_6px_1px] border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400">
       <TriangleAlert

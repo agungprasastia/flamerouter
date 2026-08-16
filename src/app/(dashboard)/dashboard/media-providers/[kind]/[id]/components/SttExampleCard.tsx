@@ -2,30 +2,40 @@
 /* eslint-disable react-hooks/purity, react-hooks/set-state-in-effect */
 
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { Card } from "@/shared/components";
 import { getProviderAlias } from "@/shared/constants/providers";
 import { getModelKind } from "@/shared/constants/models";
 import { getModelsByProviderId } from "@/shared/constants/models";
+import type { RegistryModel } from "@/shared/constants/providerModels";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { Row } from "./exampleShared";
 
-export function SttExampleCard({ providerId }) {
+interface SttExampleCardProps {
+  providerId: string;
+}
+
+interface CustomSttModel extends RegistryModel {
+  providerAlias?: string;
+}
+
+export function SttExampleCard({ providerId }: SttExampleCardProps) {
   const providerAlias = getProviderAlias(providerId);
   const builtinSttModels = getModelsByProviderId(providerId).filter(
     (m) => getModelKind(m) === "stt",
   );
-  const [customSttModels, setCustomSttModels] = useState([]);
+  const [customSttModels, setCustomSttModels] = useState<CustomSttModel[]>([]);
   const sttModels = [...builtinSttModels, ...customSttModels];
 
   const [selectedModel, setSelectedModel] = useState(
     builtinSttModels[0]?.id ?? "",
   );
   const selectedModelObj = sttModels.find((m) => m.id === selectedModel);
-  const allowedParams = Array.isArray(selectedModelObj?.params)
-    ? selectedModelObj.params
+  const allowedParams: string[] = Array.isArray(selectedModelObj?.params)
+    ? (selectedModelObj.params as string[])
     : [];
 
-  const [audioFile, setAudioFile] = useState(null);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
   const [language, setLanguage] = useState("");
   const [prompt, setPrompt] = useState("");
   const [responseFormat, setResponseFormat] = useState("json");
@@ -34,8 +44,8 @@ export function SttExampleCard({ providerId }) {
   const [useTunnel, setUseTunnel] = useState(false);
   const [localEndpoint, setLocalEndpoint] = useState("");
   const [tunnelEndpoint, setTunnelEndpoint] = useState("");
-  const [result, setResult] = useState(null);
-  const [latency, setLatency] = useState(null);
+  const [result, setResult] = useState<unknown>(null);
+  const [latency, setLatency] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const { copied: copiedCurl, copy: copyCurl } = useCopyToClipboard();
@@ -45,20 +55,20 @@ export function SttExampleCard({ providerId }) {
     setLocalEndpoint(window.location.origin);
     fetch("/api/keys")
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { keys?: Array<{ isActive?: boolean; key: string }> }) => {
         setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || "");
       })
       .catch(() => {});
     fetch("/api/tunnel/status")
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { publicUrl?: string }) => {
         if (d.publicUrl) setTunnelEndpoint(d.publicUrl);
       })
       .catch(() => {});
     const loadCustom = () => {
       fetch("/api/models/custom", { cache: "no-store" })
         .then((r) => r.json())
-        .then((d) => {
+        .then((d: { models?: CustomSttModel[] }) => {
           const list = (d.models || []).filter(
             (m) =>
               getModelKind(m) === "stt" && m.providerAlias === providerAlias,
@@ -103,7 +113,7 @@ export function SttExampleCard({ providerId }) {
       if (allowedParams.includes("prompt") && prompt)
         fd.append("prompt", prompt);
 
-      const headers = {};
+      const headers: Record<string, string> = {};
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       const res = await fetch("/api/v1/audio/transcriptions", {
         method: "POST",
@@ -112,18 +122,26 @@ export function SttExampleCard({ providerId }) {
       });
       setLatency(Date.now() - start);
       const ct = res.headers.get("content-type") || "";
-      const data = ct.includes("application/json")
+      const data: unknown = ct.includes("application/json")
         ? await res.json()
         : await res.text();
       if (!res.ok) {
-        setError(
-          data?.error?.message || data?.error || data || `HTTP ${res.status}`,
-        );
+        const errorData = data as { error?: { message?: string } | string } | string;
+        const errMsg =
+          typeof errorData === "object" && errorData?.error
+            ? typeof errorData.error === "object"
+              ? errorData.error.message || `HTTP ${res.status}`
+              : errorData.error
+            : typeof errorData === "string"
+              ? errorData
+              : `HTTP ${res.status}`;
+        setError(errMsg);
         return;
       }
       setResult(data);
     } catch (e) {
-      setError(e.message || "Network error");
+      const err = e as { message?: string };
+      setError(err.message || "Network error");
     } finally {
       setRunning(false);
     }
@@ -323,13 +341,13 @@ export function SttExampleCard({ providerId }) {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-1.5">
             <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">
               Response{" "}
-              {result && latency && (
+              {result !== null && latency !== null && (
                 <span className="font-normal normal-case">
                   &#9889; {latency}ms
                 </span>
               )}
             </span>
-            {result && (
+            {result !== null && (
               <button
                 onClick={() => copyRes(resultStr)}
                 className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"

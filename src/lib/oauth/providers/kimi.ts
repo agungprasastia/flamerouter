@@ -1,29 +1,42 @@
 import crypto from "crypto";
 import { KIMI_CONFIG } from "../constants/oauth";
 
-// Kimi Code device flow (CLIProxyAPI internal/auth/kimi). Id is `kimi`;
-// `kimi-coding` remains an alias key so old UI/API routes still resolve.
+interface KimiConfigLike {
+  clientId?: string;
+  deviceCodeUrl?: string;
+  tokenUrl?: string;
+  authorizeDeviceUrl?: string;
+  [key: string]: unknown;
+}
+
 const kimi = {
   config: KIMI_CONFIG,
   flowType: "device_code",
-  requestDeviceCode: async (config) => {
-    const { buildKimiHeaders } = ({ buildKimiHeaders: (t) => ({ Authorization: `Bearer ${t}` }) });
+  requestDeviceCode: async (config: KimiConfigLike) => {
+    const { buildKimiHeaders } = { buildKimiHeaders: (t: string) => ({ Authorization: `Bearer ${t}` }) };
     const deviceId = crypto.randomUUID();
     const headers = {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
       ...buildKimiHeaders(deviceId),
     };
-    const response = await fetch(config.deviceCodeUrl, {
+    const response = await fetch(config.deviceCodeUrl || "", {
       method: "POST",
       headers,
-      body: new URLSearchParams({ client_id: config.clientId }),
+      body: new URLSearchParams({ client_id: config.clientId || "" }),
     });
     if (!response.ok) {
       const error = await response.text();
       throw new Error(`Device code request failed: ${error}`);
     }
-    const data = await response.json();
+    const data = (await response.json()) as {
+      device_code: string;
+      user_code: string;
+      verification_uri?: string;
+      verification_uri_complete?: string;
+      expires_in?: number;
+      interval?: number;
+    };
     const authorizeDeviceUrl =
       config.authorizeDeviceUrl || "https://www.kimi.com/code/authorize_device";
     return {
@@ -38,40 +51,39 @@ const kimi = {
       _kimiDeviceId: deviceId,
     };
   },
-  pollToken: async (config, deviceCode, _codeVerifier, extraData) => {
-    const { buildKimiHeaders } = ({ buildKimiHeaders: (t) => ({ Authorization: `Bearer ${t}` }) });
-    const deviceId = extraData?._kimiDeviceId;
+  pollToken: async (config: KimiConfigLike, deviceCode?: string, _codeVerifier?: string, extraData?: Record<string, unknown>) => {
+    const { buildKimiHeaders } = { buildKimiHeaders: (t: string) => ({ Authorization: `Bearer ${t}` }) };
+    const deviceId = (extraData?._kimiDeviceId as string) || "";
     const headers = {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
       ...buildKimiHeaders(deviceId),
     };
-    const response = await fetch(config.tokenUrl, {
+    const response = await fetch(config.tokenUrl || "", {
       method: "POST",
       headers,
       body: new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        client_id: config.clientId,
-        device_code: deviceCode,
+        client_id: config.clientId || "",
+        device_code: deviceCode || "",
       }),
     });
-    let data;
+    let data: Record<string, unknown>;
     try {
-      data = await response.json();
+      data = (await response.json()) as Record<string, unknown>;
     } catch {
       data = {
         error: "invalid_response",
         error_description: "non-json token response",
       };
     }
-    // CLIProxyAPI: Kimi returns 200 for pending states with error field
     if (data.error === "authorization_pending" || data.error === "slow_down") {
       return { ok: true, data };
     }
     if (data.access_token && deviceId) data._kimiDeviceId = deviceId;
     return { ok: response.ok || !!data.access_token || !!data.error, data };
   },
-  mapTokens: (tokens) => ({
+  mapTokens: (tokens: Record<string, unknown>) => ({
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
     expiresIn: tokens.expires_in,

@@ -3,17 +3,21 @@
 
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
-import PropTypes from "prop-types";
 import { marked } from "marked";
 import { GITHUB_CONFIG } from "@/shared/constants/config";
 
 marked.setOptions({ gfm: true, breaks: true });
 
-export default function ChangelogModal({ isOpen, onClose }) {
+export interface ChangelogModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export default function ChangelogModal({ isOpen, onClose }: ChangelogModalProps) {
   const [html, setHtml] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const modalRef = useRef(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!isOpen || html) return;
@@ -24,14 +28,20 @@ export default function ChangelogModal({ isOpen, onClose }) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.text();
       })
-      .then((md) => setHtml(marked.parse(md)))
-      .catch((err) => setError(err.message || "Failed to load"))
+      .then(async (md) => {
+        const parsed = await marked.parse(md);
+        setHtml(parsed);
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "Failed to load";
+        setError(msg);
+      })
       .finally(() => setLoading(false));
   }, [isOpen, html]);
 
   useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (modalRef.current && !modalRef.current.contains(e.target)) {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
@@ -96,8 +106,3 @@ export default function ChangelogModal({ isOpen, onClose }) {
     document.body,
   );
 }
-
-ChangelogModal.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  onClose: PropTypes.func.isRequired,
-};

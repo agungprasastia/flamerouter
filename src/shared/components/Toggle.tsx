@@ -1,6 +1,19 @@
 "use client";
 
+import React, { ReactNode } from "react";
 import { cn } from "@/shared/utils/cn";
+
+export interface ToggleProps {
+  checked?: boolean;
+  onChange?: (checked: boolean) => void;
+  label?: ReactNode | string;
+  description?: ReactNode | string;
+  disabled?: boolean;
+  size?: "sm" | "md" | "lg" | string;
+  className?: string;
+  "aria-label"?: string;
+  title?: string;
+}
 
 export default function Toggle({
   checked = false,
@@ -11,12 +24,14 @@ export default function Toggle({
   size = "md",
   className,
   "aria-label": ariaLabel,
-}) {
-  const sizes = {
+}: ToggleProps) {
+  const sizes: Record<string, { track: string; thumb: string; translate: string }> = {
     sm: { track: "w-8 h-4", thumb: "size-3", translate: "translate-x-4" },
     md: { track: "w-11 h-6", thumb: "size-5", translate: "translate-x-5" },
     lg: { track: "w-14 h-7", thumb: "size-6", translate: "translate-x-7" },
   };
+
+  const currentSize = sizes[size] || sizes.md;
 
   const handleClick = () => {
     if (!disabled && onChange) onChange(!checked);
@@ -47,15 +62,15 @@ export default function Toggle({
           className={cn(
             "pointer-events-none relative inline-flex rounded-[4px] transition-colors duration-200 ease-in-out",
             checked ? "bg-brand-500" : "bg-surface-3",
-            sizes[size].track,
+            currentSize.track,
           )}
         >
           <span
             className={cn(
               "inline-block rounded-[3px] bg-white shadow-sm",
               "transform transition duration-200 ease-in-out",
-              checked ? sizes[size].translate : "translate-x-0.5",
-              sizes[size].thumb,
+              checked ? currentSize.translate : "translate-x-0.5",
+              currentSize.thumb,
               "mt-0.5",
             )}
           />

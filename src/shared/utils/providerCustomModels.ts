@@ -1,4 +1,37 @@
-function modelType(model) {
+export interface CustomModelItem {
+  id: string;
+  name?: string;
+  providerAlias?: string;
+  kind?: string;
+  type?: string;
+  [key: string]: unknown;
+}
+
+export interface BuiltInModelItem {
+  id: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
+export interface CustomModelRow {
+  id: string;
+  name?: string;
+  alias?: string;
+  fullModel: string;
+  source: "custom" | "legacyAlias";
+  type: string;
+}
+
+export interface GetProviderCustomModelRowsParams {
+  customModels?: CustomModelItem[];
+  modelAliases?: Record<string, string>;
+  providerAlias: string;
+  builtInModels?: BuiltInModelItem[];
+  type?: string | null;
+  includeLegacyAliases?: boolean;
+}
+
+function modelType(model?: CustomModelItem | null): string {
   return model?.kind || model?.type || "llm";
 }
 
@@ -9,10 +42,10 @@ export function getProviderCustomModelRows({
   builtInModels = [],
   type = "llm",
   includeLegacyAliases = true,
-}) {
+}: GetProviderCustomModelRowsParams): CustomModelRow[] {
   const builtInIds = new Set(builtInModels.map((model) => model.id));
-  const seenFullModels = new Set();
-  const rows = [];
+  const seenFullModels = new Set<string>();
+  const rows: CustomModelRow[] = [];
 
   for (const model of customModels) {
     if (!model?.id || model.providerAlias !== providerAlias) continue;

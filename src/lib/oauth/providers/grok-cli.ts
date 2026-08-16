@@ -4,19 +4,28 @@ import {
   extractEmailFromAccessToken,
 } from "../providerHelpers";
 
+interface GrokCliConfigLike {
+  clientId?: string;
+  scope?: string;
+  referrer?: string;
+  deviceCodeUrl?: string;
+  tokenUrl?: string;
+  [key: string]: unknown;
+}
+
 // Grok CLI / Grok Build — device code flow to auth.x.ai, inference on cli-chat-proxy.grok.com
 const grokCli = {
   config: GROK_CLI_CONFIG,
   flowType: "device_code",
-  requestDeviceCode: async (config) => {
+  requestDeviceCode: async (config: GrokCliConfigLike) => {
     const body = new URLSearchParams({
-      client_id: config.clientId,
-      scope: config.scope,
+      client_id: config.clientId || "",
+      scope: config.scope || "",
     });
     // Official CLI sends referrer=grok-build
     if (config.referrer) body.set("referrer", config.referrer);
 
-    const response = await fetch(config.deviceCodeUrl, {
+    const response = await fetch(config.deviceCodeUrl || "", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -31,10 +40,10 @@ const grokCli = {
       throw new Error(`Grok CLI device code request failed: ${error}`);
     }
 
-    return await response.json();
+    return (await response.json()) as Record<string, unknown>;
   },
-  pollToken: async (config, deviceCode) => {
-    const response = await fetch(config.tokenUrl, {
+  pollToken: async (config: GrokCliConfigLike, deviceCode?: string) => {
+    const response = await fetch(config.tokenUrl || "", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -43,14 +52,14 @@ const grokCli = {
       },
       body: new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        device_code: deviceCode,
-        client_id: config.clientId,
+        device_code: deviceCode || "",
+        client_id: config.clientId || "",
       }),
     });
 
-    let data;
+    let data: Record<string, unknown>;
     try {
-      data = await response.json();
+      data = (await response.json()) as Record<string, unknown>;
     } catch {
       const text = await response.text();
       data = { error: "invalid_response", error_description: text };
@@ -64,7 +73,7 @@ const grokCli = {
       data,
     };
   },
-  postExchange: async (tokens) => {
+  postExchange: async (tokens: Record<string, unknown>) => {
     // Best-effort user profile from cli-chat-proxy (non-fatal)
     try {
       const res = await fetch("https://cli-chat-proxy.grok.com/v1/user", {
@@ -76,54 +85,40 @@ const grokCli = {
           "x-grok-client-version": "0.2.93",
         },
       });
-      if (res.ok) return { user: await res.json() };
+      if (res.ok) return { user: (await res.json()) as Record<string, unknown> };
     } catch {
       /* ignore */
     }
-    return { user: null };
+    return {};
   },
-  mapTokens: (tokens, extra) => {
+  mapTokens: (tokens: Record<string, unknown>, extra?: { user?: Record<string, unknown> } | null) => {
+    const user = extra?.user;
+    const u = (user?.user as Record<string, string> | undefined) || {};
     const email =
-      decodeXaiIdTokenEmail(tokens.id_token) ||
-      extractEmailFromAccessToken(tokens.access_token) ||
-      extra?.user?.email ||
-      null;
-    const userId = extra?.user?.userId || extra?.user?.principalId || null;
+      decodeXaiIdTokenEmail(tokens.id_token as string) ||
+      u.email ||
+      extractEmailFromAccessToken(tokens.access_token as string);
     const displayName =
-      [extra?.user?.firstName, extra?.user?.lastName]
-        .filter(Boolean)
-        .join(" ")
-        .trim() || null;
+      u.name ||
+      u.username ||
+      u.display_name ||
+      u.handle ||
+      null;
 
-    const expiresAt = tokens.expires_in
-      ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
-      : null;
-
-    return {
+    const mapped: Record<string, unknown> = {
       accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token || null,
+      refreshToken: tokens.refresh_token,
       expiresIn: tokens.expires_in,
-      // Surface an absolute expiry so the proactive refresh path
-      // (shouldRefreshCredentials / checkAndRefreshToken) can refresh the
-      // xAI token before it silently expires ~40-45 min after login.
-      // Without this, only the reactive 401 path in chatCore would refresh,
-      // causing intermittent "token expired" failures for Grok CLI.
-      expiresAt,
+      tokenType: tokens.token_type,
       scope: tokens.scope,
-      // Top-level for dashboard connection cards
-      email: email || undefined,
-      displayName: displayName || undefined,
-      // Mirror identity into providerSpecificData so GrokCliExecutor can set
-      // x-email / x-userid without depending on top-level credential shape.
+      idToken: tokens.id_token,
       providerSpecificData: {
         authMethod: "device_code",
-        idToken: tokens.id_token || null,
-        email: email || null,
-        userId,
-        hasGrokCodeAccess: extra?.user?.hasGrokCodeAccess ?? null,
-        subscriptionTier: extra?.user?.subscriptionTier ?? null,
       },
     };
+    if (email) mapped.email = email;
+    if (displayName) mapped.displayName = displayName;
+    return mapped;
   },
 };
 

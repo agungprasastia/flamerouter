@@ -88,7 +88,7 @@ const LOG_BLACKLIST_URL_PARTS = [
   "fetchUserInfo",
 ];
 
-function getToolForHost(host) {
+function getToolForHost(host: string | null | undefined) {
   const h = (host || "").split(":")[0];
   if (h === "api.individual.githubcopilot.com") return "copilot";
   if (
@@ -106,7 +106,7 @@ function getToolForHost(host) {
   return null;
 }
 
-function isBinaryData(buffer) {
+function isBinaryData(buffer: Buffer | null | undefined) {
   if (!buffer || buffer.length === 0) return false;
   const sample = buffer.slice(0, Math.min(100, buffer.length));
   let nonPrintable = 0;
@@ -121,7 +121,7 @@ function isBinaryData(buffer) {
 }
 
 // Extract model from URL path (Gemini), body (OpenAI/Anthropic), or Kiro conversationState.
-function extractModel(url, body) {
+function extractModel(url: string, body: Buffer) {
   const urlMatch = url.match(/\/models\/([^/:]+)/);
   const urlModel = urlMatch?.[1] || null;
 
@@ -153,7 +153,7 @@ function extractModel(url, body) {
   }
 }
 
-module.exports = {
+export {
   IS_DEV,
   LSOF_BIN,
   TARGET_HOSTS,

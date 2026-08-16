@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Badge, Button } from "@/shared/components";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import {
@@ -16,27 +16,89 @@ const STORAGE_KEYS = {
   draft: "basic-chat.draft",
 };
 
+type ChatAttachment = {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  dataUrl: string;
+};
+
+type ChatMessage = {
+  id?: string;
+  role?: string;
+  content?: unknown;
+  attachments?: ChatAttachment[];
+  status?: string;
+  createdAt?: string;
+};
+
+type ModelInfo = {
+  id: string;
+  name: string;
+  providerId: string;
+  providerName: string;
+  requestModel?: string;
+  source?: string;
+};
+
+type ChatSession = {
+  id: string;
+  title?: string;
+  providerId?: string;
+  providerName?: string;
+  modelId?: string;
+  modelName?: string;
+  createdAt?: string;
+  updatedAt: string;
+  messages: ChatMessage[];
+};
+
+type ProviderConnection = {
+  id: string;
+  provider: string;
+  name?: string;
+  isActive?: boolean;
+  [key: string]: unknown;
+};
+
+type ProviderGroup = {
+  providerId: string;
+  providerName: string;
+  providerType: string;
+  connections: ProviderConnection[];
+  models: Array<{
+    id: string;
+    requestModel?: string;
+    name: string;
+    providerId: string;
+    providerName: string;
+    source: string;
+  }>;
+};
+
 function createId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-function safeParse(value, fallback) {
+function safeParse(value: string | null, fallback: unknown): unknown {
   try {
-    return JSON.parse(value);
+    return JSON.parse(value as string);
   } catch {
     return fallback;
   }
 }
 
-function textValue(value) {
+function textValue(value: unknown): string {
   if (typeof value === "string") return value;
   if (value == null) return "";
   if (Array.isArray(value))
     return value.map(textValue).filter(Boolean).join(" ");
   if (typeof value === "object") {
-    if (typeof value.message === "string") return value.message;
-    if (typeof value.error === "string") return value.error;
+    const record = value as Record<string, unknown>;
+    if (typeof record.message === "string") return record.message;
+    if (typeof record.error === "string") return record.error;
     try {
       return JSON.stringify(value);
     } catch {
@@ -55,9 +117,9 @@ function humanize(value = "") {
   );
 }
 
-function formatRelativeTime(value) {
+function formatRelativeTime(value: unknown) {
   if (!value) return "Now";
-  const time = new Date(value).getTime();
+  const time = new Date(String(value)).getTime();
   if (Number.isNaN(time)) return "Now";
   const diffMinutes = Math.max(1, Math.round((Date.now() - time) / 60000));
   if (diffMinutes < 60) return `${diffMinutes}m`;
@@ -74,7 +136,7 @@ function makeSessionTitle(text = "") {
     : normalized;
 }
 
-function buildUserContent(message) {
+function buildUserContent(message: { content?: unknown; attachments?: Array<{ dataUrl?: string }> }) {
   const text = textValue(message.content).trim();
   const attachments = Array.isArray(message.attachments)
     ? message.attachments
@@ -97,7 +159,11 @@ function buildUserContent(message) {
   return content.length > 0 ? content : text;
 }
 
-function readAssistantText(chunk) {
+function readAssistantText(chunk: {
+  choices?: Array<{ delta?: { content?: unknown }; message?: { content?: unknown } }>;
+  output_text?: unknown;
+  text?: unknown;
+}) {
   if (!chunk || typeof chunk !== "object") return "";
   const choice = chunk.choices?.[0];
   const delta = choice?.delta || {};
@@ -112,8 +178,8 @@ function readAssistantText(chunk) {
   return pieces[0] || "";
 }
 
-async function fileToDataUrl(file) {
-  return await new Promise((resolve, reject) => {
+async function fileToDataUrl(file: File) {
+  return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ""));
     reader.onerror = () =>
@@ -122,7 +188,7 @@ async function fileToDataUrl(file) {
   });
 }
 
-function cloneSession(session) {
+function cloneSession(session: ChatSession) {
   return {
     ...session,
     messages: Array.isArray(session.messages)
@@ -131,14 +197,17 @@ function cloneSession(session) {
   };
 }
 
-function getProviderLabel(connection) {
+function getProviderLabel(connection: ProviderConnection) {
   return (
     connection?.name ||
     humanize(connection?.provider || connection?.id || "provider")
   );
 }
 
-function normalizeStaticModel(model, connection) {
+function normalizeStaticModel(
+  model: { id: string; name?: string },
+  connection: ProviderConnection,
+) {
   if (!model?.id) return null;
   return {
     id: `${connection.provider}/${model.id}`,
@@ -150,7 +219,10 @@ function normalizeStaticModel(model, connection) {
   };
 }
 
-function normalizeLiveModel(model, connection) {
+function normalizeLiveModel(
+  model: string | { id?: string; name?: string; displayName?: string; model?: string },
+  connection: ProviderConnection,
+) {
   const rawId =
     typeof model === "string"
       ? model
@@ -180,16 +252,17 @@ function normalizeLiveModel(model, connection) {
   };
 }
 
-function parseProviderModelsPayload(data) {
-  if (Array.isArray(data?.models)) return data.models;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.results)) return data.results;
+function parseProviderModelsPayload(data: unknown): unknown[] {
+  const record = data as { models?: unknown; data?: unknown; results?: unknown };
+  if (Array.isArray(record?.models)) return record.models;
+  if (Array.isArray(record?.data)) return record.data;
+  if (Array.isArray(record?.results)) return record.results;
   if (Array.isArray(data)) return data;
   return [];
 }
 
-function dedupeModels(models) {
-  const map = new Map();
+function dedupeModels<T extends { id: string }>(models: T[]): T[] {
+  const map = new Map<string, T>();
   for (const model of models) {
     if (!model?.id) continue;
     if (!map.has(model.id)) map.set(model.id, model);
@@ -198,10 +271,10 @@ function dedupeModels(models) {
 }
 
 export default function BasicChatPageClient() {
-  const [providerGroups, setProviderGroups] = useState([]);
+  const [providerGroups, setProviderGroups] = useState<ProviderGroup[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [sessions, setSessions] = useState(() => {
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
     if (typeof window === "undefined") return [];
     try {
       const saved = safeParse(
@@ -231,18 +304,18 @@ export default function BasicChatPageClient() {
     if (typeof window === "undefined") return "";
     return globalThis.localStorage.getItem(STORAGE_KEYS.draft) || "";
   });
-  const [attachments, setAttachments] = useState([]);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState("");
   const [streamingText, setStreamingText] = useState("");
   const [isHydrated, setIsHydrated] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const fileInputRef = useRef(null);
-  const abortRef = useRef(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const initializedRef = useRef(false);
-  const modelMenuRef = useRef(null);
-  const historyMenuRef = useRef(null);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
+  const historyMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setIsHydrated(true);
@@ -261,7 +334,7 @@ export default function BasicChatPageClient() {
         });
         const providersData = await providersRes.json().catch(() => ({}));
         const connections = Array.isArray(providersData.connections)
-          ? providersData.connections.filter(
+          ? (providersData.connections as ProviderConnection[]).filter(
               (connection) => connection?.isActive !== false,
             )
           : [];
@@ -274,7 +347,7 @@ export default function BasicChatPageClient() {
           return;
         }
 
-        const providerMap = new Map();
+        const providerMap = new Map<string, ProviderGroup>();
 
         for (const connection of connections) {
           const providerId = connection.provider || connection.id;
@@ -296,13 +369,14 @@ export default function BasicChatPageClient() {
           }
 
           const group = providerMap.get(providerId);
+          if (!group) continue;
           group.providerName = group.providerName || providerName;
           group.providerType = group.providerType || providerType;
           group.connections.push(connection);
 
           const staticModels = getModelsByProviderId(providerId)
             .map((model) => normalizeStaticModel(model, connection))
-            .filter(Boolean);
+            .filter((m): m is NonNullable<typeof m> => m !== null);
           group.models.push(...staticModels);
         }
 
@@ -316,8 +390,13 @@ export default function BasicChatPageClient() {
               const data = await response.json().catch(() => ({}));
               if (!response.ok) return { connection, models: [] };
               const models = parseProviderModelsPayload(data)
-                .map((model) => normalizeLiveModel(model, connection))
-                .filter(Boolean);
+                .map((model) =>
+                  normalizeLiveModel(
+                    model as string | { id?: string; name?: string; displayName?: string; model?: string },
+                    connection,
+                  ),
+                )
+                .filter((m): m is NonNullable<typeof m> => m !== null);
               return { connection, models };
             } catch {
               return { connection, models: [] };
@@ -351,7 +430,8 @@ export default function BasicChatPageClient() {
       } catch (error) {
         if (!cancelled) {
           setLoadError(
-            textValue(error?.message) || "Failed to load providers/models.",
+            textValue((error as { message?: unknown })?.message) ||
+              "Failed to load providers/models.",
           );
           setProviderGroups([]);
         }
@@ -367,16 +447,16 @@ export default function BasicChatPageClient() {
   }, []);
 
   useEffect(() => {
-    const handleClickOutside = (event) => {
+    const handleClickOutside = (event: MouseEvent) => {
       if (
         modelMenuRef.current &&
-        !modelMenuRef.current.contains(event.target)
+        !modelMenuRef.current.contains(event.target as Node)
       ) {
         setModelMenuOpen(false);
       }
       if (
         historyMenuRef.current &&
-        !historyMenuRef.current.contains(event.target)
+        !historyMenuRef.current.contains(event.target as Node)
       ) {
         setHistoryOpen(false);
       }
@@ -387,7 +467,7 @@ export default function BasicChatPageClient() {
   }, []);
 
   const modelIndex = useMemo(() => {
-    const map = new Map();
+    const map = new Map<string, ModelInfo>();
     for (const group of providerGroups) {
       for (const model of group.models) {
         map.set(model.id, {
@@ -471,10 +551,10 @@ export default function BasicChatPageClient() {
     const savedProvider =
       providerGroups.find((group) => group.providerId === activeProviderId) ||
       providerGroups[0];
-    const savedModel =
+    const savedModel: ModelInfo | undefined =
       activeModelId && modelIndex.has(activeModelId)
         ? modelIndex.get(activeModelId)
-        : savedProvider.models[0];
+        : savedProvider?.models[0];
 
     if (sessions.length > 0) {
       const session =
@@ -485,18 +565,20 @@ export default function BasicChatPageClient() {
           : savedModel;
       initializedRef.current = true;
       setActiveSessionId(session.id);
-      setActiveProviderId(sessionModel?.providerId || savedProvider.providerId);
-      setActiveModelId(sessionModel?.id || savedModel.id);
+      setActiveProviderId(
+        sessionModel?.providerId || savedProvider?.providerId || "",
+      );
+      setActiveModelId(sessionModel?.id || savedModel?.id || "");
       return;
     }
 
     const session = {
       id: createId(),
       title: "New chat",
-      providerId: savedProvider.providerId,
-      providerName: savedProvider.providerName,
-      modelId: savedModel.id,
-      modelName: savedModel.name,
+      providerId: savedProvider?.providerId || "",
+      providerName: savedProvider?.providerName || "",
+      modelId: savedModel?.id || "",
+      modelName: savedModel?.name || "",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       messages: [],
@@ -505,8 +587,8 @@ export default function BasicChatPageClient() {
     initializedRef.current = true;
     setSessions([session]);
     setActiveSessionId(session.id);
-    setActiveProviderId(savedProvider.providerId);
-    setActiveModelId(savedModel.id);
+    setActiveProviderId(session.providerId);
+    setActiveModelId(session.modelId);
   }, [
     isHydrated,
     loadingData,
@@ -518,7 +600,10 @@ export default function BasicChatPageClient() {
     activeModelId,
   ]);
 
-  const updateSession = (sessionId, updater) => {
+  const updateSession = (
+    sessionId: string,
+    updater: (session: ChatSession) => ChatSession,
+  ) => {
     setSessions((prev) =>
       prev.map((session) =>
         session.id === sessionId ? updater(cloneSession(session)) : session,
@@ -526,7 +611,7 @@ export default function BasicChatPageClient() {
     );
   };
 
-  const ensureSessionForModel = (model) => {
+  const ensureSessionForModel = (model: ModelInfo) => {
     if (!model) return null;
     return {
       id: createId(),
@@ -547,15 +632,15 @@ export default function BasicChatPageClient() {
     if (!session) return;
     setSessions((prev) => [session, ...prev]);
     setActiveSessionId(session.id);
-    setActiveProviderId(session.providerId);
-    setActiveModelId(session.modelId);
+    setActiveProviderId(session.providerId || "");
+    setActiveModelId(session.modelId || "");
     setDraft("");
     setAttachments([]);
     setStreamingMessageId("");
     setStreamingText("");
   };
 
-  const handleSelectSession = (sessionId) => {
+  const handleSelectSession = (sessionId: string) => {
     const session = sessions.find((item) => item.id === sessionId);
     if (!session) return;
     setActiveSessionId(sessionId);
@@ -573,8 +658,8 @@ export default function BasicChatPageClient() {
     setSessions(nextSessions);
     if (fallback) {
       setActiveSessionId(fallback.id);
-      setActiveProviderId(fallback.providerId);
-      setActiveModelId(fallback.modelId);
+      setActiveProviderId(fallback.providerId || "");
+      setActiveModelId(fallback.modelId || "");
     } else {
       setActiveSessionId("");
       setActiveProviderId("");
@@ -582,7 +667,7 @@ export default function BasicChatPageClient() {
     }
   };
 
-  const handleSelectProvider = (providerId) => {
+  const handleSelectProvider = (providerId: string) => {
     const group = providerGroups.find((item) => item.providerId === providerId);
     if (!group || group.models.length === 0) return;
     const nextModel = group.models[0];
@@ -615,7 +700,7 @@ export default function BasicChatPageClient() {
     setModelMenuOpen(false);
   };
 
-  const handleSelectModel = (modelId) => {
+  const handleSelectModel = (modelId: string) => {
     const model = modelIndex.get(modelId);
     if (!model) return;
 
@@ -652,7 +737,7 @@ export default function BasicChatPageClient() {
     setModelMenuOpen(false);
   };
 
-  const handleAttachFiles = async (event) => {
+  const handleAttachFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
 
@@ -676,7 +761,7 @@ export default function BasicChatPageClient() {
     event.target.value = "";
   };
 
-  const removeAttachment = (attachmentId) => {
+  const removeAttachment = (attachmentId: string) => {
     setAttachments((prev) =>
       prev.filter((attachment) => attachment.id !== attachmentId),
     );
@@ -686,7 +771,7 @@ export default function BasicChatPageClient() {
     abortRef.current?.abort();
   };
 
-  const finalizeSessionTitle = (sessionId, titleSeed) => {
+  const finalizeSessionTitle = (sessionId: string, titleSeed: string) => {
     const title = makeSessionTitle(titleSeed);
     updateSession(sessionId, (session) => ({
       ...session,
@@ -705,10 +790,11 @@ export default function BasicChatPageClient() {
     let sessionId = activeSessionId;
     let session = sessions.find((item) => item.id === sessionId);
     if (!session) {
-      session = ensureSessionForModel(model);
-      if (!session) return;
-      sessionId = session.id;
-      setSessions((prev) => [session, ...prev]);
+      const created = ensureSessionForModel(model);
+      if (!created) return;
+      session = created;
+      sessionId = created.id;
+      setSessions((prev) => [created, ...prev]);
       setActiveSessionId(sessionId);
     }
 
@@ -720,6 +806,7 @@ export default function BasicChatPageClient() {
         id: attachment.id,
         name: attachment.name,
         type: attachment.type,
+        size: attachment.size,
         dataUrl: attachment.dataUrl,
       })),
       createdAt: new Date().toISOString(),
@@ -881,8 +968,9 @@ export default function BasicChatPageClient() {
       }));
       finalizeSessionTitle(sessionId, userText);
     } catch (error) {
-      if (error.name !== "AbortError") {
-        const errorText = textValue(error?.message || error);
+      const errObj = error as { name?: string; message?: unknown };
+      if (errObj.name !== "AbortError") {
+        const errorText = textValue(errObj?.message || error);
         updateSession(sessionId, (currentSession) => ({
           ...currentSession,
           messages: currentSession.messages.map((message) =>
@@ -906,7 +994,7 @@ export default function BasicChatPageClient() {
     }
   };
 
-  const handleKeyDown = (event) => {
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       if (canSend) sendMessage();

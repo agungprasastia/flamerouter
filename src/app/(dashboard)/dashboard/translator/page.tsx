@@ -63,27 +63,36 @@ const STEPS = [
 const EDITOR_OPTIONS = {
   minimap: { enabled: false },
   fontSize: 12,
-  lineNumbers: "on",
+  lineNumbers: "on" as const,
   scrollBeyondLastLine: false,
-  wordWrap: "on",
+  wordWrap: "on" as const,
   automaticLayout: true,
 };
 
+interface StepMeta {
+  provider?: string;
+  model?: string;
+  sourceFormat?: string;
+  targetFormat?: string;
+}
+
 export default function TranslatorPage() {
-  const [contents, setContents] = useState({});
-  const [expanded, setExpanded] = useState({ 1: true });
-  const [loading, setLoading] = useState({});
+  const [contents, setContents] = useState<Record<number, string>>({});
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({ 1: true });
+  const [loading, setLoading] = useState<Record<string, boolean>>({});
   // Detected from step 1: { provider, model, sourceFormat, targetFormat }
-  const [meta, setMeta] = useState(null);
+  const [meta, setMeta] = useState<StepMeta | null>(null);
 
-  const setLoad = (key, val) => setLoading((prev) => ({ ...prev, [key]: val }));
-  const setContent = (id, val) =>
+  const setLoad = (key: string, val: boolean) =>
+    setLoading((prev) => ({ ...prev, [key]: val }));
+  const setContent = (id: number, val: string) =>
     setContents((prev) => ({ ...prev, [id]: val }));
-  const toggle = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  const toggle = (id: number) =>
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  const openNext = (nextId) =>
-    setExpanded((prev) => {
-      const next = {};
+  const openNext = (nextId: number) =>
+    setExpanded(() => {
+      const next: Record<number, boolean> = {};
       STEPS.forEach((s) => {
         next[s.id] = false;
       });
@@ -92,26 +101,32 @@ export default function TranslatorPage() {
     });
 
   // Load file from logs/translator/
-  const handleLoad = async (stepId) => {
+  const handleLoad = async (stepId: number) => {
     const step = STEPS.find((s) => s.id === stepId);
+    if (!step) return;
     setLoad(`load-${stepId}`, true);
     try {
       const res = await fetch(`/api/translator/load?file=${step.file}`);
-      const data = await res.json();
-      if (data.success) {
+      const data = (await res.json()) as {
+        success?: boolean;
+        content?: string;
+        error?: string;
+      };
+      if (data.success && data.content !== undefined) {
         setContent(stepId, data.content);
         if (stepId === 1) await detectMeta(data.content);
       } else {
         alert(data.error || "File not found");
       }
-    } catch (e) {
-      alert(e.message);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      alert(message);
     }
     setLoad(`load-${stepId}`, false);
   };
 
   // Step 1: detect provider/format from model field
-  const detectMeta = async (rawContent) => {
+  const detectMeta = async (rawContent: string | unknown) => {
     try {
       const body =
         typeof rawContent === "string" ? JSON.parse(rawContent) : rawContent;
@@ -120,14 +135,17 @@ export default function TranslatorPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: 1, body }),
       });
-      const data = await res.json();
-      if (data.success) setMeta(data.result);
+      const data = (await res.json()) as {
+        success?: boolean;
+        result?: StepMeta;
+      };
+      if (data.success && data.result) setMeta(data.result);
     } catch {
       /* ignore */
     }
   };
 
-  const save = (file, content) =>
+  const save = (file: string, content: string) =>
     fetch("/api/translator/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -139,7 +157,8 @@ export default function TranslatorPage() {
     setLoad("toOpenAI", true);
     try {
       const raw = contents[1];
-      const body = JSON.parse(raw);
+      if (!raw) return;
+      const body = JSON.parse(raw) as { body?: unknown };
       // Save input: 1_req_client.json + 2_req_source.json (body only)
       save("1_req_client.json", raw);
       save(
@@ -160,16 +179,21 @@ export default function TranslatorPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: 2, body }),
       });
-      const data = await res.json();
-      if (!data.success) {
-        alert(data.error);
+      const data = (await res.json()) as {
+        success?: boolean;
+        result?: { body?: unknown };
+        error?: string;
+      };
+      if (!data.success || !data.result) {
+        alert(data.error || "Translation failed");
         return;
       }
       const str = JSON.stringify(data.result.body, null, 2);
       setContent(3, str);
       openNext(3);
-    } catch (e) {
-      alert(e.message);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      alert(message);
     }
     setLoad("toOpenAI", false);
   };
@@ -179,7 +203,8 @@ export default function TranslatorPage() {
     setLoad("toTarget", true);
     try {
       const raw = contents[3];
-      const openaiBody = JSON.parse(raw);
+      if (!raw) return;
+      const openaiBody = JSON.parse(raw) as Record<string, unknown>;
       // Save input: 3_req_openai.json
       save("3_req_openai.json", raw);
 
@@ -191,9 +216,13 @@ export default function TranslatorPage() {
           body: { ...openaiBody, provider: meta?.provider, model: meta?.model },
         }),
       });
-      const data = await res.json();
-      if (!data.success) {
-        alert(data.error);
+      const data = (await res.json()) as {
+        success?: boolean;
+        result?: Record<string, unknown>;
+        error?: string;
+      };
+      if (!data.success || !data.result) {
+        alert(data.error || "Translation failed");
         return;
       }
       // Embed provider + model so Send works even without meta
@@ -204,8 +233,9 @@ export default function TranslatorPage() {
       };
       setContent(4, JSON.stringify(step4Content, null, 2));
       openNext(4);
-    } catch (e) {
-      alert(e.message);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      alert(message);
     }
     setLoad("toTarget", false);
   };
@@ -215,7 +245,12 @@ export default function TranslatorPage() {
     setLoad("send", true);
     try {
       const raw = contents[4];
-      const step4 = JSON.parse(raw);
+      if (!raw) return;
+      const step4 = JSON.parse(raw) as {
+        provider?: string;
+        model?: string;
+        body?: unknown;
+      };
       // Save input: 4_req_target.json
       save("4_req_target.json", raw);
 
@@ -237,8 +272,15 @@ export default function TranslatorPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
+        const err = (await res.json().catch(() => ({
+          error: res.statusText,
+        }))) as { error?: string };
         alert(err.error || "Send failed");
+        return;
+      }
+
+      if (!res.body) {
+        alert("No response body received from stream");
         return;
       }
 
@@ -261,8 +303,9 @@ export default function TranslatorPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ file: "5_res_provider.txt", content: full }),
       });
-    } catch (e) {
-      alert(e.message);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      alert(message);
     } finally {
       setLoad("send", false);
     }
@@ -270,14 +313,16 @@ export default function TranslatorPage() {
 
   const { copy } = useCopyToClipboard();
 
-  const handleCopy = async (id) => {
+  const handleCopy = async (id: number) => {
     if (!contents[id]) return;
     copy(contents[id], `translator-step-${id}`);
   };
 
-  const handleFormat = (id) => {
+  const handleFormat = (id: number) => {
+    const raw = contents[id];
+    if (!raw) return;
     try {
-      const obj = JSON.parse(contents[id]);
+      const obj = JSON.parse(raw);
       setContent(id, JSON.stringify(obj, null, 2));
     } catch {
       /* not JSON, skip */
@@ -285,7 +330,7 @@ export default function TranslatorPage() {
   };
 
   // Render action button per step
-  const getAction = (stepId) => {
+  const getAction = (stepId: number) => {
     if (stepId === 1)
       return (
         <Button
@@ -449,8 +494,14 @@ export default function TranslatorPage() {
   );
 }
 
-function MetaBadge({ label, value, color }) {
-  const colors = {
+interface MetaBadgeProps {
+  label: string;
+  value?: string;
+  color: "blue" | "orange" | "green" | "purple";
+}
+
+function MetaBadge({ label, value, color }: MetaBadgeProps) {
+  const colors: Record<MetaBadgeProps["color"], string> = {
     blue: "bg-blue-500/10 text-blue-500",
     orange: "bg-orange-500/10 text-orange-500",
     green: "bg-green-500/10 text-green-500",
@@ -461,7 +512,7 @@ function MetaBadge({ label, value, color }) {
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono ${colors[color]}`}
     >
       <span className="text-text-muted/70 font-sans text-[10px]">{label}:</span>
-      {value}
+      {value || ""}
     </span>
   );
 }

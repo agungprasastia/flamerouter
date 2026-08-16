@@ -6,11 +6,11 @@ const INTERNET_CHECK = {
   timeoutMs: 3000,
 };
 
-export function checkInternet() {
+export function checkInternet(): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     let done = false;
-    const finish = (ok) => {
+    const finish = (ok: boolean) => {
       if (done) return;
       done = true;
       try {

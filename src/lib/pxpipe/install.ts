@@ -29,21 +29,21 @@ const EXTENDED_PATH = [...EXTRA_BINS, process.env.PATH || ""]
   .filter(Boolean)
   .join(path.delimiter);
 
-let installInFlight = null;
+let installInFlight: Promise<InstallInfo> | null = null;
 
-function ensureDir() {
+function ensureDir(): void {
   if (!fs.existsSync(PXPIPE_DIR)) fs.mkdirSync(PXPIPE_DIR, { recursive: true });
 }
 
-export function packageRoot() {
+export function packageRoot(): string {
   return path.join(PXPIPE_DIR, "node_modules", PXPIPE_PACKAGE);
 }
 
-export function libraryEntry() {
+export function libraryEntry(): string {
   return path.join(packageRoot(), "dist", "core", "library");
 }
 
-export function findNpm() {
+export function findNpm(): string | null {
   try {
     const out = execSync(`${IS_WIN ? "where" : "which"} npm`, {
       stdio: ["ignore", "pipe", "ignore"],
@@ -52,20 +52,26 @@ export function findNpm() {
     })
       .toString()
       .trim();
-    return out ? out.split(/\r?\n/)[0].trim() : null;
+    return out ? out.split(/\r?\n/)[0]?.trim() || null : null;
   } catch {
     return null;
   }
 }
 
+export interface InstallInfo {
+  installed: boolean;
+  version: string | null;
+  path: string | null;
+}
+
 // { installed, version, path } — installed means the library entry exists on disk.
-export function getInstallInfo() {
+export function getInstallInfo(): InstallInfo {
   try {
     const pkgJson = path.join(packageRoot(), "package.json");
     if (!fs.existsSync(pkgJson) || !fs.existsSync(libraryEntry())) {
       return { installed: false, version: null, path: null };
     }
-    const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf8"));
+    const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf8")) as { version?: string };
     return {
       installed: true,
       version: pkg.version || null,
@@ -76,13 +82,13 @@ export function getInstallInfo() {
   }
 }
 
-export function isInstalling() {
+export function isInstalling(): boolean {
   return installInFlight !== null;
 }
 
 // Install (or repair by reinstalling) pxpipe-proxy into DATA_DIR/pxpipe.
 // Serialized: concurrent calls await the same run.
-export function installPxpipe() {
+export function installPxpipe(): Promise<InstallInfo> {
   if (installInFlight) return installInFlight;
   installInFlight = runInstall().finally(() => {
     installInFlight = null;
@@ -90,12 +96,12 @@ export function installPxpipe() {
   return installInFlight;
 }
 
-async function runInstall() {
+async function runInstall(): Promise<InstallInfo> {
   const npm = findNpm();
   if (!npm) {
     const err = new Error(
       "npm not found on PATH — Node.js/npm is required to install PXPIPE",
-    );
+    ) as Error & { code?: string };
     err.code = "NPM_NOT_FOUND";
     throw err;
   }
@@ -119,7 +125,7 @@ async function runInstall() {
     `\n[${new Date().toISOString()}] npm install ${PXPIPE_PACKAGE}@latest\n`,
   );
 
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const child = spawn(
       npm,
       [
@@ -164,7 +170,7 @@ async function runInstall() {
   return info;
 }
 
-export function getInstallLogTail(maxLines = 200) {
+export function getInstallLogTail(maxLines = 200): string {
   try {
     if (!fs.existsSync(INSTALL_LOG)) return "";
     const lines = fs

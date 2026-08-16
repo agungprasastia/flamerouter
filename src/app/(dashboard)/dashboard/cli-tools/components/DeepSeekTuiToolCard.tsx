@@ -7,37 +7,71 @@ import {
   ModelSelectModal,
   ManualConfigModal,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
-import ApiKeySelect from "./ApiKeySelect";
+import ApiKeySelect, { type ApiKeyItem } from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import type { ToolCardDef } from "./DefaultToolCard";
 
 const ENDPOINT = "/api/cli-tools/deepseek-tui-settings";
+
+export interface DeepSeekTuiStatus {
+  installed?: boolean;
+  hasFlameRouter?: boolean;
+  settings?: {
+    "providers.openai"?: {
+      base_url?: string;
+      api_key?: string;
+      model?: string;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface DeepSeekTuiToolCardProps {
+  tool: ToolCardDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  baseUrl?: string;
+  hasActiveProviders?: boolean;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  cloudEnabled?: boolean;
+  initialStatus?: DeepSeekTuiStatus | null;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+}
 
 export default function DeepSeekTuiToolCard({
   tool,
   isExpanded,
   onToggle,
   baseUrl,
-  hasActiveProviders,
-  apiKeys,
-  activeProviders,
-  cloudEnabled,
+  hasActiveProviders = false,
+  apiKeys = [],
+  activeProviders = [],
+  cloudEnabled = false,
   initialStatus,
-  tunnelEnabled,
-  tunnelPublicUrl,
-  tailscaleEnabled,
-  tailscaleUrl,
-}) {
-  const [deepseekStatus, setDeepseekStatus] = useState(initialStatus || null);
+  tunnelEnabled = false,
+  tunnelPublicUrl = "",
+  tailscaleEnabled = false,
+  tailscaleUrl = "",
+}: DeepSeekTuiToolCardProps) {
+  const [deepseekStatus, setDeepseekStatus] = useState<DeepSeekTuiStatus | null>(initialStatus || null);
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
-  const [modelAliases, setModelAliases] = useState({});
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const hasInitializedModel = useRef(false);
@@ -99,16 +133,17 @@ export default function DeepSeekTuiToolCard({
     setChecking(true);
     try {
       const res = await fetch(ENDPOINT);
-      const data = await res.json();
+      const data: DeepSeekTuiStatus = await res.json();
       setDeepseekStatus(data);
-    } catch (error) {
-      setDeepseekStatus({ installed: false, error: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setDeepseekStatus({ installed: false, error: err.message });
     } finally {
       setChecking(false);
     }
   };
 
-  const normalizeLocalhost = (url) =>
+  const normalizeLocalhost = (url: string) =>
     url.replace("://localhost", "://127.0.0.1");
 
   const getLocalBaseUrl = () => {
@@ -151,8 +186,9 @@ export default function DeepSeekTuiToolCard({
           text: data.error || "Failed to apply settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to apply settings" });
     } finally {
       setApplying(false);
     }
@@ -174,14 +210,15 @@ export default function DeepSeekTuiToolCard({
           text: data.error || "Failed to reset settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to reset settings" });
     } finally {
       setRestoring(false);
     }
   };
 
-  const handleModelSelect = (model) => {
+  const handleModelSelect = (model: ModelSelectItem) => {
     setSelectedModel(model.value);
     setModalOpen(false);
   };
@@ -211,19 +248,21 @@ model = "${selectedModel || "provider/model-id"}"
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
-            <Image
-              src={tool.image || "/providers/deepseek-tui.png"}
-              alt={tool.name}
-              width={32}
-              height={32}
-              className="size-8 object-contain rounded-lg"
-              sizes="32px"
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-              loading="lazy"
-              decoding="async"
-            />
+            {tool.image ? (
+              <Image
+                src={tool.image || "/providers/deepseek-tui.png"}
+                alt={tool.name}
+                width={32}
+                height={32}
+                className="size-8 object-contain rounded-lg"
+                sizes="32px"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = "none";
+                }}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">

@@ -20,13 +20,35 @@ function getLocaleFromCookie() {
   return normalizeLocale(value);
 }
 
+interface ProfileSettings {
+  fallbackStrategy?: string;
+  comboStrategy?: string;
+  stickyRoundRobinLimit?: number;
+  comboStickyRoundRobinLimit?: number;
+  requireLogin?: boolean;
+  hasPassword?: boolean;
+  authMode?: string;
+  oidcIssuerUrl?: string;
+  oidcClientId?: string;
+  oidcScopes?: string;
+  oidcLoginLabel?: string;
+  oidcConfigured?: boolean;
+  outboundProxyEnabled?: boolean;
+  outboundProxyUrl?: string;
+  outboundNoProxy?: string;
+  enableObservability?: boolean;
+  [key: string]: unknown;
+}
+
 export default function ProfilePage() {
   const { theme, setTheme, isDark } = useTheme();
   const [locale, setLocale] = useState("en");
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
-  const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
+  const [settings, setSettings] = useState<ProfileSettings>({
+    fallbackStrategy: "fill-first",
+  });
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({
     current: "",
@@ -38,7 +60,7 @@ export default function ProfilePage() {
   const [dbLoading, setDbLoading] = useState(false);
   const [dbStatus, setDbStatus] = useState({ type: "", message: "" });
   const [dbAuth, setDbAuth] = useState({ open: false, mode: "", password: "" });
-  const pendingImportRef = useRef(null);
+  const pendingImportRef = useRef<File | null>(null);
   const [oidcForm, setOidcForm] = useState({
     authMode: "password",
     oidcIssuerUrl: "",
@@ -58,7 +80,7 @@ export default function ProfilePage() {
     "/api/auth/oidc/callback",
   );
   const [oidcExpanded, setOidcExpanded] = useState(false);
-  const importFileRef = useRef(null);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
   const [proxyForm, setProxyForm] = useState({
     outboundProxyEnabled: false,
     outboundProxyUrl: "",
@@ -75,7 +97,7 @@ export default function ProfilePage() {
   useEffect(() => {
     fetch("/api/settings")
       .then((res) => res.json())
-      .then((data) => {
+      .then((data: ProfileSettings) => {
         setSettings(data);
         setOidcForm({
           authMode: data?.authMode || "password",
@@ -106,7 +128,7 @@ export default function ProfilePage() {
     }
   }, []);
 
-  const updateOutboundProxy = async (e) => {
+  const updateOutboundProxy = async (e: React.FormEvent) => {
     e.preventDefault();
     if (settings.outboundProxyEnabled !== true) return;
     setProxyLoading(true);
@@ -180,7 +202,7 @@ export default function ProfilePage() {
     }
   };
 
-  const updateOutboundProxyEnabled = async (outboundProxyEnabled) => {
+  const updateOutboundProxyEnabled = async (outboundProxyEnabled: boolean) => {
     setProxyLoading(true);
     setProxyStatus({ type: "", message: "" });
 
@@ -215,7 +237,7 @@ export default function ProfilePage() {
     }
   };
 
-  const handlePasswordChange = async (e) => {
+  const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     if (passwords.new !== passwords.confirm) {
       setPassStatus({ type: "error", message: "Passwords do not match" });
@@ -256,7 +278,7 @@ export default function ProfilePage() {
     }
   };
 
-  const updateFallbackStrategy = async (strategy) => {
+  const updateFallbackStrategy = async (strategy: string) => {
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -271,7 +293,7 @@ export default function ProfilePage() {
     }
   };
 
-  const updateComboStrategy = async (strategy) => {
+  const updateComboStrategy = async (strategy: string) => {
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -286,8 +308,8 @@ export default function ProfilePage() {
     }
   };
 
-  const updateStickyLimit = async (limit) => {
-    const numLimit = parseInt(limit);
+  const updateStickyLimit = async (limit: string | number) => {
+    const numLimit = typeof limit === "number" ? limit : parseInt(limit, 10);
     if (isNaN(numLimit) || numLimit < 1) return;
 
     try {
@@ -304,8 +326,8 @@ export default function ProfilePage() {
     }
   };
 
-  const updateComboStickyLimit = async (limit) => {
-    const numLimit = parseInt(limit);
+  const updateComboStickyLimit = async (limit: string | number) => {
+    const numLimit = typeof limit === "number" ? limit : parseInt(limit, 10);
     if (isNaN(numLimit) || numLimit < 1) return;
 
     try {
@@ -325,7 +347,7 @@ export default function ProfilePage() {
     }
   };
 
-  const updateRequireLogin = async (requireLogin) => {
+  const updateRequireLogin = async (requireLogin: boolean) => {
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -340,7 +362,7 @@ export default function ProfilePage() {
     }
   };
 
-  const updateOidcForm = (field, value) => {
+  const updateOidcForm = (field: string, value: string) => {
     setOidcForm((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -371,7 +393,14 @@ export default function ProfilePage() {
     setOidcTestStatus({ type: "", message: "" });
 
     try {
-      const payload = {
+      const payload: {
+        authMode: string;
+        oidcIssuerUrl: string;
+        oidcClientId: string;
+        oidcScopes: string;
+        oidcLoginLabel: string;
+        oidcClientSecret?: string;
+      } = {
         authMode,
         oidcIssuerUrl: issuerUrl,
         oidcClientId: clientId,
@@ -498,7 +527,7 @@ export default function ProfilePage() {
     }
   };
 
-  const updateObservabilityEnabled = async (enabled) => {
+  const updateObservabilityEnabled = async (enabled: boolean) => {
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -524,7 +553,7 @@ export default function ProfilePage() {
     }
   };
 
-  const handleExportDatabase = async (password) => {
+  const handleExportDatabase = async (password: string) => {
     setDbLoading(true);
     setDbStatus({ type: "", message: "" });
     try {
@@ -550,17 +579,18 @@ export default function ProfilePage() {
       URL.revokeObjectURL(url);
 
       setDbStatus({ type: "success", message: "Database backup downloaded" });
-    } catch (err) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       setDbStatus({
         type: "error",
-        message: err.message || "Failed to export database",
+        message: message || "Failed to export database",
       });
     } finally {
       setDbLoading(false);
     }
   };
 
-  const handleImportDatabase = (event) => {
+  const handleImportDatabase = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (importFileRef.current) importFileRef.current.value = "";
     if (!file) return;
@@ -569,7 +599,7 @@ export default function ProfilePage() {
     setDbAuth({ open: true, mode: "import", password: "" });
   };
 
-  const runImportDatabase = async (password) => {
+  const runImportDatabase = async (password: string) => {
     const file = pendingImportRef.current;
     if (!file) return;
     setDbLoading(true);
@@ -593,10 +623,11 @@ export default function ProfilePage() {
         type: "success",
         message: "Database imported successfully",
       });
-    } catch (err) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       setDbStatus({
         type: "error",
-        message: err.message || "Invalid backup file",
+        message: message || "Invalid backup file",
       });
     } finally {
       pendingImportRef.current = null;
@@ -748,7 +779,7 @@ export default function ProfilePage() {
             data-i18n-skip="true"
           >
             <span className="text-sm text-text-muted">Display language</span>
-            <span className="text-2xl">{LOCALE_FLAGS[locale] || "🌐"}</span>
+            <span className="text-2xl">{LOCALE_FLAGS[locale as keyof typeof LOCALE_FLAGS] || "🌐"}</span>
           </button>
         </Card>
 

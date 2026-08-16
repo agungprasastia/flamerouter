@@ -1,9 +1,9 @@
 import { resolveDns } from "../shared/dnsResolver";
 import { HEALTH_CHECK } from "./config";
 
-export async function probeUrlAlive(url) {
+export async function probeUrlAlive(url?: string | null): Promise<boolean> {
   if (!url) return false;
-  let hostname;
+  let hostname: string;
   try {
     hostname = new URL(url).hostname;
   } catch {
@@ -22,7 +22,7 @@ export async function probeUrlAlive(url) {
   }
 }
 
-export async function waitForHealth(url, cancelToken = { cancelled: false }) {
+export async function waitForHealth(url: string, cancelToken: { cancelled: boolean } = { cancelled: false }): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < HEALTH_CHECK.timeoutMs) {
     if (cancelToken.cancelled) throw new Error("cancelled");

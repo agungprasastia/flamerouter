@@ -2,6 +2,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useState, useEffect } from "react";
+import type { ChangeEvent } from "react";
 import { Card } from "@/shared/components";
 import {
   MEDIA_PROVIDER_KINDS,
@@ -9,15 +10,62 @@ import {
   resolveProviderId,
 } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
+import type { RegistryModel } from "@/shared/constants/providerModels";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { Row, KIND_EXAMPLE_CONFIG } from "./exampleShared";
+
+interface GenericExampleCardProps {
+  providerId: string;
+  kind: string;
+}
+
+interface ConnectionItem {
+  id: string;
+  provider: string;
+  isActive?: boolean;
+  email?: string;
+  name?: string;
+  providerSpecificData?: {
+    chatgptPlanType?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+interface StreamProgress {
+  stage?: string;
+  bytesReceived?: number;
+}
+
+interface PartialImagePayload {
+  b64_json?: string;
+  [key: string]: unknown;
+}
+
+interface ImageItem {
+  url?: string;
+  b64_json?: string;
+}
+
+interface RunResultData {
+  data?: ImageItem[];
+  binary?: boolean;
+  mime?: string;
+  size?: number;
+  [key: string]: unknown;
+}
+
+interface RunResult {
+  data: RunResultData;
+  latencyMs: number;
+}
 
 const CLOUDFLARE_TEST_IMAGE_URL =
   "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog.png";
 const CLOUDFLARE_TEST_MASK_URL =
   "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog-mask.png";
 
-function getImageEditDefaults(providerId, modelId) {
+function getImageEditDefaults(providerId: string, modelId: string): Record<string, string> {
   if (providerId !== "cloudflare-ai") return {};
   if (modelId === "@cf/runwayml/stable-diffusion-v1-5-img2img") {
     return { image: CLOUDFLARE_TEST_IMAGE_URL };
@@ -31,40 +79,49 @@ function getImageEditDefaults(providerId, modelId) {
   return {};
 }
 
-function toImagePreviewSrc(value) {
+function toImagePreviewSrc(value: string | undefined | null): string {
   const trimmed = typeof value === "string" ? value.trim() : "";
   if (!trimmed) return "";
   if (/^(data:image\/|https?:\/\/)/i.test(trimmed)) return trimmed;
   return `data:image/png;base64,${trimmed}`;
 }
 
-export function GenericExampleCard({ providerId, kind }) {
+export function GenericExampleCard({ providerId, kind }: GenericExampleCardProps) {
   const providerAlias = getProviderAlias(providerId);
   const resolvedId = resolveProviderId(providerAlias);
   const safeProviderAlias =
     resolvedId === providerId ? providerAlias : providerId;
   const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kind);
   const exConfig = KIND_EXAMPLE_CONFIG[kind];
-  const safeExConfig = exConfig || {};
+  const safeExConfig = exConfig || {
+    inputLabel: "Input",
+    inputPlaceholder: "",
+    defaultInput: "",
+    bodyKey: "input",
+    defaultResponse: "{}",
+  };
 
   // Get models for this kind (e.g., type="image")
-  const kindModels = getModelsByProviderId(providerId).filter(
+  const kindModels: RegistryModel[] = getModelsByProviderId(providerId).filter(
     (m) => getModelKind(m) === kind,
   );
   // Kinds that need a model identifier in the request (image/video/music)
   const KIND_NEEDS_MODEL = new Set(["image", "video", "music", "imageToText"]);
   const needsModel = KIND_NEEDS_MODEL.has(kind);
   const allowManualModel = needsModel && kindModels.length === 0;
-  const [selectedModel, setSelectedModel] = useState(kindModels[0]?.id ?? "");
+  const [selectedModel, setSelectedModel] = useState<string>(kindModels[0]?.id ?? "");
   const selectedModelObj = kindModels.find((m) => m.id === selectedModel);
-  const supportsEdit = !!selectedModelObj?.capabilities?.includes("edit");
-  const supportsMask = !!selectedModelObj?.capabilities?.includes("mask");
+  const modelCapabilities = Array.isArray(selectedModelObj?.capabilities)
+    ? (selectedModelObj.capabilities as string[])
+    : [];
+  const supportsEdit = modelCapabilities.includes("edit");
+  const supportsMask = modelCapabilities.includes("mask");
 
   const [input, setInput] = useState(safeExConfig.defaultInput || "");
   const [refImage, setRefImage] = useState("");
   const [maskImage, setMaskImage] = useState("");
-  const [extraValues, setExtraValues] = useState(() =>
-    (safeExConfig.extraFields || []).reduce((acc, f) => {
+  const [extraValues, setExtraValues] = useState<Record<string, string | number>>(() =>
+    (safeExConfig.extraFields || []).reduce<Record<string, string | number>>((acc, f) => {
       acc[f.key] = f.default ?? "";
       return acc;
     }, {}),
@@ -73,14 +130,14 @@ export function GenericExampleCard({ providerId, kind }) {
   const [useTunnel, setUseTunnel] = useState(false);
   const [localEndpoint, setLocalEndpoint] = useState("");
   const [tunnelEndpoint, setTunnelEndpoint] = useState("");
-  const [result, setResult] = useState(null);
-  const [progress, setProgress] = useState(null); // { stage, bytesReceived }
-  const [partialImage, setPartialImage] = useState(null);
+  const [result, setResult] = useState<RunResult | null>(null);
+  const [progress, setProgress] = useState<StreamProgress | null>(null); // { stage, bytesReceived }
+  const [partialImage, setPartialImage] = useState<PartialImagePayload | null>(null);
   const [imageOutputFormat, setImageOutputFormat] = useState("json"); // json | binary
   const [binaryImageUrl, setBinaryImageUrl] = useState("");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
-  const [connections, setConnections] = useState([]);
+  const [connections, setConnections] = useState<ConnectionItem[]>([]);
   const [pinnedConnectionId, setPinnedConnectionId] = useState("");
   const { copied: copiedCurl, copy: copyCurl } = useCopyToClipboard();
   const { copied: copiedRes, copy: copyRes } = useCopyToClipboard();
@@ -89,20 +146,20 @@ export function GenericExampleCard({ providerId, kind }) {
     setLocalEndpoint(window.location.origin);
     fetch("/api/keys")
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { keys?: Array<{ isActive?: boolean; key: string }> }) => {
         setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || "");
       })
       .catch(() => {});
     fetch("/api/tunnel/status")
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { publicUrl?: string }) => {
         if (d.publicUrl) setTunnelEndpoint(d.publicUrl);
       })
       .catch(() => {});
     // Load active connections of this provider for pinning
     fetch("/api/providers/client")
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { connections?: ConnectionItem[] }) => {
         const conns = (d.connections || []).filter(
           (c) => c.provider === providerId && c.isActive !== false,
         );
@@ -132,7 +189,7 @@ export function GenericExampleCard({ providerId, kind }) {
   const maskImagePreviewSrc = toImagePreviewSrc(effectiveMaskImage);
 
   // Build request body with optional extra fields (only non-empty values)
-  const extraBodyFromFields = Object.entries(extraValues).reduce(
+  const extraBodyFromFields = Object.entries(extraValues).reduce<Record<string, string | number>>(
     (acc, [k, v]) => {
       if (v === "" || v === null || v === undefined) return acc;
       if (typeof v === "number" && Number.isNaN(v)) return acc;
@@ -141,7 +198,7 @@ export function GenericExampleCard({ providerId, kind }) {
     },
     {},
   );
-  const requestBody = {
+  const requestBody: Record<string, unknown> = {
     model: modelFull,
     [exConfig.bodyKey]: input,
     ...exConfig.extraBody,
@@ -177,7 +234,7 @@ export function GenericExampleCard({ providerId, kind }) {
     }
     const start = Date.now();
     try {
-      const headers = { "Content-Type": "application/json" };
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       if (pinnedConnectionId) headers["x-connection-id"] = pinnedConnectionId;
       if (useStreaming) headers["Accept"] = "text/event-stream";
@@ -188,8 +245,16 @@ export function GenericExampleCard({ providerId, kind }) {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data?.error?.message || data?.error || `HTTP ${res.status}`);
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: { message?: string } | string;
+        };
+        const errorMsg =
+          typeof data?.error === "object" && data?.error?.message
+            ? data.error.message
+            : typeof data?.error === "string"
+              ? data.error
+              : `HTTP ${res.status}`;
+        setError(errorMsg);
         return;
       }
       const ctype = res.headers.get("content-type") || "";
@@ -210,8 +275,8 @@ export function GenericExampleCard({ providerId, kind }) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
-        let finalData = null;
-        let streamErr = null;
+        let finalData: RunResultData | null = null;
+        let streamErr: string | null = null;
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -220,8 +285,8 @@ export function GenericExampleCard({ providerId, kind }) {
           while ((sep = buf.indexOf("\n\n")) !== -1) {
             const block = buf.slice(0, sep);
             buf = buf.slice(sep + 2);
-            let evt = null,
-              dataStr = "";
+            let evt: string | null = null;
+            let dataStr = "";
             for (const line of block.split("\n")) {
               if (line.startsWith("event:")) evt = line.slice(6).trim();
               else if (line.startsWith("data:"))
@@ -229,12 +294,12 @@ export function GenericExampleCard({ providerId, kind }) {
             }
             if (!evt) continue;
             try {
-              const payload = dataStr ? JSON.parse(dataStr) : {};
-              if (evt === "progress") setProgress(payload);
-              else if (evt === "partial_image") setPartialImage(payload);
-              else if (evt === "done") finalData = payload;
+              const payload = (dataStr ? JSON.parse(dataStr) : {}) as Record<string, unknown>;
+              if (evt === "progress") setProgress(payload as StreamProgress);
+              else if (evt === "partial_image") setPartialImage(payload as PartialImagePayload);
+              else if (evt === "done") finalData = payload as RunResultData;
               else if (evt === "error")
-                streamErr = payload?.message || "Stream error";
+                streamErr = (payload?.message as string) || "Stream error";
             } catch {}
           }
         }
@@ -245,23 +310,24 @@ export function GenericExampleCard({ providerId, kind }) {
         }
         if (finalData) setResult({ data: finalData, latencyMs });
       } else {
-        const data = await res.json();
+        const data = (await res.json()) as RunResultData;
         const latencyMs = Date.now() - start;
         setResult({ data, latencyMs });
       }
     } catch (e) {
-      setError(e.message || "Network error");
+      const err = e as { message?: string };
+      setError(err.message || "Network error");
     } finally {
       setRunning(false);
     }
   };
 
   // Mask large b64_json strings in JSON view to keep it readable
-  const maskB64 = (obj) => {
+  const maskB64 = (obj: unknown): unknown => {
     if (!obj || typeof obj !== "object") return obj;
     if (Array.isArray(obj)) return obj.map(maskB64);
-    const out = {};
-    for (const [k, v] of Object.entries(obj)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
       out[k] =
         k === "b64_json" && typeof v === "string" && v.length > 100
           ? `<${v.length} chars base64>`

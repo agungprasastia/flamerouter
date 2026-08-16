@@ -65,7 +65,7 @@ export function getThinkingLevels(provider: string, model: string) {
   const hit = PATTERN_THINKING.find((entry) =>
     (!entry.provider || entry.provider === provider) && matchPattern(entry.pattern, model)
   );
-  let levels = hit?.levels || FORMAT_LEVELS[caps.thinkingFormat] || L.base;
+  let levels = hit?.levels || (caps.thinkingFormat ? FORMAT_LEVELS[caps.thinkingFormat] : undefined) || L.base;
   if (caps.thinkingCanDisable === false) levels = levels.filter((l) => l !== "none");
   return levels;
 }

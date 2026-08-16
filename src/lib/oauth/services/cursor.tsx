@@ -14,9 +14,22 @@ import { CURSOR_CONFIG } from "../constants/oauth";
  * - storage.serviceMachineId: Machine ID for checksum
  */
 
+interface CursorConfigLike {
+  clientVersion?: string;
+  clientType?: string;
+  tokenStoragePaths?: {
+    linux?: string;
+    macos?: string;
+    windows?: string;
+  };
+  [key: string]: unknown;
+}
+
 export class CursorService {
+  config: CursorConfigLike;
+
   constructor() {
-    this.config = CURSOR_CONFIG;
+    this.config = CURSOR_CONFIG as unknown as CursorConfigLike;
   }
 
   /**
@@ -24,10 +37,10 @@ export class CursorService {
    * Algorithm: XOR timestamp bytes with rolling key (initial 165), then base64 encode
    * Format: {encoded_timestamp},{machineId}
    */
-  generateChecksum(machineId) {
+  generateChecksum(machineId: string): string {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     let key = 165;
-    const encoded = [];
+    const encoded: number[] = [];
 
     for (let i = 0; i < timestamp.length; i++) {
       const charCode = timestamp.charCodeAt(i);
@@ -42,15 +55,15 @@ export class CursorService {
   /**
    * Build request headers for Cursor API
    */
-  buildHeaders(accessToken, machineId, ghostMode = false) {
+  buildHeaders(accessToken: string, machineId: string, ghostMode: boolean = false): Record<string, string> {
     const checksum = this.generateChecksum(machineId);
 
     return {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/connect+proto",
       "Connect-Protocol-Version": "1",
-      "x-cursor-client-version": this.config.clientVersion,
-      "x-cursor-client-type": this.config.clientType,
+      "x-cursor-client-version": this.config.clientVersion || "0.45.11",
+      "x-cursor-client-type": this.config.clientType || "desktop",
       "x-cursor-client-os": this.detectOS(),
       "x-cursor-client-arch": this.detectArch(),
       "x-cursor-client-device-type": "desktop",
@@ -62,7 +75,7 @@ export class CursorService {
   /**
    * Detect OS for headers
    */
-  detectOS() {
+  detectOS(): string {
     if (typeof process !== "undefined") {
       const platform = process.platform;
       if (platform === "win32") return "windows";
@@ -75,7 +88,7 @@ export class CursorService {
   /**
    * Detect architecture for headers
    */
-  detectArch() {
+  detectArch(): string {
     if (typeof process !== "undefined") {
       const arch = process.arch;
       if (arch === "x64") return "x86_64";
@@ -87,12 +100,8 @@ export class CursorService {
 
   /**
    * Validate and import token from Cursor IDE
-   * Note: We skip API validation because Cursor API uses complex protobuf format.
-   * Token will be validated when actually used for requests.
-   * @param {string} accessToken - Access token from state.vscdb
-   * @param {string} machineId - Machine ID from state.vscdb
    */
-  async validateImportToken(accessToken, machineId) {
+  async validateImportToken(accessToken?: string, machineId?: string) {
     // Basic validation
     if (!accessToken || typeof accessToken !== "string") {
       throw new Error("Access token is required");
@@ -113,9 +122,6 @@ export class CursorService {
       throw new Error("Invalid machine ID format. Expected UUID format.");
     }
 
-    // Note: We don't validate against API because Cursor uses complex protobuf.
-    // Token will be validated when used for actual requests.
-
     return {
       accessToken,
       machineId,
@@ -128,12 +134,12 @@ export class CursorService {
    * Extract user info from token if possible
    * Cursor tokens may contain encoded user info
    */
-  extractUserInfo(accessToken) {
+  extractUserInfo(accessToken: string): { email?: string; userId?: string } | null {
     try {
       // Try to decode as JWT
       const parts = accessToken.split(".");
       if (parts.length === 3) {
-        let payload = parts[1];
+        let payload = parts[1] || "";
         while (payload.length % 4) {
           payload += "=";
         }
@@ -142,7 +148,7 @@ export class CursorService {
             payload.replace(/-/g, "+").replace(/_/g, "/"),
             "base64",
           ).toString(),
-        );
+        ) as { email?: string; sub?: string; user_id?: string };
         return {
           email: decoded.email || decoded.sub,
           userId: decoded.sub || decoded.user_id,
@@ -159,14 +165,15 @@ export class CursorService {
    * Get token storage path instructions for user
    */
   getTokenStorageInstructions() {
+    const paths = this.config.tokenStoragePaths || {};
     return {
       title: "How to get your Cursor token",
       steps: [
         "1. Open Cursor IDE and make sure you're logged in",
         "2. Find the state.vscdb file:",
-        `   - Linux: ${this.config.tokenStoragePaths.linux}`,
-        `   - macOS: ${this.config.tokenStoragePaths.macos}`,
-        `   - Windows: ${this.config.tokenStoragePaths.windows}`,
+        `   - Linux: ${paths.linux || "~/.config/Cursor/User/globalStorage/state.vscdb"}`,
+        `   - macOS: ${paths.macos || "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb"}`,
+        `   - Windows: ${paths.windows || "%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb"}`,
         "3. Open the database with SQLite browser or CLI:",
         "   sqlite3 state.vscdb \"SELECT value FROM itemTable WHERE key='cursorAuth/accessToken'\"",
         "4. Also get the machine ID:",

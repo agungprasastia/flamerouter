@@ -4,6 +4,17 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
+interface CompatibleModelRowProps {
+  modelId: string;
+  fullModel: string;
+  copied?: string | null;
+  onCopy: (text: string, id?: string) => void;
+  onDeleteAlias: () => void | Promise<void>;
+  onTest?: () => void | Promise<void>;
+  testStatus?: "ok" | "error" | "testing" | string | null;
+  isTesting?: boolean;
+}
+
 function CompatibleModelRow({
   modelId,
   fullModel,
@@ -13,7 +24,7 @@ function CompatibleModelRow({
   onTest,
   testStatus,
   isTesting,
-}) {
+}: CompatibleModelRowProps) {
   const borderColor =
     testStatus === "ok"
       ? "border-green-500/40"
@@ -97,6 +108,33 @@ function CompatibleModelRow({
   );
 }
 
+interface CompatibleCustomModelItem {
+  id: string;
+  name?: string;
+  type?: string;
+  [key: string]: unknown;
+}
+
+interface CompatibleConnectionItem {
+  id: string;
+  isActive?: boolean;
+  [key: string]: unknown;
+}
+
+interface CompatibleModelsSectionProps {
+  providerStorageAlias: string;
+  providerDisplayAlias: string;
+  modelAliases: Record<string, string>;
+  customModels?: CompatibleCustomModelItem[];
+  copied?: string | null;
+  onCopy: (text: string, id?: string) => void;
+  onDeleteAlias: (alias: string) => Promise<void> | void;
+  onAddCustomModel: (modelId: string) => Promise<void> | void;
+  onDeleteCustomModel: (modelId: string) => Promise<void> | void;
+  connections: CompatibleConnectionItem[];
+  isAnthropic?: boolean;
+}
+
 export default function CompatibleModelsSection({
   providerStorageAlias,
   providerDisplayAlias,
@@ -109,14 +147,14 @@ export default function CompatibleModelsSection({
   onDeleteCustomModel,
   connections,
   isAnthropic,
-}) {
+}: CompatibleModelsSectionProps) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [testingModelId, setTestingModelId] = useState(null);
-  const [modelTestResults, setModelTestResults] = useState({});
+  const [testingModelId, setTestingModelId] = useState<string | null>(null);
+  const [modelTestResults, setModelTestResults] = useState<Record<string, "ok" | "error">>({});
 
-  const handleTestModel = async (modelId) => {
+  const handleTestModel = async (modelId: string) => {
     if (testingModelId) return;
     setTestingModelId(modelId);
     try {
@@ -265,7 +303,7 @@ export default function CompatibleModelsSection({
               onDeleteAlias={() =>
                 source === "custom"
                   ? onDeleteCustomModel(id)
-                  : onDeleteAlias(alias)
+                  : onDeleteAlias(alias || id)
               }
               onTest={
                 connections.length > 0 ? () => handleTestModel(id) : undefined

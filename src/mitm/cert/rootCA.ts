@@ -9,7 +9,7 @@ const ROOT_CA_CERT_PATH = path.join(MITM_DIR, "rootCA.crt");
 /**
  * Check if cert file is expired or expiring within 30 days
  */
-function isCertExpired(certPath) {
+function isCertExpired(certPath: string) {
   try {
     const cert = forge.pki.certificateFromPem(
       fs.readFileSync(certPath, "utf8"),
@@ -125,7 +125,13 @@ function loadRootCA() {
 /**
  * Generate leaf certificate for a specific domain, signed by Root CA
  */
-function generateLeafCert(domain, rootCA) {
+function generateLeafCert(
+  domain: string,
+  rootCA: {
+    cert: { subject: { attributes: unknown[] } };
+    key: unknown;
+  },
+) {
   // Generate key pair for leaf cert
   const keys = forge.pki.rsa.generateKeyPair(2048);
 
@@ -174,7 +180,7 @@ function generateLeafCert(domain, rootCA) {
   };
 }
 
-module.exports = {
+export {
   generateRootCA,
   loadRootCA,
   generateLeafCert,

@@ -9,53 +9,107 @@ import {
   McpMarketplaceModal,
   ModelSelectModal,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
+import type { McpAddData } from "@/shared/components/McpMarketplaceModal";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
-import ApiKeySelect from "./ApiKeySelect";
+import ApiKeySelect, { type ApiKeyItem } from "./ApiKeySelect";
+import type { ToolCardDef } from "./DefaultToolCard";
 
 const ENDPOINT = "/api/cli-tools/cowork-settings";
 
-const stripV1 = (url) => (url || "").replace(/\/v1\/?$/, "");
-const ensureV1 = (url) => {
+const stripV1 = (url?: string | null) => (url || "").replace(/\/v1\/?$/, "");
+const ensureV1 = (url?: string | null) => {
   const trimmed = (url || "").replace(/\/+$/, "");
   if (!trimmed) return "";
   return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
 };
+
+export interface PluginItem {
+  name: string;
+  title?: string;
+  description?: string;
+  url?: string;
+  oauth?: boolean;
+  transport?: string;
+  toolNames?: string[];
+  extensionUrl?: string;
+  custom?: boolean;
+  [key: string]: unknown;
+}
+
+export interface CoworkStatus {
+  installed?: boolean;
+  hasFlameRouter?: boolean;
+  cowork?: {
+    baseUrl?: string;
+    models?: string[];
+    plugins?: PluginItem[];
+    localPlugins?: string[];
+    customPlugins?: PluginItem[];
+  };
+  defaultPlugins?: PluginItem[];
+  localStdioPlugins?: PluginItem[];
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface CardMessage {
+  type: "success" | "error";
+  text: string;
+}
+
+export interface CoworkToolCardProps {
+  tool: ToolCardDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  baseUrl?: string;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  hasActiveProviders?: boolean;
+  cloudEnabled?: boolean;
+  cloudUrl?: string | null;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+  initialStatus?: CoworkStatus | null;
+}
 
 export default function CoworkToolCard({
   tool,
   isExpanded,
   onToggle,
   baseUrl,
-  apiKeys,
-  activeProviders,
-  hasActiveProviders,
-  cloudEnabled,
-  cloudUrl,
-  tunnelEnabled,
-  tunnelPublicUrl,
-  tailscaleEnabled,
-  tailscaleUrl,
+  apiKeys = [],
+  activeProviders = [],
+  hasActiveProviders = false,
+  cloudEnabled = false,
+  cloudUrl = "",
+  tunnelEnabled = false,
+  tunnelPublicUrl = "",
+  tailscaleEnabled = false,
+  tailscaleUrl = "",
   initialStatus,
-}) {
-  const [status, setStatus] = useState(initialStatus || null);
+}: CoworkToolCardProps) {
+  const [status, setStatus] = useState<CoworkStatus | null>(initialStatus || null);
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [message, setMessage] = useState<CardMessage | null>(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
-  const [selectedModels, setSelectedModels] = useState([]);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
-  const [plugins, setPlugins] = useState([]);
-  const [localPlugins, setLocalPlugins] = useState([]);
-  const [customPlugins, setCustomPlugins] = useState([]);
-  const [modelAliases, setModelAliases] = useState({});
+  const [plugins, setPlugins] = useState<PluginItem[]>([]);
+  const [localPlugins, setLocalPlugins] = useState<string[]>([]);
+  const [customPlugins, setCustomPlugins] = useState<PluginItem[]>([]);
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
   const [comboModalOpen, setComboModalOpen] = useState(false);
   const [modelSelectOpen, setModelSelectOpen] = useState(false);
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [addMcpOpen, setAddMcpOpen] = useState(false);
-  const [addMcpForm, setAddMcpForm] = useState({ name: "", url: "" });
+  const [addMcpForm, setAddMcpForm] = useState<{ name: string; url: string }>({ name: "", url: "" });
 
   /* eslint-disable react-hooks/immutability, react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -114,10 +168,11 @@ export default function CoworkToolCard({
     setChecking(true);
     try {
       const res = await fetch(ENDPOINT);
-      const data = await res.json();
+      const data: CoworkStatus = await res.json();
       setStatus(data);
-    } catch (error) {
-      setStatus({ installed: false, error: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setStatus({ installed: false, error: err.message });
     } finally {
       setChecking(false);
     }
@@ -175,14 +230,15 @@ export default function CoworkToolCard({
           text: data.error || "Failed to apply settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to apply settings" });
     } finally {
       setApplying(false);
     }
   };
 
-  const handleCreateCombo = async ({ name, models }) => {
+  const handleCreateCombo = async ({ name, models }: { name: string; models: string[] }) => {
     try {
       const res = await fetch("/api/combos", {
         method: "POST",
@@ -205,19 +261,20 @@ export default function CoworkToolCard({
         type: "success",
         text: `Combo "${name}" created and added.`,
       });
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to create combo" });
     }
   };
 
-  const handleAddModel = (model) => {
-    const value = model?.value || model?.name || model;
+  const handleAddModel = (model: ModelSelectItem | string) => {
+    const value = typeof model === "string" ? model : model?.value || model?.name;
     if (!value || selectedModels.includes(value)) return;
     setSelectedModels((prev) => [...prev, value]);
   };
 
-  const handleRemoveModel = (model) => {
-    const value = model?.value || model?.name || model;
+  const handleRemoveModel = (model: ModelSelectItem | string) => {
+    const value = typeof model === "string" ? model : model?.value || model?.name;
     setSelectedModels((prev) => prev.filter((item) => item !== value));
   };
 
@@ -237,19 +294,20 @@ export default function CoworkToolCard({
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset" });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to reset" });
     } finally {
       setRestoring(false);
     }
   };
 
-  const addPlugin = (p) => {
+  const addPlugin = (p: McpAddData | PluginItem) => {
     if (plugins.some((x) => x.name === p.name)) return;
-    setPlugins([...plugins, p]);
+    setPlugins([...plugins, p as PluginItem]);
   };
 
-  const removePlugin = (name) => {
+  const removePlugin = (name: string) => {
     setPlugins(plugins.filter((p) => p.name !== name));
   };
 
@@ -288,19 +346,21 @@ export default function CoworkToolCard({
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
-            <Image
-              src={tool.image}
-              alt={tool.name}
-              width={32}
-              height={32}
-              className="size-8 object-contain rounded-lg"
-              sizes="32px"
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-              loading="lazy"
-              decoding="async"
-            />
+            {tool.image ? (
+              <Image
+                src={tool.image}
+                alt={tool.name}
+                width={32}
+                height={32}
+                className="size-8 object-contain rounded-lg"
+                sizes="32px"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = "none";
+                }}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -661,14 +721,16 @@ export default function CoworkToolCard({
                             <p className="text-[10px] text-text-muted leading-snug">
                               Controls your running Chrome. Auto-strips
                               Cowork&apos;s built-in browser tools.{" "}
-                              <a
-                                href={browserDef.extensionUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-primary underline"
-                              >
-                                Install Chrome extension
-                              </a>
+                              {browserDef.extensionUrl && (
+                                <a
+                                  href={browserDef.extensionUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-primary underline"
+                                >
+                                  Install Chrome extension
+                                </a>
+                              )}
                             </p>
                           </div>
                         </label>
@@ -781,7 +843,7 @@ export default function CoworkToolCard({
                   variant="outline"
                   size="sm"
                   onClick={handleReset}
-                  disabled={!status.hasFlameRouter}
+                  disabled={!status?.hasFlameRouter}
                   loading={restoring}
                   className="w-full sm:w-auto"
                 >

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Outfit } from "next/font/google";
 import Script from "next/script";
 import { GoogleAnalytics } from "@next/third-parties/google";
@@ -30,7 +31,11 @@ export const viewport = {
   themeColor: "#0a0a0a",
 };
 
-export default function RootLayout({ children }) {
+interface RootLayoutProps {
+  children: ReactNode;
+}
+
+export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>

@@ -24,8 +24,9 @@ export function getDataDir() {
   try {
     fs.mkdirSync(configured, { recursive: true });
     return configured;
-  } catch (e) {
-    if (e?.code === "EACCES" || e?.code === "EPERM") {
+  } catch (e: unknown) {
+    const err = e as { code?: string };
+    if (err?.code === "EACCES" || err?.code === "EPERM") {
       console.warn(
         `[DATA_DIR] '${configured}' not writable → fallback ~/.${APP_NAME}`,
       );

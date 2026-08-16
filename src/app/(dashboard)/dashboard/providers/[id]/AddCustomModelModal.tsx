@@ -5,15 +5,23 @@ import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
 
+interface AddCustomModelModalProps {
+  isOpen: boolean;
+  providerAlias: string;
+  providerDisplayAlias?: string;
+  onSave: (modelId: string) => Promise<void> | void;
+  onClose: () => void;
+}
+
 export default function AddCustomModelModal({
   isOpen,
   providerAlias,
   providerDisplayAlias,
   onSave,
   onClose,
-}) {
+}: AddCustomModelModalProps) {
   const [modelId, setModelId] = useState("");
-  const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "error"
+  const [testStatus, setTestStatus] = useState<"testing" | "ok" | "error" | null>(null);
   const [testError, setTestError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -27,7 +35,7 @@ export default function AddCustomModelModal({
   }, [isOpen]);
 
   // Strip provider's own alias prefix (e.g. "cc/model" -> "model" for cc provider)
-  const stripAlias = (id) => {
+  const stripAlias = (id: string) => {
     const prefix = `${providerAlias}/`;
     return id.startsWith(prefix) ? id.slice(prefix.length) : id;
   };
@@ -48,7 +56,7 @@ export default function AddCustomModelModal({
       setTestError(data.error || "");
     } catch (err) {
       setTestStatus("error");
-      setTestError(err.message);
+      setTestError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -63,7 +71,7 @@ export default function AddCustomModelModal({
     }
   };
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") handleTest();
   };
 

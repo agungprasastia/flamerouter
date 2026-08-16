@@ -1,6 +1,13 @@
 "use client";
 
-export function Row({ label, children }) {
+import type { ReactNode } from "react";
+
+export interface RowProps {
+  label: string;
+  children: ReactNode;
+}
+
+export function Row({ label, children }: RowProps) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
       <span className="w-full text-xs font-medium text-text-muted sm:w-20 sm:shrink-0">
@@ -11,7 +18,28 @@ export function Row({ label, children }) {
   );
 }
 
-export const KIND_EXAMPLE_CONFIG = {
+export interface ExtraField {
+  key: string;
+  label: string;
+  type: string;
+  default: string | number;
+  options?: string[];
+  placeholder?: string;
+  min?: number;
+  max?: number;
+}
+
+export interface KindExampleConfigEntry {
+  inputLabel: string;
+  inputPlaceholder: string;
+  defaultInput: string;
+  bodyKey: string;
+  defaultResponse: string;
+  extraFields?: ExtraField[];
+  extraBody?: Record<string, unknown>;
+}
+
+export const KIND_EXAMPLE_CONFIG: Record<string, KindExampleConfigEntry> = {
   webSearch: {
     inputLabel: "Query",
     inputPlaceholder: "What is the latest news about AI?",

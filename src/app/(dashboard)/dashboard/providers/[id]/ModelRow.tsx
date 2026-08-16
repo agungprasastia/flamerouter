@@ -1,5 +1,29 @@
 import PropTypes from "prop-types";
 import { CapacityBadges } from "@/shared/components";
+import type { ModelCapsSummary } from "@/shared/hooks/useModelCaps";
+
+export interface ModelRowModel {
+  id: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
+export interface ModelRowProps {
+  model: ModelRowModel;
+  fullModel: string;
+  alias?: string;
+  copied?: string | null;
+  onCopy: (text: string, id?: string) => void;
+  testStatus?: "ok" | "error" | "testing" | string | null;
+  isCustom?: boolean;
+  isFree?: boolean;
+  onDeleteAlias?: () => void | Promise<void>;
+  onTest?: () => void | Promise<void>;
+  isTesting?: boolean;
+  onDisable?: () => void | Promise<void>;
+  caps?: ModelCapsSummary | null;
+  thinkingSuffix?: string;
+}
 
 export default function ModelRow({
   model,
@@ -16,7 +40,7 @@ export default function ModelRow({
   onDisable,
   caps,
   thinkingSuffix,
-}) {
+}: ModelRowProps) {
   const displayModel = thinkingSuffix
     ? `${fullModel}(${thinkingSuffix})`
     : fullModel;

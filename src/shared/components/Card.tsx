@@ -3,7 +3,7 @@
 import React, { ReactNode, HTMLAttributes } from "react";
 import { cn } from "@/shared/utils/cn";
 
-export interface CardProps extends HTMLAttributes<HTMLDivElement> {
+export interface CardProps extends Omit<HTMLAttributes<HTMLDivElement>, "title"> {
   children?: ReactNode;
   title?: ReactNode | string;
   subtitle?: ReactNode | string;

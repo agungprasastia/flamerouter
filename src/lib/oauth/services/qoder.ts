@@ -1,10 +1,22 @@
-import {
-  QODER_DEVICE_TOKEN_URL,
-  QODER_LOGIN_URL,
-  QODER_USERINFO_URL,
-} from "../../qoder/constants";
+import { QODER_CONFIG } from "../constants/oauth";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
+
+interface QoderConfigShape {
+  deviceTokenUrl?: string;
+  loginUrl?: string;
+  userInfoUrl?: string;
+  [key: string]: unknown;
+}
+
+const qoderConfig = QODER_CONFIG as unknown as QoderConfigShape;
+
+export const QODER_DEVICE_TOKEN_URL =
+  qoderConfig.deviceTokenUrl || "https://openapi.qoder.sh/api/v1/deviceToken/poll";
+export const QODER_LOGIN_URL =
+  qoderConfig.loginUrl || "https://qoder.com/device/selectAccounts";
+export const QODER_USERINFO_URL =
+  qoderConfig.userInfoUrl || "https://openapi.qoder.sh/api/v1/userinfo";
 
 /**
  * Qoder OAuth Service
@@ -28,7 +40,7 @@ import { v4 as uuidv4 } from "uuid";
 // failed poll attempt and the next poll iteration retries.
 const FETCH_TIMEOUT_MS = 15_000;
 
-function base64Url(buf) {
+function base64Url(buf: Buffer): string {
   return buf
     .toString("base64")
     .replace(/=/g, "")
@@ -41,9 +53,12 @@ function base64Url(buf) {
  * upstream socket hangs on Node's default keepalive timeout (minutes) and
  * abandoned polls accumulate hung sockets.
  */
-async function fetchWithTimeout(url, init = {}) {
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort("timeout"), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
@@ -51,12 +66,40 @@ async function fetchWithTimeout(url, init = {}) {
   }
 }
 
+export interface QoderDeviceFlowInit {
+  verificationUriComplete: string;
+  codeVerifier: string;
+  nonce: string;
+  machineId: string;
+}
+
+export interface QoderPollPendingResult {
+  status: "pending";
+}
+
+export interface QoderPollSuccessResult {
+  status: "ok";
+  accessToken: string;
+  refreshToken: string;
+  userId: string;
+  expireTime: number;
+  rawResponse: Record<string, unknown>;
+}
+
+export type QoderPollResult = QoderPollPendingResult | QoderPollSuccessResult;
+
+export interface QoderUserInfo {
+  name: string;
+  email: string;
+  organizationId: string;
+}
+
 export class QoderService {
   /**
    * Generate a PKCE verifier + S256 challenge pair.
    * Uses 32 random bytes (matches qodercli/Veria).
    */
-  generatePkcePair() {
+  generatePkcePair(): { verifier: string; challenge: string } {
     const verifier = base64Url(crypto.randomBytes(32));
     const challenge = base64Url(
       crypto.createHash("sha256").update(verifier).digest(),
@@ -68,7 +111,7 @@ export class QoderService {
    * Initiate the device flow. Returns the URL to open in a browser plus the
    * verifier/nonce/machineId we'll need to poll and to sign future requests.
    */
-  initiateDeviceFlow() {
+  initiateDeviceFlow(): QoderDeviceFlowInit {
     const { verifier, challenge } = this.generatePkcePair();
     const nonce = uuidv4();
     const machineId = uuidv4();
@@ -96,7 +139,13 @@ export class QoderService {
    *
    * Upstream returns 202/404 while waiting; 200 with a JSON body when done.
    */
-  async pollDeviceToken({ nonce, codeVerifier }) {
+  async pollDeviceToken({
+    nonce,
+    codeVerifier,
+  }: {
+    nonce: string;
+    codeVerifier: string;
+  }): Promise<QoderPollResult> {
     if (!nonce || !codeVerifier) {
       throw new Error("pollDeviceToken: missing nonce or code verifier");
     }
@@ -121,19 +170,27 @@ export class QoderService {
     if (!response.ok) {
       let message = `Qoder device token poll failed: HTTP ${response.status}`;
       try {
-        const body = JSON.parse(text);
+        const body = JSON.parse(text) as { message?: string };
         if (body.message)
           message = `Qoder device token poll failed: ${body.message}`;
       } catch {}
       throw new Error(message);
     }
 
-    let body;
+    let body: {
+      token?: string;
+      refresh_token?: string;
+      user_id?: string;
+      expires_at?: unknown;
+      expires_in?: unknown;
+      [key: string]: unknown;
+    };
     try {
-      body = JSON.parse(text);
-    } catch (err) {
+      body = JSON.parse(text) as typeof body;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `Qoder device token poll: invalid JSON response (${err.message})`,
+        `Qoder device token poll: invalid JSON response (${message})`,
       );
     }
 
@@ -158,7 +215,7 @@ export class QoderService {
    * Fetch profile info for the freshly-issued token. Best-effort — failures
    * shouldn't block login; returning empty strings is fine.
    */
-  async fetchUserInfo(accessToken) {
+  async fetchUserInfo(accessToken: string): Promise<QoderUserInfo> {
     try {
       const response = await fetchWithTimeout(QODER_USERINFO_URL, {
         method: "GET",
@@ -168,15 +225,20 @@ export class QoderService {
           "User-Agent": "Go-http-client/2.0",
         },
       });
-      if (!response.ok) return { name: "", email: "" };
-      const body = await response.json();
+      if (!response.ok) return { name: "", email: "", organizationId: "" };
+      const body = (await response.json()) as {
+        name?: string;
+        username?: string;
+        email?: string;
+        organization_id?: string;
+      };
       return {
         name: (body.name || body.username || "").trim(),
         email: (body.email || "").trim(),
         organizationId: (body.organization_id || "").trim(),
       };
     } catch {
-      return { name: "", email: "" };
+      return { name: "", email: "", organizationId: "" };
     }
   }
 
@@ -196,7 +258,7 @@ export class QoderService {
    *
    * Static so callers (and tests) can use it without instantiating.
    */
-  static parseExpiry(expiresAt, expiresInSeconds) {
+  static parseExpiry(expiresAt?: unknown, expiresInSeconds?: unknown): number {
     if (
       typeof expiresAt === "number" &&
       Number.isFinite(expiresAt) &&

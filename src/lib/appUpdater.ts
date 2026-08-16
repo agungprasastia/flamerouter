@@ -64,8 +64,8 @@ function killMitmByPidFile() {
 }
 
 // Collect PIDs of all flamerouter-related processes (excluding current)
-function collectAppPids() {
-  const pids = [];
+function collectAppPids(): string[] {
+  const pids: string[] = [];
   const platform = process.platform;
 
   if (platform === "win32") {
@@ -110,7 +110,7 @@ function collectAppPids() {
         });
         out.split("\n").forEach((l) => {
           const pid = l.trim();
-          if (pid && !isNaN(pid)) pids.push(pid);
+          if (pid && !isNaN(Number(pid))) pids.push(pid);
         });
       } catch {
         /* not running */
@@ -133,7 +133,7 @@ function collectAppPids() {
         if (isAppProcess) {
           const parts = line.trim().split(/\s+/);
           const pid = parts[1];
-          if (pid && !isNaN(pid) && pid !== process.pid.toString())
+          if (pid && !isNaN(Number(pid)) && pid !== process.pid.toString())
             pids.push(pid);
         }
       });
@@ -146,7 +146,7 @@ function collectAppPids() {
 }
 
 // Copy updater.js into DATA_DIR so npm -g can overwrite node_modules safely
-function getDataDir() {
+function getDataDir(): string {
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
   if (process.platform === "win32") {
     return path.join(
@@ -157,7 +157,7 @@ function getDataDir() {
   return path.join(os.homedir(), ".flamerouter");
 }
 
-function resolveBundledUpdaterPath() {
+function resolveBundledUpdaterPath(): string {
   if (
     process.env.UPDATER_SCRIPT_PATH &&
     fs.existsSync(process.env.UPDATER_SCRIPT_PATH)
@@ -180,7 +180,7 @@ function resolveBundledUpdaterPath() {
   return fromCwd;
 }
 
-function ensureRuntimeUpdater(bundledPath) {
+function ensureRuntimeUpdater(bundledPath: string): string {
   try {
     if (!bundledPath || !fs.existsSync(bundledPath)) return bundledPath;
     const runtimeDir = path.join(getDataDir(), "runtime", "updater");
@@ -202,7 +202,7 @@ function ensureRuntimeUpdater(bundledPath) {
 }
 
 // Kill all app-related processes to release file locks (esp. on Windows)
-export async function killAppProcesses() {
+export async function killAppProcesses(): Promise<void> {
   killMitmByPidFile();
   const pids = collectAppPids();
   const platform = process.platform;
@@ -212,7 +212,7 @@ export async function killAppProcesses() {
       if (platform === "win32") {
         execSync(`taskkill /F /PID ${pid} 2>nul`, {
           stdio: "ignore",
-          shell: true,
+          shell: "cmd.exe",
           windowsHide: true,
           timeout: 3000,
         });
@@ -233,7 +233,7 @@ export async function killAppProcesses() {
 }
 
 // Resolve npx/flamerouter binary to relaunch after update (cross-platform)
-function resolveRelaunchCommand() {
+function resolveRelaunchCommand(): { cmd: string; args: string[] } {
   const isWin = process.platform === "win32";
   // Prefer `npx flamerouter` — works regardless of global bin path changes after npm i -g
   const npx = isWin ? "npx.cmd" : "npx";
@@ -242,8 +242,8 @@ function resolveRelaunchCommand() {
 
 // Spawn detached headless updater (Node process) then exit current server
 export function spawnUpdaterAndExit(
-  packageName = UPDATER_CONFIG.npmPackageName,
-) {
+  packageName: string = UPDATER_CONFIG.npmPackageName,
+): void {
   const updaterPath = ensureRuntimeUpdater(resolveBundledUpdaterPath());
   const isTray = process.env.TRAY_MODE === "1";
   const relaunch = resolveRelaunchCommand();

@@ -1,9 +1,16 @@
 import { KIMCHI_CONFIG } from "../constants/oauth";
 
+interface KimchiConfigLike {
+  webAppUrl?: string;
+  validationUrl?: string;
+  userInfoUrl?: string;
+  [key: string]: unknown;
+}
+
 const kimchi = {
   config: KIMCHI_CONFIG,
   flowType: "browser_token",
-  buildAuthUrl: (config, redirectUri, state) => {
+  buildAuthUrl: (config: KimchiConfigLike, redirectUri: string, state: string) => {
     const baseUrl = (config.webAppUrl || "https://app.kimchi.dev").replace(
       /\/+$/,
       "",
@@ -14,7 +21,7 @@ const kimchi = {
     });
     return `${baseUrl}/cli-auth?${params.toString()}`;
   },
-  exchangeToken: async (config, token) => {
+  exchangeToken: async (config: KimchiConfigLike, token: string) => {
     const accessToken = String(token || "").trim();
     if (!accessToken) {
       throw new Error("Missing Kimchi token");
@@ -36,7 +43,7 @@ const kimchi = {
       );
     }
 
-    let userInfo = {};
+    let userInfo: Record<string, unknown> = {};
     if (config.userInfoUrl) {
       try {
         const userRes = await fetch(config.userInfoUrl, {
@@ -47,7 +54,7 @@ const kimchi = {
           },
         });
         if (userRes.ok) {
-          userInfo = await userRes.json();
+          userInfo = (await userRes.json()) as Record<string, unknown>;
         }
       } catch {
         userInfo = {};
@@ -60,20 +67,16 @@ const kimchi = {
       _kimchiUser: userInfo,
     };
   },
-  mapTokens: (tokens) => {
-    const user = tokens._kimchiUser || {};
-    const userId = user.id ? String(user.id) : "";
-    const username = user.username || "";
-    const email = user.email || (userId ? `kimchi-user-${userId}` : null);
+  mapTokens: (tokens: Record<string, unknown>) => {
+    const user = (tokens._kimchiUser as Record<string, string> | undefined) || {};
     return {
       accessToken: tokens.access_token,
       refreshToken: null,
-      email,
-      displayName: user.name || username || null,
+      expiresIn: 30 * 86400,
+      email: user.email || "",
+      displayName: user.name || user.username || "",
       providerSpecificData: {
-        authMethod: "browser_token",
-        userId,
-        username,
+        authKind: "browser_token",
       },
     };
   },

@@ -2,9 +2,19 @@
 
 import { CheckCircle2, CircleAlert, Info, TriangleAlert } from "lucide-react";
 
+export interface StatusAlertData {
+  type: "success" | "warning" | "info" | "error" | string;
+  message: string;
+}
+
+export interface StatusAlertProps {
+  status: StatusAlertData;
+  className?: string;
+}
+
 /** Reusable status alert */
-export default function StatusAlert({ status, className = "" }) {
-  const renderMessage = (msg) => {
+export default function StatusAlert({ status, className = "" }: StatusAlertProps) {
+  const renderMessage = (msg: string) => {
     const parts = msg.split(/(https?:\/\/[^\s]+)/g);
     return parts.map((part, i) =>
       /^https?:\/\//.test(part) ? (

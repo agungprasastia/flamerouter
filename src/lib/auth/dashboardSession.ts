@@ -22,14 +22,25 @@ function loadJwtSecret() {
 
 const SECRET = new TextEncoder().encode(loadJwtSecret());
 
-export function shouldUseSecureCookie(request) {
+export interface RequestHeadersLike {
+  headers?: {
+    get?(name: string): string | null;
+  };
+}
+
+export interface CookieStoreLike {
+  set(name: string, value: string, options: { httpOnly: boolean; secure: boolean; sameSite: "lax" | "strict" | "none"; path: string }): void;
+  delete(name: string): void;
+}
+
+export function shouldUseSecureCookie(request?: RequestHeadersLike | null): boolean {
   const forceSecureCookie = process.env.AUTH_COOKIE_SECURE === "true";
   const forwardedProto = request?.headers?.get?.("x-forwarded-proto");
   const isHttpsRequest = forwardedProto === "https";
   return forceSecureCookie || isHttpsRequest;
 }
 
-export async function createDashboardAuthToken(claims = {}) {
+export async function createDashboardAuthToken(claims: Record<string, unknown> = {}): Promise<string> {
   return new SignJWT({ authenticated: true, ...claims })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -37,7 +48,7 @@ export async function createDashboardAuthToken(claims = {}) {
     .sign(SECRET);
 }
 
-export async function verifyDashboardAuthToken(token) {
+export async function verifyDashboardAuthToken(token?: string | null): Promise<boolean> {
   if (!token) return false;
   try {
     await jwtVerify(token, SECRET);
@@ -47,7 +58,7 @@ export async function verifyDashboardAuthToken(token) {
   }
 }
 
-export async function getDashboardAuthSession(token) {
+export async function getDashboardAuthSession(token?: string | null) {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, SECRET);
@@ -58,10 +69,10 @@ export async function getDashboardAuthSession(token) {
 }
 
 export async function setDashboardAuthCookie(
-  cookieStore,
-  request,
-  claims = {},
-) {
+  cookieStore: CookieStoreLike,
+  request?: RequestHeadersLike | null,
+  claims: Record<string, unknown> = {},
+): Promise<void> {
   const token = await createDashboardAuthToken(claims);
   cookieStore.set("auth_token", token, {
     httpOnly: true,
@@ -71,15 +82,15 @@ export async function setDashboardAuthCookie(
   });
 }
 
-export function clearDashboardAuthCookie(cookieStore) {
+export function clearDashboardAuthCookie(cookieStore: CookieStoreLike): void {
   cookieStore.delete("auth_token");
 }
 
 // Verify the current dashboard password (re-auth for sensitive actions).
-export async function verifyDashboardPassword(password) {
+export async function verifyDashboardPassword(password?: string | null): Promise<boolean> {
   if (typeof password !== "string" || !password) return false;
   const settings = await getSettings();
-  const storedHash = settings?.password;
+  const storedHash = (settings as { password?: string })?.password;
   if (storedHash) return bcrypt.compare(password, storedHash);
   const initialPassword = process.env.INITIAL_PASSWORD || DEFAULT_PASSWORD;
   return password === initialPassword;

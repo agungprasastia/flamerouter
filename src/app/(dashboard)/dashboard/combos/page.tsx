@@ -34,8 +34,9 @@ import {
   Select,
   Toggle,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
-import { useModelCaps } from "@/shared/hooks/useModelCaps";
+import { useModelCaps, type ModelCapsSummary } from "@/shared/hooks/useModelCaps";
 import {
   isOpenAICompatibleProvider,
   isAnthropicCompatibleProvider,
@@ -43,6 +44,29 @@ import {
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
+
+type CapEntry = {
+  enabled: boolean;
+  roundRobin: boolean;
+  models: string[];
+};
+
+type CapacityAdapterMap = Record<string, CapEntry>;
+
+type ComboItem = {
+  id: string;
+  name: string;
+  models: string[];
+  kind?: string;
+  [key: string]: unknown;
+};
+
+type ProviderConnectionItem = {
+  id: string;
+  provider?: string;
+  name?: string;
+  [key: string]: unknown;
+};
 
 // Capacity adapter: global fallback pools of models per input-modality capability.
 // A request needing a capability the target model/combo lacks switches straight
@@ -58,44 +82,45 @@ const CAPACITY_ADAPTER_CAPS = [
   },
 ];
 const DEFAULT_FALLBACK_MODEL = "oc/mimo-v2.5-free";
-const EMPTY_CAP_ENTRY = { enabled: true, roundRobin: false, models: [] };
-const EMPTY_CAPACITY_ADAPTER = {
+const EMPTY_CAP_ENTRY: CapEntry = { enabled: true, roundRobin: false, models: [] };
+const EMPTY_CAPACITY_ADAPTER: CapacityAdapterMap = {
   vision: { ...EMPTY_CAP_ENTRY },
   pdf: { ...EMPTY_CAP_ENTRY },
   audioInput: { ...EMPTY_CAP_ENTRY },
   videoInput: { ...EMPTY_CAP_ENTRY },
 };
 // Backward-compat: legacy stored form was an array of {model, enabled}.
-function normalizeCapEntry(entry) {
+function normalizeCapEntry(entry: unknown): CapEntry {
   if (Array.isArray(entry)) {
     return {
       enabled: true,
       roundRobin: false,
-      models: entry.map((e) => e?.model || e).filter(Boolean),
+      models: entry.map((e: { model?: string } | string) => (typeof e === "object" ? e?.model : e) || "").filter(Boolean),
     };
   }
   if (entry && typeof entry === "object") {
+    const obj = entry as { enabled?: boolean; roundRobin?: boolean; models?: unknown[] };
     return {
-      enabled: entry.enabled !== false,
-      roundRobin: !!entry.roundRobin,
-      models: Array.isArray(entry.models) ? entry.models.filter(Boolean) : [],
+      enabled: obj.enabled !== false,
+      roundRobin: !!obj.roundRobin,
+      models: Array.isArray(obj.models) ? (obj.models as string[]).filter(Boolean) : [],
     };
   }
   return { ...EMPTY_CAP_ENTRY };
 }
 
 export default function CombosPage() {
-  const [combos, setCombos] = useState([]);
+  const [combos, setCombos] = useState<ComboItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingCombo, setEditingCombo] = useState(null);
-  const [activeProviders, setActiveProviders] = useState([]);
-  const [comboStrategies, setComboStrategies] = useState({});
-  const [capacityAdapter, setCapacityAdapter] = useState(
+  const [editingCombo, setEditingCombo] = useState<ComboItem | null>(null);
+  const [activeProviders, setActiveProviders] = useState<ActiveProviderItem[]>([]);
+  const [comboStrategies, setComboStrategies] = useState<Record<string, Record<string, unknown>>>({});
+  const [capacityAdapter, setCapacityAdapter] = useState<CapacityAdapterMap>(
     EMPTY_CAPACITY_ADAPTER,
   );
   const { getCaps } = useModelCaps();
-  const [confirmState, setConfirmState] = useState(null);
+  const [confirmState, setConfirmState] = useState<{ title?: string; message?: string; onConfirm?: () => void } | null>(null);
   const { copied, copy } = useCopyToClipboard();
 
   useEffect(() => {
@@ -109,21 +134,21 @@ export default function CombosPage() {
         fetch("/api/providers"),
         fetch("/api/settings"),
       ]);
-      const combosData = await combosRes.json();
-      const providersData = await providersRes.json();
-      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const combosData = (await combosRes.json()) as { combos?: ComboItem[] };
+      const providersData = (await providersRes.json()) as { connections?: ActiveProviderItem[] };
+      const settingsData = settingsRes.ok ? ((await settingsRes.json()) as { comboStrategies?: Record<string, Record<string, unknown>>; capacityAdapter?: Record<string, unknown> }) : {};
 
       // Only LLM combos here - webSearch/webFetch combos belong to media-providers/web
       if (combosRes.ok)
         setCombos(
-          (combosData.combos || []).filter((c) => !c.kind || c.kind === "llm"),
+          (combosData.combos || []).filter((c: ComboItem) => !c.kind || c.kind === "llm"),
         );
       if (providersRes.ok) {
         setActiveProviders(providersData.connections || []);
       }
       setComboStrategies(settingsData.comboStrategies || {});
-      const rawAdapter = settingsData.capacityAdapter || {};
-      const normalized = {};
+      const rawAdapter = (settingsData.capacityAdapter || {}) as Record<string, unknown>;
+      const normalized: CapacityAdapterMap = {};
       for (const cap of CAPACITY_ADAPTER_CAPS) {
         normalized[cap.key] = normalizeCapEntry(rawAdapter[cap.key]);
       }
@@ -135,7 +160,7 @@ export default function CombosPage() {
     }
   };
 
-  const handleSetCapacityAdapter = async (next) => {
+  const handleSetCapacityAdapter = async (next: CapacityAdapterMap) => {
     setCapacityAdapter(next);
     try {
       await fetch("/api/settings", {
@@ -148,7 +173,7 @@ export default function CombosPage() {
     }
   };
 
-  const handleCreate = async (data) => {
+  const handleCreate = async (data: { name: string; models: string[] }) => {
     try {
       const res = await fetch("/api/combos", {
         method: "POST",
@@ -159,7 +184,7 @@ export default function CombosPage() {
         await fetchData();
         setShowCreateModal(false);
       } else {
-        const err = await res.json();
+        const err = (await res.json()) as { error?: string };
         alert(err.error || "Failed to create combo");
       }
     } catch (error) {
@@ -167,7 +192,7 @@ export default function CombosPage() {
     }
   };
 
-  const handleUpdate = async (id, data) => {
+  const handleUpdate = async (id: string, data: { name: string; models: string[] }) => {
     try {
       const res = await fetch(`/api/combos/${id}`, {
         method: "PUT",
@@ -178,7 +203,7 @@ export default function CombosPage() {
         await fetchData();
         setEditingCombo(null);
       } else {
-        const err = await res.json();
+        const err = (await res.json()) as { error?: string };
         alert(err.error || "Failed to update combo");
       }
     } catch (error) {
@@ -186,7 +211,7 @@ export default function CombosPage() {
     }
   };
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (id: string) => {
     setConfirmState({
       title: "Delete Combo",
       message: "Delete this combo?",
@@ -206,7 +231,7 @@ export default function CombosPage() {
 
   // Merge a per-combo strategy patch into settings.comboStrategies. Passing an empty
   // patch (strategy back to default "fallback") drops the entry entirely.
-  const handleSetComboStrategy = async (comboName, patch) => {
+  const handleSetComboStrategy = async (comboName: string, patch: Record<string, unknown>) => {
     try {
       const updated = { ...comboStrategies };
       const next = { ...(updated[comboName] || {}), ...patch };
@@ -376,6 +401,18 @@ const STRATEGY_OPTIONS = [
   { value: "fusion", label: "Fusion — panel + judge" },
 ];
 
+interface ComboCardProps {
+  combo: ComboItem;
+  getCaps?: (key: string | null | undefined) => ModelCapsSummary | null;
+  activeProviders?: ActiveProviderItem[];
+  copied: string | null;
+  onCopy: (text: string, id: string) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  strategy?: Record<string, unknown>;
+  onSetStrategy: (patch: Record<string, unknown>) => void;
+}
+
 function ComboCard({
   combo,
   getCaps,
@@ -386,10 +423,10 @@ function ComboCard({
   onDelete,
   strategy = {},
   onSetStrategy,
-}) {
+}: ComboCardProps) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
-  const current = strategy.fallbackStrategy || "fallback";
-  const judge = strategy.judgeModel || "";
+  const current = (strategy.fallbackStrategy as string) || "fallback";
+  const judge = (strategy.judgeModel as string) || "";
   const isFusion = current === "fusion";
 
   return (
@@ -532,12 +569,19 @@ function ComboCard({
   );
 }
 
+interface CapacityAdapterSectionProps {
+  capacityAdapter: CapacityAdapterMap;
+  onChange: (next: CapacityAdapterMap) => void;
+  activeProviders: ActiveProviderItem[];
+  getCaps?: (key: string | null | undefined) => ModelCapsSummary | null;
+}
+
 function CapacityAdapterSection({
   capacityAdapter,
   onChange,
   activeProviders,
   getCaps,
-}) {
+}: CapacityAdapterSectionProps) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -577,34 +621,47 @@ function CapacityAdapterSection({
   );
 }
 
+interface CapacityAdapterCapProps {
+  cap: { key: string; label: string; icon: string; desc: string };
+  entry: CapEntry;
+  onChange: (entry: CapEntry) => void;
+  activeProviders: ActiveProviderItem[];
+  getCaps?: (key: string | null | undefined) => ModelCapsSummary | null;
+}
+
 function CapacityAdapterCap({
   cap,
   entry,
   onChange,
   activeProviders,
   getCaps,
-}) {
+}: CapacityAdapterCapProps) {
   const [showModelSelect, setShowModelSelect] = useState(false);
   const { enabled, roundRobin, models } = entry;
 
-  const patch = (p) => onChange({ ...entry, ...p });
+  const patch = (p: Partial<CapEntry>) => onChange({ ...entry, ...p });
 
-  const handleAdd = (model) => {
+  const handleAdd = (model: ModelSelectItem) => {
     if (models.includes(model.value)) return;
     patch({ models: [...models, model.value] });
   };
 
-  const handleRemove = (index) => {
+  const handleRemove = (index: number) => {
     const next = models.filter((_, i) => i !== index);
     patch({ models: next.length === 0 ? [DEFAULT_FALLBACK_MODEL] : next });
   };
 
-  const handleMove = (index, delta) => {
+  const handleMove = (index: number, delta: number) => {
     const target = index + delta;
     if (target < 0 || target >= models.length) return;
     const next = [...models];
-    [next[index], next[target]] = [next[target], next[index]];
-    patch({ models: next });
+    const currentModel = next[index];
+    const targetModel = next[target];
+    if (currentModel !== undefined && targetModel !== undefined) {
+      next[index] = targetModel;
+      next[target] = currentModel;
+      patch({ models: next });
+    }
   };
 
   return (
@@ -718,6 +775,18 @@ function CapacityAdapterCap({
   );
 }
 
+interface ModelItemProps {
+  id: string;
+  index: number;
+  model: string;
+  isFirst: boolean;
+  isLast: boolean;
+  onEdit: (newVal: string) => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onRemove: () => void;
+}
+
 function ModelItem({
   id,
   index,
@@ -728,7 +797,7 @@ function ModelItem({
   onMoveUp,
   onMoveDown,
   onRemove,
-}) {
+}: ModelItemProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useSortable({ id });
   const style = {
@@ -746,7 +815,7 @@ function ModelItem({
     setEditing(false);
   };
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") commit();
     if (e.key === "Escape") {
       setDraft(model);
@@ -839,6 +908,15 @@ function ModelItem({
   );
 }
 
+interface ComboFormModalProps {
+  isOpen: boolean;
+  combo?: ComboItem | null;
+  onClose: () => void;
+  onSave: (data: { name: string; models: string[] }) => Promise<void>;
+  activeProviders: ActiveProviderItem[];
+  kindFilter?: string | null;
+}
+
 function ComboFormModal({
   isOpen,
   combo,
@@ -846,14 +924,14 @@ function ComboFormModal({
   onSave,
   activeProviders,
   kindFilter = null,
-}) {
+}: ComboFormModalProps) {
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
-  const [models, setModels] = useState(combo?.models || []);
+  const [models, setModels] = useState<string[]>(combo?.models || []);
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
-  const [modelAliases, setModelAliases] = useState({});
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -865,7 +943,7 @@ function ComboFormModal({
   // Use stable index-based IDs so duplicates and similar names are handled correctly
   const modelItems = models.map((model, i) => ({ uid: `item-${i}`, model }));
 
-  const handleDragEnd = (event) => {
+  const handleDragEnd = (event: { active: { id: string | number }; over: { id: string | number } | null }) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
       const oldIndex = modelItems.findIndex((m) => m.uid === active.id);
@@ -880,7 +958,7 @@ function ComboFormModal({
     try {
       const aliasesRes = await fetch("/api/models/alias");
       if (!aliasesRes.ok) return;
-      const aliasesData = await aliasesRes.json();
+      const aliasesData = (await aliasesRes.json()) as { aliases?: Record<string, string> };
       setModelAliases(aliasesData.aliases || {});
     } catch (error) {
       console.error("Error fetching modal data:", error);
@@ -891,7 +969,7 @@ function ComboFormModal({
     if (isOpen) fetchModalData();
   }, [isOpen]);
 
-  const validateName = (value) => {
+  const validateName = (value: string) => {
     if (!value.trim()) {
       setNameError("Name is required");
       return false;
@@ -904,45 +982,49 @@ function ComboFormModal({
     return true;
   };
 
-  const handleNameChange = (e) => {
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setName(value);
     if (value) validateName(value);
     else setNameError("");
   };
 
-  const handleAddModel = (model) => {
+  const handleAddModel = (model: ModelSelectItem) => {
     if (!models.includes(model.value)) {
       setModels([...models, model.value]);
     }
   };
 
-  const handleDeselectModel = (model) => {
+  const handleDeselectModel = (model: ModelSelectItem) => {
     setModels(models.filter((m) => m !== model.value));
   };
 
-  const handleRemoveModel = (index) => {
+  const handleRemoveModel = (index: number) => {
     setModels(models.filter((_, i) => i !== index));
   };
 
-  const handleMoveUp = (index) => {
+  const handleMoveUp = (index: number) => {
     if (index === 0) return;
     const newModels = [...models];
-    [newModels[index - 1], newModels[index]] = [
-      newModels[index],
-      newModels[index - 1],
-    ];
-    setModels(newModels);
+    const prevItem = newModels[index - 1];
+    const curItem = newModels[index];
+    if (prevItem !== undefined && curItem !== undefined) {
+      newModels[index - 1] = curItem;
+      newModels[index] = prevItem;
+      setModels(newModels);
+    }
   };
 
-  const handleMoveDown = (index) => {
+  const handleMoveDown = (index: number) => {
     if (index === models.length - 1) return;
     const newModels = [...models];
-    [newModels[index], newModels[index + 1]] = [
-      newModels[index + 1],
-      newModels[index],
-    ];
-    setModels(newModels);
+    const nextItem = newModels[index + 1];
+    const curItem = newModels[index];
+    if (nextItem !== undefined && curItem !== undefined) {
+      newModels[index] = nextItem;
+      newModels[index + 1] = curItem;
+      setModels(newModels);
+    }
   };
 
   const handleSave = async () => {

@@ -2,6 +2,18 @@
 import REGISTRY from "@/shared/constants/providersRegistry";
 import { RISK_NOTICE } from "@/shared/constants/providersDisplay";
 
+// Antigravity OAuth client credentials (public CLI client)
+export const ANTIGRAVITY_OAUTH_CLIENT = {
+  clientId: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+  clientSecret: "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",
+};
+
+// Gemini (Google) OAuth client credentials (public CLI client)
+export const GOOGLE_OAUTH_CLIENT = {
+  clientId: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+  clientSecret: "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",
+};
+
 const MEDIA_ENTRY_KEYS = [
   "serviceKinds",
   "ttsConfig",
@@ -19,44 +31,69 @@ const MEDIA_ENTRY_KEYS = [
   "hiddenKinds",
 ];
 
+export interface ProviderEntry {
+  id: string;
+  alias?: string;
+  name?: string;
+  hidden?: boolean;
+  priority?: number;
+  mediaPriority?: number;
+  hasFree?: boolean;
+  thinkingConfig?: unknown;
+  regions?: string[];
+  defaultRegion?: string;
+  hasProviderSpecificData?: boolean;
+  noAuth?: boolean;
+  passthroughModels?: boolean;
+  hasOAuth?: boolean;
+  authModes?: string[];
+  authType?: string;
+  authHint?: string;
+  serviceKinds?: string[];
+  hiddenKinds?: string[];
+  [key: string]: unknown;
+}
+
 // Build provider UI object from registry entry
-function buildProviderEntry(r) {
-  const mediaFields = {};
-  if (r.media) Object.assign(mediaFields, r.media);
+function buildProviderEntry(r: Record<string, unknown>): ProviderEntry {
+  const mediaFields: Record<string, unknown> = {};
+  if (r.media && typeof r.media === "object") Object.assign(mediaFields, r.media);
   for (const k of MEDIA_ENTRY_KEYS) {
     if (r[k] !== undefined) mediaFields[k] = r[k];
   }
-  const display = { ...(r.display || {}) };
+  const display = { ...((r.display as Record<string, unknown>) || {}) };
   if (display.deprecationNotice === "RISK_NOTICE")
     display.deprecationNotice = RISK_NOTICE;
   return {
     ...display,
-    id: r.id,
-    alias: r.uiAlias || r.alias,
+    id: String(r.id),
+    alias: (r.uiAlias || r.alias) as string | undefined,
     ...(r.hidden ? { hidden: true } : {}),
     ...mediaFields,
-    ...(r.priority !== undefined ? { priority: r.priority } : {}),
+    ...(r.priority !== undefined ? { priority: Number(r.priority) } : {}),
     ...(r.hasFree ? { hasFree: true } : {}),
     ...(r.thinkingConfig ? { thinkingConfig: r.thinkingConfig } : {}),
     ...(r.regions
-      ? { regions: r.regions, defaultRegion: r.defaultRegion }
+      ? { regions: r.regions as string[], defaultRegion: r.defaultRegion as string }
       : {}),
     ...(r.hasProviderSpecificData ? { hasProviderSpecificData: true } : {}),
     ...(r.noAuth ? { noAuth: true } : {}),
     ...(r.passthroughModels ? { passthroughModels: true } : {}),
     ...(r.hasOAuth ? { hasOAuth: true } : {}),
-    ...(r.authModes ? { authModes: r.authModes } : {}),
-    ...(r.authType ? { authType: r.authType } : {}),
-    ...(r.authHint ? { authHint: r.authHint } : {}),
+    ...(r.authModes ? { authModes: r.authModes as string[] } : {}),
+    ...(r.authType ? { authType: r.authType as string } : {}),
+    ...(r.authHint ? { authHint: r.authHint as string } : {}),
   };
 }
 
-const byCategory = (cat) =>
+const byCategory = (cat: string): Record<string, ProviderEntry> =>
   Object.fromEntries(
-    REGISTRY.filter((r) => r.category === cat).map((r) => [
-      r.id,
-      buildProviderEntry(r),
-    ]),
+    (REGISTRY as Array<Record<string, unknown>>)
+      .filter((r) => r.category === cat)
+      .map((r) => [
+        String(r.id),
+        buildProviderEntry(r),
+      ]),
   );
 
 export const FREE_PROVIDERS = byCategory("free");
@@ -147,21 +184,21 @@ export const OPENAI_COMPATIBLE_PREFIX = "openai-compatible-";
 export const ANTHROPIC_COMPATIBLE_PREFIX = "anthropic-compatible-";
 export const CUSTOM_EMBEDDING_PREFIX = "custom-embedding-";
 
-export function isOpenAICompatibleProvider(providerId) {
+export function isOpenAICompatibleProvider(providerId?: string | null): boolean {
   return (
     typeof providerId === "string" &&
     providerId.startsWith(OPENAI_COMPATIBLE_PREFIX)
   );
 }
 
-export function isAnthropicCompatibleProvider(providerId) {
+export function isAnthropicCompatibleProvider(providerId?: string | null): boolean {
   return (
     typeof providerId === "string" &&
     providerId.startsWith(ANTHROPIC_COMPATIBLE_PREFIX)
   );
 }
 
-export function isCustomEmbeddingProvider(providerId) {
+export function isCustomEmbeddingProvider(providerId?: string | null): boolean {
   return (
     typeof providerId === "string" &&
     providerId.startsWith(CUSTOM_EMBEDDING_PREFIX)
@@ -169,7 +206,7 @@ export function isCustomEmbeddingProvider(providerId) {
 }
 
 // All providers (combined)
-export const AI_PROVIDERS = {
+export const AI_PROVIDERS: Record<string, ProviderEntry> = {
   ...FREE_PROVIDERS,
   ...FREE_TIER_PROVIDERS,
   ...OAUTH_PROVIDERS,
@@ -177,15 +214,17 @@ export const AI_PROVIDERS = {
   ...WEB_COOKIE_PROVIDERS,
 };
 
-// Auth methods
 export const AUTH_METHODS = {
-  oauth: { id: "oauth" },
-  apikey: { id: "apikey" },
-  cookie: { id: "cookie" },
+  api_key: { id: "api_key", name: "API Key" },
+  oauth2: { id: "oauth2", name: "OAuth2" },
+  oauth: { id: "oauth", name: "OAuth" },
+  apikey: { id: "apikey", name: "API Key" },
+  cookie: { id: "cookie", name: "Cookie" },
 };
 
 // Helper: Get provider by alias
-export function getProviderByAlias(alias) {
+export function getProviderByAlias(alias?: string | null): ProviderEntry | null {
+  if (!alias) return null;
   for (const provider of Object.values(AI_PROVIDERS)) {
     if (provider.alias === alias || provider.id === alias) {
       return provider;
@@ -195,32 +234,32 @@ export function getProviderByAlias(alias) {
 }
 
 // Helper: Get provider ID from alias
-export function resolveProviderId(aliasOrId) {
+export function resolveProviderId(aliasOrId: string): string {
   const provider = getProviderByAlias(aliasOrId);
   return provider?.id || aliasOrId;
 }
 
 // Helper: Get alias from provider ID
-export function getProviderAlias(providerId) {
+export function getProviderAlias(providerId: string): string {
   const provider = AI_PROVIDERS[providerId];
   return provider?.alias || providerId;
 }
 
 // Alias to ID mapping (for quick lookup)
-export const ALIAS_TO_ID = Object.values(AI_PROVIDERS).reduce((acc, p) => {
-  acc[p.alias] = p.id;
+export const ALIAS_TO_ID: Record<string, string> = Object.values(AI_PROVIDERS).reduce((acc: Record<string, string>, p) => {
+  if (p.alias) acc[p.alias] = p.id;
   return acc;
 }, {});
 
 // ID to Alias mapping
-export const ID_TO_ALIAS = Object.values(AI_PROVIDERS).reduce((acc, p) => {
-  acc[p.id] = p.alias;
+export const ID_TO_ALIAS: Record<string, string> = Object.values(AI_PROVIDERS).reduce((acc: Record<string, string>, p) => {
+  if (p.alias) acc[p.id] = p.alias;
   return acc;
 }, {});
 
 // Helper: Get providers by service kind (e.g. "tts", "embedding", "image")
 // Providers without serviceKinds default to ["llm"]
-export function getProvidersByKind(kind) {
+export function getProvidersByKind(kind: string): ProviderEntry[] {
   return Object.values(AI_PROVIDERS)
     .filter((p) => {
       const kinds = p.serviceKinds ?? ["llm"];

@@ -1,17 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import PropTypes from "prop-types";
-import { Modal, Button, Input } from "@/shared/components";
+import { Modal, Button } from "@/shared/components";
+
+export interface IFlowCookieModalProps {
+  isOpen: boolean;
+  onSuccess?: () => void;
+  onClose?: () => void;
+}
 
 /**
  * iFlow Cookie Authentication Modal
  * User pastes browser cookie to get fresh API key
  */
-export default function IFlowCookieModal({ isOpen, onSuccess, onClose }) {
+export default function IFlowCookieModal({ isOpen, onSuccess, onClose }: IFlowCookieModalProps) {
   const [cookie, setCookie] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   const handleSubmit = async () => {
@@ -41,8 +46,9 @@ export default function IFlowCookieModal({ isOpen, onSuccess, onClose }) {
         onSuccess?.();
         handleClose();
       }, 1500);
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Authentication failed";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -139,9 +145,3 @@ export default function IFlowCookieModal({ isOpen, onSuccess, onClose }) {
     </Modal>
   );
 }
-
-IFlowCookieModal.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  onSuccess: PropTypes.func,
-  onClose: PropTypes.func,
-};

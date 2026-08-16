@@ -11,12 +11,74 @@ import { KIRO_CONFIG, assertValidAwsRegion } from "../constants/oauth";
 
 const KIRO_AUTH_SERVICE = "https://prod.us-east-1.auth.desktop.kiro.dev";
 
+export interface KiroClientRegistration {
+  clientId: string;
+  clientSecret: string;
+  clientSecretExpiresAt?: number;
+}
+
+export interface KiroDeviceAuthResult {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  expiresIn: number;
+  interval: number;
+}
+
+export interface KiroDeviceTokenPendingResult {
+  success: false;
+  error?: string;
+  errorDescription?: string;
+  pending: boolean;
+}
+
+export interface KiroDeviceTokenSuccessResult {
+  success: true;
+  tokens: {
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: number;
+    tokenType: string;
+  };
+}
+
+export type KiroDeviceTokenResult =
+  | KiroDeviceTokenPendingResult
+  | KiroDeviceTokenSuccessResult;
+
+export interface KiroTokenData {
+  accessToken: string;
+  refreshToken: string | null;
+  profileArn?: string | null;
+  expiresIn?: number;
+  region?: string;
+  authMethod?: string;
+}
+
+export interface KiroModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  rateMultiplier?: number;
+  rateUnit?: string;
+  maxInputTokens: number;
+}
+
+export interface KiroProviderSpecificData {
+  authMethod?: string;
+  clientId?: string;
+  clientSecret?: string;
+  region?: string;
+  [key: string]: unknown;
+}
+
 export class KiroService {
   /**
    * Register OIDC client with AWS SSO
    * Returns clientId and clientSecret for device code flow
    */
-  async registerClient(region = "us-east-1") {
+  async registerClient(region = "us-east-1"): Promise<KiroClientRegistration> {
     assertValidAwsRegion(region);
     const endpoint = `https://oidc.${region}.amazonaws.com/client/register`;
 
@@ -39,7 +101,11 @@ export class KiroService {
       throw new Error(`Failed to register client: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      clientId: string;
+      clientSecret: string;
+      clientSecretExpiresAt?: number;
+    };
     return {
       clientId: data.clientId,
       clientSecret: data.clientSecret,
@@ -51,11 +117,11 @@ export class KiroService {
    * Start device authorization for AWS Builder ID or IDC
    */
   async startDeviceAuthorization(
-    clientId,
-    clientSecret,
-    startUrl,
+    clientId: string,
+    clientSecret: string,
+    startUrl: string,
     region = "us-east-1",
-  ) {
+  ): Promise<KiroDeviceAuthResult> {
     assertValidAwsRegion(region);
     const endpoint = `https://oidc.${region}.amazonaws.com/device_authorization`;
 
@@ -76,7 +142,14 @@ export class KiroService {
       throw new Error(`Failed to start device authorization: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      deviceCode: string;
+      userCode: string;
+      verificationUri: string;
+      verificationUriComplete?: string;
+      expiresIn: number;
+      interval?: number;
+    };
     return {
       deviceCode: data.deviceCode,
       userCode: data.userCode,
@@ -91,11 +164,11 @@ export class KiroService {
    * Poll for token using device code (AWS Builder ID/IDC)
    */
   async pollDeviceToken(
-    clientId,
-    clientSecret,
-    deviceCode,
+    clientId: string,
+    clientSecret: string,
+    deviceCode: string,
     region = "us-east-1",
-  ) {
+  ): Promise<KiroDeviceTokenResult> {
     assertValidAwsRegion(region);
     const endpoint = `https://oidc.${region}.amazonaws.com/token`;
 
@@ -112,7 +185,14 @@ export class KiroService {
       }),
     });
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      error?: string;
+      error_description?: string;
+      accessToken?: string;
+      refreshToken?: string;
+      expiresIn?: number;
+      tokenType?: string;
+    };
 
     // Handle pending/slow_down/errors
     if (!response.ok || data.error) {
@@ -128,10 +208,10 @@ export class KiroService {
     return {
       success: true,
       tokens: {
-        accessToken: data.accessToken,
-        refreshToken: data.refreshToken,
-        expiresIn: data.expiresIn,
-        tokenType: data.tokenType,
+        accessToken: data.accessToken || "",
+        refreshToken: data.refreshToken || "",
+        expiresIn: data.expiresIn || 0,
+        tokenType: data.tokenType || "Bearer",
       },
     };
   }
@@ -141,7 +221,11 @@ export class KiroService {
    * Returns authorization URL for manual callback flow
    * Uses kiro:// custom protocol as required by AWS Cognito whitelist
    */
-  buildSocialLoginUrl(provider, codeChallenge, state) {
+  buildSocialLoginUrl(
+    provider: string,
+    codeChallenge: string,
+    state: string,
+  ): string {
     const idp = provider === "google" ? "Google" : "Github";
     // AWS Cognito only whitelists kiro:// protocol, not localhost
     const redirectUri = "kiro://kiro.kiroAgent/authenticate-success";
@@ -152,7 +236,10 @@ export class KiroService {
    * Exchange authorization code for tokens (Social Login)
    * Must use same redirect_uri as authorization request
    */
-  async exchangeSocialCode(code, codeVerifier) {
+  async exchangeSocialCode(
+    code: string,
+    codeVerifier: string,
+  ): Promise<KiroTokenData> {
     // Must match the redirect_uri used in buildSocialLoginUrl
     const redirectUri = "kiro://kiro.kiroAgent/authenticate-success";
 
@@ -173,7 +260,12 @@ export class KiroService {
       throw new Error(`Token exchange failed: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      accessToken: string;
+      refreshToken: string;
+      profileArn?: string | null;
+      expiresIn?: number;
+    };
     return {
       accessToken: data.accessToken,
       refreshToken: data.refreshToken,
@@ -185,8 +277,11 @@ export class KiroService {
   /**
    * Refresh token using refresh token
    */
-  async refreshToken(refreshToken, providerSpecificData = {}) {
-    const { authMethod, clientId, clientSecret, region } = providerSpecificData;
+  async refreshToken(
+    refreshToken: string,
+    providerSpecificData: KiroProviderSpecificData = {},
+  ): Promise<KiroTokenData> {
+    const { authMethod: _authMethod, clientId, clientSecret, region } = providerSpecificData;
 
     // AWS SSO OIDC refresh (Builder ID or IDC)
     if (clientId && clientSecret) {
@@ -212,7 +307,12 @@ export class KiroService {
         throw new Error(`Token refresh failed: ${error}`);
       }
 
-      const data = await response.json();
+      const data = (await response.json()) as {
+        accessToken: string;
+        refreshToken?: string;
+        profileArn?: string | null;
+        expiresIn?: number;
+      };
       return {
         accessToken: data.accessToken,
         refreshToken: data.refreshToken || refreshToken,
@@ -237,7 +337,12 @@ export class KiroService {
       throw new Error(`Token refresh failed: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      accessToken: string;
+      refreshToken?: string;
+      profileArn?: string | null;
+      expiresIn?: number;
+    };
     return {
       accessToken: data.accessToken,
       refreshToken: data.refreshToken || refreshToken,
@@ -249,7 +354,7 @@ export class KiroService {
   /**
    * Validate and import refresh token
    */
-  async validateImportToken(refreshToken) {
+  async validateImportToken(refreshToken: string): Promise<KiroTokenData> {
     // Validate token format
     if (!refreshToken.startsWith("aorAAAAAG")) {
       throw new Error(
@@ -267,8 +372,9 @@ export class KiroService {
         expiresIn: result.expiresIn,
         authMethod: "imported",
       };
-    } catch (error) {
-      throw new Error(`Token validation failed: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Token validation failed: ${message}`);
     }
   }
 
@@ -277,7 +383,10 @@ export class KiroService {
    * best-matching profileArn. API keys use the Amazon Q model catalog instead;
    * ListAvailableProfiles does not support TokenType=API_KEY.
    */
-  async listAvailableProfiles(accessToken, region = "us-east-1") {
+  async listAvailableProfiles(
+    accessToken: string,
+    region = "us-east-1",
+  ): Promise<string | null> {
     assertValidAwsRegion(region);
     const endpoint = `https://codewhisperer.${region}.amazonaws.com`;
 
@@ -297,9 +406,12 @@ export class KiroService {
       throw new Error(`Failed to list profiles: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      profiles?: Array<{ arn?: string; profileArn?: string }>;
+    };
     const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
-    const arnOf = (p) => p?.arn || p?.profileArn || null;
+    const arnOf = (p: { arn?: string; profileArn?: string } | undefined): string | null =>
+      p?.arn || p?.profileArn || null;
     const match =
       profiles.find((p) => arnOf(p)?.split(":")[3] === region) || profiles[0];
     return arnOf(match);
@@ -310,7 +422,10 @@ export class KiroService {
    * to ListAvailableProfiles can return HTTP 200 with an empty list for an
    * arbitrary key, so it is not proof that the key can run inference.
    */
-  async listAvailableApiKeyModels(apiKey, region = "us-east-1") {
+  async listAvailableApiKeyModels(
+    apiKey: string,
+    region = "us-east-1",
+  ): Promise<unknown[]> {
     assertValidAwsRegion(region);
     const params = new URLSearchParams({ origin: "AI_EDITOR" });
     const endpoint = `https://q.${region}.amazonaws.com/ListAvailableModels?${params}`;
@@ -330,7 +445,7 @@ export class KiroService {
       throw new Error(`Failed to list API-key models: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as { models?: unknown[] };
     const models = Array.isArray(data?.models) ? data.models : [];
     if (models.length === 0) {
       throw new Error("API key returned no available models");
@@ -342,7 +457,10 @@ export class KiroService {
    * Validate an API-key credential through the same Amazon Q surface used for
    * inference. API keys are account-bound but do not require a profileArn.
    */
-  async validateApiKey(apiKey, region = "us-east-1") {
+  async validateApiKey(
+    apiKey: string,
+    region = "us-east-1",
+  ): Promise<KiroTokenData> {
     if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
       throw new Error("API key is required");
     }
@@ -350,8 +468,9 @@ export class KiroService {
 
     try {
       await this.listAvailableApiKeyModels(trimmed, region);
-    } catch (error) {
-      throw new Error(`API key validation failed: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`API key validation failed: ${message}`);
     }
 
     return {
@@ -366,7 +485,10 @@ export class KiroService {
   /**
    * List available models from CodeWhisperer API
    */
-  async listAvailableModels(accessToken, profileArn) {
+  async listAvailableModels(
+    accessToken: string,
+    profileArn?: string | null,
+  ): Promise<KiroModelInfo[]> {
     const endpoint = "https://codewhisperer.us-east-1.amazonaws.com";
     const target = "AmazonCodeWhispererService.ListAvailableModels";
 
@@ -389,7 +511,16 @@ export class KiroService {
       throw new Error(`Failed to list models: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      models?: Array<{
+        modelId: string;
+        modelName?: string;
+        description?: string;
+        rateMultiplier?: number;
+        rateUnit?: string;
+        tokenLimits?: { maxInputTokens?: number };
+      }>;
+    };
     return (data.models || []).map((m) => ({
       id: m.modelId,
       name: m.modelName || m.modelId,
@@ -403,10 +534,10 @@ export class KiroService {
   /**
    * Fetch user email from access token (optional, for display)
    */
-  extractEmailFromJWT(accessToken) {
+  extractEmailFromJWT(accessToken: string): string | null {
     try {
       const parts = accessToken.split(".");
-      if (parts.length !== 3) return null;
+      if (parts.length !== 3 || !parts[1]) return null;
 
       // Decode payload (add padding if needed)
       let payload = parts[1];
@@ -416,8 +547,8 @@ export class KiroService {
 
       const decoded = JSON.parse(
         atob(payload.replace(/-/g, "+").replace(/_/g, "/")),
-      );
-      return decoded.email || decoded.preferred_username || decoded.sub;
+      ) as { email?: string; preferred_username?: string; sub?: string };
+      return decoded.email || decoded.preferred_username || decoded.sub || null;
     } catch {
       return null;
     }

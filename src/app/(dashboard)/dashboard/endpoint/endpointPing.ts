@@ -3,7 +3,7 @@ import { CLIENT_PING_TIMEOUT_MS } from "./endpointConstants";
 // Browser-side health probe: must reach origin (not just CF/TS edge).
 // cors mode → res.ok=false for 5xx (e.g. Cloudflare 530 when origin dead).
 // /api/health route sets Access-Control-Allow-Origin: * → CORS works through tunnel.
-export async function clientPingUrl(url) {
+export async function clientPingUrl(url: string | null | undefined): Promise<boolean> {
   if (!url) return false;
   try {
     const res = await fetch(`${url}/api/health`, {
@@ -18,10 +18,10 @@ export async function clientPingUrl(url) {
 }
 
 // Race multiple URLs: resolve true as soon as any one passes ping.
-export async function clientPingAny(...urls) {
-  const checks = urls.filter(Boolean).map(clientPingUrl);
+export async function clientPingAny(...urls: Array<string | null | undefined>): Promise<boolean> {
+  const checks = urls.filter((u): u is string => Boolean(u)).map(clientPingUrl);
   if (!checks.length) return false;
-  return new Promise((resolve) => {
+  return new Promise<boolean>((resolve) => {
     let pending = checks.length;
     checks.forEach((p) =>
       p.then((ok) => {

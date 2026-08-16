@@ -5,11 +5,20 @@
 //   2. MODEL_PRICING[model]               — canonical model price (provider-agnostic)
 //   3. PATTERN_PRICING                    — glob pattern match (e.g. "codex-*")
 
+export interface ModelPricing {
+  input: number;
+  output: number;
+  cached?: number;
+  reasoning?: number;
+  cache_creation?: number;
+  [key: string]: number | undefined;
+}
+
 /**
  * Canonical model pricing — provider-agnostic.
  * Cover all known models; deduplicated across providers.
  */
-export const MODEL_PRICING = {
+export const MODEL_PRICING: Record<string, ModelPricing> = {
   // === Anthropic / Claude ===
   "claude-opus-4-6":              { input: 5.00,  output: 25.00, cached: 0.50,  reasoning: 25.00,  cache_creation: 6.25  },
   "claude-opus-4-5-20251101":     { input: 5.00,  output: 25.00, cached: 0.50,  reasoning: 25.00,  cache_creation: 6.25  },
@@ -140,7 +149,7 @@ export const MODEL_PRICING = {
  * Only include entries where price DIFFERS from MODEL_PRICING.
  * Keyed by provider alias (cc, cx, gc, gh, ...) or provider id (openai, anthropic, ...).
  */
-export const PROVIDER_PRICING = {
+export const PROVIDER_PRICING: Record<string, Record<string, ModelPricing>> = {
   // GitHub Copilot (gh) — explicit override, matches canonical gpt-5.3-codex rate
   gh: {
     "gpt-5.3-codex": { input: 1.75, output: 14.00, cached: 0.175, reasoning: 14.00, cache_creation: 1.75 },
@@ -268,7 +277,7 @@ export const PROVIDER_PRICING = {
  * Patterns use simple glob: "*" matches any substring.
  * First match wins — order matters.
  */
-export const PATTERN_PRICING = [
+export const PATTERN_PRICING: Array<{ pattern: string; pricing: ModelPricing }> = [
   // --- Codex variants ---
   { pattern: "*-codex-xhigh",   pricing: { input: 10.00, output: 40.00, cached: 5.00,  reasoning: 60.00,  cache_creation: 10.00 } },
   { pattern: "*-codex-high",    pricing: { input: 8.00,  output: 32.00, cached: 4.00,  reasoning: 48.00,  cache_creation: 8.00  } },
@@ -347,8 +356,12 @@ export const PATTERN_PRICING = [
  * Match a model ID against a glob pattern (* = wildcard). Case-insensitive:
  * registry ids mix casing (e.g. "MiniMax-M2.5" vs "minimax-m2.5").
  */
-export function matchPattern(pattern, model) {
-  const regex = new RegExp("^" + pattern.split("*").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "i");
+/**
+ * Match a model ID against a glob pattern (* = wildcard). Case-insensitive:
+ * registry ids mix casing (e.g. "MiniMax-M2.5" vs "minimax-m2.5").
+ */
+export function matchPattern(pattern: string, model: string): boolean {
+  const regex = new RegExp("^" + pattern.split("*").map((s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "i");
   return regex.test(model);
 }
 
@@ -362,7 +375,7 @@ export function matchPattern(pattern, model) {
  * @param {string} model
  * @returns {object|null}
  */
-export function getPricingForModel(provider, model) {
+export function getPricingForModel(provider?: string | null, model?: string | null): ModelPricing | null {
   if (!model) return null;
 
   // 1. Provider-specific override
@@ -371,7 +384,7 @@ export function getPricingForModel(provider, model) {
   }
 
   // 2. Canonical model pricing (strip vendor prefix if needed: "deepseek/deepseek-chat" → "deepseek-chat")
-  const baseModel = model.includes("/") ? model.split("/").pop() : model;
+  const baseModel = model.includes("/") ? model.split("/").pop() || model : model;
   if (MODEL_PRICING[baseModel]) return MODEL_PRICING[baseModel];
   if (MODEL_PRICING[model]) return MODEL_PRICING[model];
 
@@ -389,7 +402,7 @@ export function getPricingForModel(provider, model) {
  * Get all provider pricing (for UI / API).
  * Returns PROVIDER_PRICING — consumers should fall back to MODEL_PRICING for unlisted models.
  */
-export function getDefaultPricing() {
+export function getDefaultPricing(): Record<string, Record<string, ModelPricing>> {
   return PROVIDER_PRICING;
 }
 
@@ -398,9 +411,21 @@ export function getDefaultPricing() {
  * @param {number} cost
  * @returns {string}
  */
-export function formatCost(cost) {
+export function formatCost(cost: number | null | undefined): string {
   if (cost === null || cost === undefined || isNaN(cost)) return "$0.00";
   return `$${cost.toFixed(2)}`;
+}
+
+export interface TokenUsage {
+  prompt_tokens?: number;
+  input_tokens?: number;
+  cached_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  completion_tokens?: number;
+  output_tokens?: number;
+  reasoning_tokens?: number;
+  [key: string]: unknown;
 }
 
 /**
@@ -409,14 +434,14 @@ export function formatCost(cost) {
  * @param {object} pricing
  * @returns {number} cost in dollars
  */
-export function calculateCostFromTokens(tokens, pricing) {
+export function calculateCostFromTokens(tokens?: TokenUsage | null, pricing?: ModelPricing | null): number {
   if (!tokens || !pricing) return 0;
 
   let cost = 0;
 
-  const inputTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
-  const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
-  const cacheCreationTokens = tokens.cache_creation_input_tokens || 0;
+  const inputTokens = Number(tokens.prompt_tokens || tokens.input_tokens || 0);
+  const cachedTokens = Number(tokens.cached_tokens || tokens.cache_read_input_tokens || 0);
+  const cacheCreationTokens = Number(tokens.cache_creation_input_tokens || 0);
   // prompt_tokens is cache-inclusive (see canonicalizeUsage): cached + cache_creation
   // are subsets, so subtract both to avoid charging them at the full input rate.
   const nonCachedInput = Math.max(0, inputTokens - cachedTokens - cacheCreationTokens);
@@ -427,10 +452,10 @@ export function calculateCostFromTokens(tokens, pricing) {
     cost += cachedTokens * ((pricing.cached || pricing.input) / 1000000);
   }
 
-  const outputTokens = tokens.completion_tokens || tokens.output_tokens || 0;
+  const outputTokens = Number(tokens.completion_tokens || tokens.output_tokens || 0);
   cost += outputTokens * (pricing.output / 1000000);
 
-  const reasoningTokens = tokens.reasoning_tokens || 0;
+  const reasoningTokens = Number(tokens.reasoning_tokens || 0);
   if (reasoningTokens > 0) {
     cost += reasoningTokens * ((pricing.reasoning || pricing.output) / 1000000);
   }

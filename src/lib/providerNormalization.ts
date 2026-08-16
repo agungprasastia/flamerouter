@@ -2,15 +2,13 @@ import { AI_PROVIDERS } from "../shared/constants/providers";
 
 /**
  * Detect xAI Grok models by id pattern (grok-*, Grok_*, etc).
- * @param {string} modelId
- * @returns {boolean}
  */
-export function isXaiModel(modelId) {
+export function isXaiModel(modelId?: string | null): boolean {
   return typeof modelId === "string" && /^grok[-_]/i.test(modelId.trim());
 }
 
-export function normalizeProviderId(provider) {
-  if (typeof provider !== "string") return provider;
+export function normalizeProviderId(provider?: string | null): string {
+  if (typeof provider !== "string") return provider || "";
 
   const trimmed = provider.trim();
   if (AI_PROVIDERS[trimmed]) return trimmed;
@@ -28,17 +26,17 @@ export function normalizeProviderId(provider) {
 }
 
 export function normalizeProviderSpecificData(
-  provider,
-  body = {},
-  providerSpecificData = null,
-) {
+  provider: string,
+  body: Record<string, unknown> = {},
+  providerSpecificData: Record<string, unknown> | null = null,
+): Record<string, unknown> | null {
   const next =
     providerSpecificData && typeof providerSpecificData === "object"
       ? { ...providerSpecificData }
       : {};
 
   if (provider === "ollama-local") {
-    const baseUrl = (
+    const baseUrl = String(
       next.baseUrl ||
       body.baseUrl ||
       body.baseURL ||

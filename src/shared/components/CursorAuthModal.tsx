@@ -2,17 +2,22 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useState, useEffect } from "react";
-import PropTypes from "prop-types";
 import { Modal, Button, Input } from "@/shared/components";
+
+export interface CursorAuthModalProps {
+  isOpen: boolean;
+  onSuccess?: () => void;
+  onClose: () => void;
+}
 
 /**
  * Cursor Auth Modal
  * Auto-detect and import token from Cursor IDE's local SQLite database
  */
-export default function CursorAuthModal({ isOpen, onSuccess, onClose }) {
+export default function CursorAuthModal({ isOpen, onSuccess, onClose }: CursorAuthModalProps) {
   const [accessToken, setAccessToken] = useState("");
   const [machineId, setMachineId] = useState("");
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [autoDetecting, setAutoDetecting] = useState(false);
   const [autoDetected, setAutoDetected] = useState(false);
@@ -37,8 +42,9 @@ export default function CursorAuthModal({ isOpen, onSuccess, onClose }) {
       } else {
         setError(data.error || "Could not auto-detect tokens");
       }
-    } catch (err) {
-      setError("Failed to auto-detect tokens");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to auto-detect tokens";
+      setError(msg);
     } finally {
       setAutoDetecting(false);
     }
@@ -82,8 +88,9 @@ export default function CursorAuthModal({ isOpen, onSuccess, onClose }) {
 
       onSuccess?.();
       onClose();
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Import failed";
+      setError(msg);
     } finally {
       setImporting(false);
     }
@@ -217,9 +224,3 @@ export default function CursorAuthModal({ isOpen, onSuccess, onClose }) {
     </Modal>
   );
 }
-
-CursorAuthModal.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  onSuccess: PropTypes.func,
-  onClose: PropTypes.func.isRequired,
-};

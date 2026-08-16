@@ -3,9 +3,13 @@ import { CLI_TOOLS } from "@/shared/constants/cliTools";
 import { getMachineId } from "@/shared/utils/machine";
 import ToolDetailClient from "./ToolDetailClient";
 
-export default async function ToolDetailPage({ params }) {
+export default async function ToolDetailPage({
+  params,
+}: {
+  params: Promise<{ toolId: string }>;
+}) {
   const { toolId } = await params;
-  if (!CLI_TOOLS[toolId]) notFound();
+  if (!(toolId in CLI_TOOLS)) notFound();
   const machineId = await getMachineId();
   return <ToolDetailClient toolId={toolId} machineId={machineId} />;
 }

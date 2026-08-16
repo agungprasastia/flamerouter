@@ -7,38 +7,80 @@ import {
   ModelSelectModal,
   ManualConfigModal,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
-import ApiKeySelect from "./ApiKeySelect";
+import ApiKeySelect, { type ApiKeyItem } from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import type { ToolCardDef } from "./DefaultToolCard";
 
 const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
+
+export interface DroidCustomModel {
+  model: string;
+  id?: string;
+  index?: number;
+  baseUrl?: string;
+  apiKey?: string;
+  displayName?: string;
+  maxOutputTokens?: number;
+  noImageSupport?: boolean;
+  provider?: string;
+  [key: string]: unknown;
+}
+
+export interface DroidStatus {
+  installed?: boolean;
+  hasFlameRouter?: boolean;
+  settings?: {
+    customModels?: DroidCustomModel[];
+    [key: string]: unknown;
+  };
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface DroidToolCardProps {
+  tool: ToolCardDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  baseUrl?: string;
+  hasActiveProviders?: boolean;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  cloudEnabled?: boolean;
+  initialStatus?: DroidStatus | null;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+}
 
 export default function DroidToolCard({
   tool,
   isExpanded,
   onToggle,
   baseUrl,
-  hasActiveProviders,
-  apiKeys,
-  activeProviders,
-  cloudEnabled,
+  hasActiveProviders = false,
+  apiKeys = [],
+  activeProviders = [],
+  cloudEnabled = false,
   initialStatus,
-  tunnelEnabled,
-  tunnelPublicUrl,
-  tailscaleEnabled,
-  tailscaleUrl,
-}) {
-  const [droidStatus, setDroidStatus] = useState(initialStatus || null);
+  tunnelEnabled = false,
+  tunnelPublicUrl = "",
+  tailscaleEnabled = false,
+  tailscaleUrl = "",
+}: DroidToolCardProps) {
+  const [droidStatus, setDroidStatus] = useState<DroidStatus | null>(initialStatus || null);
   const [checkingDroid, setCheckingDroid] = useState(false);
   const [applying, setApplying] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
-  const [modelList, setModelList] = useState([]);
+  const [modelList, setModelList] = useState<string[]>([]);
   const [modelInput, setModelInput] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
-  const [modelAliases, setModelAliases] = useState({});
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
@@ -50,7 +92,7 @@ export default function DroidToolCard({
     const currentConfig = droidStatus.settings?.customModels?.find((m) =>
       m.id?.startsWith("custom:FlameRouter"),
     );
-    if (!currentConfig) return "not_configured";
+    if (!currentConfig || !currentConfig.baseUrl) return "not_configured";
     return matchKnownEndpoint(currentConfig.baseUrl, {
       tunnelPublicUrl,
       tailscaleUrl,
@@ -97,7 +139,8 @@ export default function DroidToolCard({
       const existingModels = (droidStatus.settings?.customModels || [])
         .filter((m) => m.id?.startsWith("custom:FlameRouter"))
         .sort((a, b) => (a.index || 0) - (b.index || 0))
-        .map((m) => m.model);
+        .map((m) => m.model)
+        .filter(Boolean);
       if (existingModels.length > 0) {
         setModelList(existingModels);
       } else {
@@ -117,22 +160,23 @@ export default function DroidToolCard({
     setCheckingDroid(true);
     try {
       const res = await fetch("/api/cli-tools/droid-settings");
-      const data = await res.json();
+      const data: DroidStatus = await res.json();
       setDroidStatus(data);
-    } catch (error) {
-      setDroidStatus({ installed: false, error: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setDroidStatus({ installed: false, error: err.message });
     } finally {
       setCheckingDroid(false);
     }
   };
 
   const getEffectiveBaseUrl = () => {
-    const url = customBaseUrl || baseUrl;
+    const url = customBaseUrl || baseUrl || "http://127.0.0.1:20129";
     return url.endsWith("/v1") ? url : `${url}/v1`;
   };
 
   const getDisplayUrl = () => {
-    const url = customBaseUrl || baseUrl;
+    const url = customBaseUrl || baseUrl || "http://127.0.0.1:20129";
     return url.endsWith("/v1") ? url : `${url}/v1`;
   };
 
@@ -143,10 +187,10 @@ export default function DroidToolCard({
     setModelInput("");
   };
 
-  const removeModel = (id) =>
+  const removeModel = (id: string) =>
     setModelList((prev) => prev.filter((m) => m !== id));
 
-  const handleModelSelect = (model) => {
+  const handleModelSelect = (model: ModelSelectItem) => {
     if (!model.value || modelList.includes(model.value)) return;
     setModelList((prev) => [...prev, model.value]);
     setModalOpen(false);
@@ -181,8 +225,9 @@ export default function DroidToolCard({
           text: data.error || "Failed to apply settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to apply settings" });
     } finally {
       setApplying(false);
     }
@@ -206,8 +251,9 @@ export default function DroidToolCard({
           text: data.error || "Failed to reset settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to reset settings" });
     } finally {
       setRestoring(false);
     }
@@ -235,8 +281,8 @@ export default function DroidToolCard({
       })),
     };
 
-    const platform = typeof navigator !== "undefined" && navigator.platform;
-    const isWindows = platform?.toLowerCase().includes("win");
+    const platform = typeof navigator !== "undefined" ? navigator.platform : "";
+    const isWindows = platform ? platform.toLowerCase().includes("win") : false;
     const settingsPath = isWindows
       ? "%USERPROFILE%\\.factory\\settings.json"
       : "~/.factory/settings.json";
@@ -257,19 +303,21 @@ export default function DroidToolCard({
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
-            <Image
-              src="/providers/droid.png"
-              alt={tool.name}
-              width={32}
-              height={32}
-              className="size-8 object-contain rounded-lg"
-              sizes="32px"
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-              loading="lazy"
-              decoding="async"
-            />
+            {tool.image ? (
+              <Image
+                src="/providers/droid.png"
+                alt={tool.name}
+                width={32}
+                height={32}
+                className="size-8 object-contain rounded-lg"
+                sizes="32px"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = "none";
+                }}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -414,9 +462,9 @@ export default function DroidToolCard({
                     </span>
                     <span className="min-w-0 truncate rounded bg-surface/40 px-2 py-2 text-xs text-text-muted sm:py-1.5">
                       {
-                        droidStatus.settings.customModels.find((m) =>
+                        droidStatus.settings?.customModels?.find((m) =>
                           m.id?.startsWith("custom:FlameRouter"),
-                        ).baseUrl
+                        )?.baseUrl
                       }
                     </span>
                   </div>

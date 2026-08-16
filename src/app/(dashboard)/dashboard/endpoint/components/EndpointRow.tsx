@@ -1,6 +1,17 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+
+export interface EndpointRowProps {
+  label: string;
+  url: string;
+  copyId: string;
+  copied: string | null;
+  onCopy: (text: string, id: string) => void;
+  badge?: ReactNode;
+  actions?: ReactNode;
+}
 
 /** Reusable endpoint row component */
 export default function EndpointRow({
@@ -11,7 +22,7 @@ export default function EndpointRow({
   onCopy,
   badge,
   actions,
-}) {
+}: EndpointRowProps) {
   const isCopied = copied === copyId;
 
   return (

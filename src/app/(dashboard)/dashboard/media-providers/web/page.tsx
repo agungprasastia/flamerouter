@@ -7,18 +7,43 @@ import { useRouter } from "next/navigation";
 import { Card, Badge, Button } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
+import type { ProviderEntry } from "@/shared/constants/providers";
 
-function getEffectiveStatus(conn) {
+interface ConnectionRecord {
+  id: string;
+  provider: string;
+  isActive?: boolean;
+  testStatus?: string;
+  [key: string]: unknown;
+}
+
+interface ComboRecord {
+  id: string;
+  name: string;
+  models: string[];
+  kind?: string;
+  [key: string]: unknown;
+}
+
+function getEffectiveStatus(conn: ConnectionRecord): string | undefined {
   const isCooldown = Object.entries(conn).some(
     ([k, v]) =>
-      k.startsWith("modelLock_") && v && new Date(v).getTime() > Date.now(),
+      k.startsWith("modelLock_") &&
+      typeof v === "string" &&
+      new Date(v).getTime() > Date.now(),
   );
   return conn.testStatus === "unavailable" && !isCooldown
     ? "active"
     : conn.testStatus;
 }
 
-function ProviderCard({ provider, kind, connections }) {
+interface ProviderCardProps {
+  provider: ProviderEntry;
+  kind: string;
+  connections: ConnectionRecord[];
+}
+
+function ProviderCard({ provider, kind, connections }: ProviderCardProps) {
   const providerInfo = AI_PROVIDERS[provider.id];
   const isNoAuth = !!providerInfo?.noAuth;
   const providerConns = connections.filter((c) => c.provider === provider.id);
@@ -70,6 +95,8 @@ function ProviderCard({ provider, kind, connections }) {
     );
   };
 
+  const providerColor = (provider.color as string | undefined) || "#888";
+
   return (
     <Link
       href={`/dashboard/media-providers/${kind}/${provider.id}`}
@@ -83,7 +110,7 @@ function ProviderCard({ provider, kind, connections }) {
           <div
             className="size-8 rounded-lg flex items-center justify-center shrink-0"
             style={{
-              backgroundColor: `${provider.color?.length > 7 ? provider.color : (provider.color ?? "#888") + "15"}`,
+              backgroundColor: `${providerColor.length > 7 ? providerColor : providerColor + "15"}`,
             }}
           >
             <ProviderIcon
@@ -92,9 +119,9 @@ function ProviderCard({ provider, kind, connections }) {
               size={30}
               className="object-contain rounded-lg max-w-[30px] max-h-[30px]"
               fallbackText={
-                provider.textIcon || provider.id.slice(0, 2).toUpperCase()
+                (provider.textIcon as string | undefined) || provider.id.slice(0, 2).toUpperCase()
               }
-              fallbackColor={provider.color}
+              fallbackColor={providerColor}
             />
           </div>
           <div>
@@ -109,7 +136,7 @@ function ProviderCard({ provider, kind, connections }) {
   );
 }
 
-function ComboList({ combos }) {
+function ComboList({ combos }: { combos: ComboRecord[] }) {
   if (combos.length === 0) {
     return <p className="text-xs text-text-muted italic">No combos yet.</p>;
   }
@@ -131,7 +158,6 @@ function ComboList({ combos }) {
               <code className="text-sm font-mono font-medium flex-1 truncate">
                 {combo.name}
               </code>
-              {/* Provider icons preview */}
               <div className="flex flex-wrap items-center gap-1 sm:shrink-0">
                 {combo.models.slice(0, 6).map((entry, i) => {
                   const pid =
@@ -150,9 +176,9 @@ function ComboList({ combos }) {
                         size={18}
                         className="object-contain rounded max-w-[18px] max-h-[18px]"
                         fallbackText={
-                          p?.textIcon || pid.slice(0, 2).toUpperCase()
+                          (p?.textIcon as string | undefined) || pid.slice(0, 2).toUpperCase()
                         }
-                        fallbackColor={p?.color}
+                        fallbackColor={p?.color as string | undefined}
                       />
                     </div>
                   );
@@ -177,6 +203,16 @@ function ComboList({ combos }) {
   );
 }
 
+interface SectionProps {
+  title: string;
+  icon: string;
+  kind: string;
+  providers: ProviderEntry[];
+  connections: ConnectionRecord[];
+  combos: ComboRecord[];
+  onCreateCombo: () => void;
+}
+
 function Section({
   title,
   icon,
@@ -185,10 +221,9 @@ function Section({
   connections,
   combos,
   onCreateCombo,
-}) {
+}: SectionProps) {
   return (
     <div>
-      {/* Header — title left, Create Combo right */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="material-symbols-outlined text-primary">{icon}</span>
@@ -202,14 +237,12 @@ function Section({
         </Button>
       </div>
 
-      {/* Combos — top */}
       {combos.length > 0 && (
         <div className="mb-4">
           <ComboList combos={combos} />
         </div>
       )}
 
-      {/* Providers grid — bottom */}
       {providers.length === 0 ? (
         <div className="text-center py-8 border border-dashed border-border rounded-xl text-text-muted text-sm">
           No providers.
@@ -232,8 +265,8 @@ function Section({
 
 export default function WebProvidersPage() {
   const router = useRouter();
-  const [connections, setConnections] = useState([]);
-  const [combos, setCombos] = useState([]);
+  const [connections, setConnections] = useState<ConnectionRecord[]>([]);
+  const [combos, setCombos] = useState<ComboRecord[]>([]);
 
   const fetchAll = async () => {
     try {
@@ -242,8 +275,8 @@ export default function WebProvidersPage() {
         fetch("/api/combos", { cache: "no-store" }),
       ]);
       if (connsRes.ok)
-        setConnections((await connsRes.json()).connections || []);
-      if (combosRes.ok) setCombos((await combosRes.json()).combos || []);
+        setConnections(((await connsRes.json()) as { connections?: ConnectionRecord[] }).connections || []);
+      if (combosRes.ok) setCombos(((await combosRes.json()) as { combos?: ComboRecord[] }).combos || []);
     } catch {
       /* noop */
     }
@@ -258,8 +291,7 @@ export default function WebProvidersPage() {
   const searchCombos = combos.filter((c) => c.kind === "webSearch");
   const fetchCombos = combos.filter((c) => c.kind === "webFetch");
 
-  const handleCreateCombo = async (kind) => {
-    // Generate unique default name
+  const handleCreateCombo = async (kind: string) => {
     const base = kind === "webSearch" ? "search-combo" : "fetch-combo";
     let name = base;
     let i = 1;
@@ -273,10 +305,10 @@ export default function WebProvidersPage() {
       body: JSON.stringify({ name, models: [], kind }),
     });
     if (res.ok) {
-      const created = await res.json();
+      const created = (await res.json()) as { id: string };
       router.push(`/dashboard/media-providers/combo/${created.id}`);
     } else {
-      const err = await res.json();
+      const err = (await res.json()) as { error?: string };
       alert(err.error || "Failed to create combo");
     }
   };
@@ -293,7 +325,6 @@ export default function WebProvidersPage() {
         onCreateCombo={() => handleCreateCombo("webSearch")}
       />
 
-      {/* Divider between sections */}
       <div className="border-t border-border" />
 
       <Section

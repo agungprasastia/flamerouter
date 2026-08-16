@@ -1,7 +1,7 @@
-const path = require("path");
-const fs = require("fs");
-const { MITM_DIR } = require("../paths");
-const { generateRootCA, loadRootCA, generateLeafCert } = require("./rootCA");
+import * as path from "path";
+import * as fs from "fs";
+import { MITM_DIR } from "../paths";
+import { generateRootCA, loadRootCA, generateLeafCert } from "./rootCA";
 
 /**
  * Generate Root CA certificate (one-time setup)
@@ -15,7 +15,7 @@ function generateCert() {
  * Get certificate for a specific domain (dynamic generation)
  * Used by SNICallback in server.js
  */
-function getCertForDomain(domain) {
+function getCertForDomain(domain: string) {
   try {
     const rootCA = loadRootCA();
     const leafCert = generateLeafCert(domain, rootCA);
@@ -24,9 +24,12 @@ function getCertForDomain(domain) {
       cert: leafCert.cert,
     };
   } catch (error) {
-    console.error(`Failed to generate cert for ${domain}:`, error.message);
+    console.error(
+      `Failed to generate cert for ${domain}:`,
+      (error as Error).message,
+    );
     return null;
   }
 }
 
-module.exports = { generateCert, getCertForDomain };
+export { generateCert, getCertForDomain };

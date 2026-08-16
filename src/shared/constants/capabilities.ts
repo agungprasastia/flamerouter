@@ -28,7 +28,26 @@ import { matchPattern } from "./pricing";
  * Safe floor — every resolved result is merged over this so consumers
  * never need null-checks. Most modern LLMs meet these limits.
  */
-export const DEFAULT_CAPABILITIES = {
+export interface ModelCapabilities {
+  vision: boolean;
+  pdf: boolean;
+  audioInput: boolean;
+  videoInput: boolean;
+  imageOutput: boolean;
+  audioOutput: boolean;
+  search: boolean;
+  tools: boolean;
+  reasoning: boolean;
+  thinkingFormat: string | null;
+  thinkingCanDisable: boolean;
+  thinkingRange: { min: number; max: number } | null;
+  contextWindow: number;
+  maxOutput: number;
+}
+
+export type PartialModelCapabilities = Partial<ModelCapabilities>;
+
+export const DEFAULT_CAPABILITIES: ModelCapabilities = {
   // input modalities
   vision: false,        // read images
   pdf: false,           // read PDF / documents
@@ -54,7 +73,7 @@ export const DEFAULT_CAPABILITIES = {
 // User-added model metadata can carry dashboard service kinds instead of the
 // runtime capability names used here. Map those typed model kinds into input /
 // output capabilities so custom vision models are not treated as text-only.
-const SERVICE_KIND_CAPABILITIES = {
+const SERVICE_KIND_CAPABILITIES: Record<string, PartialModelCapabilities> = {
   imageToText: { vision: true },
   image: { imageOutput: true },
   stt: { audioInput: true },
@@ -62,7 +81,8 @@ const SERVICE_KIND_CAPABILITIES = {
   embedding: { tools: false },
 };
 
-export function capabilitiesFromServiceKind(kind) {
+export function capabilitiesFromServiceKind(kind: string | null | undefined): PartialModelCapabilities | null {
+  if (!kind) return null;
   return SERVICE_KIND_CAPABILITIES[kind] || null;
 }
 
@@ -70,7 +90,7 @@ export function capabilitiesFromServiceKind(kind) {
  * Canonical exact-id overrides — used for exceptions that patterns would
  * otherwise mis-match. Only declare deltas vs DEFAULT.
  */
-export const MODEL_CAPABILITIES = {
+export const MODEL_CAPABILITIES: Record<string, PartialModelCapabilities> = {
   // Claude Opus 5, 4.6/4.7/4.8, and Kiro Sonnet 5 have 1M context + adaptive thinking (override generic claude pattern)
   "claude-opus-5":     { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
   "claude-opus-5-thinking": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
@@ -120,7 +140,7 @@ const CODEX_GPT_56_DEFAULT_CAPS = { vision: true, reasoning: true, search: true,
 /**
  * Provider-specific capability overrides. Keyed by provider alias/id.
  */
-export const PROVIDER_CAPABILITIES = {
+export const PROVIDER_CAPABILITIES: Record<string, Record<string, PartialModelCapabilities>> = {
   // NVIDIA NIM is OpenAI-compatible → rejects MiniMax/GLM native `thinking` field.
   // Force openai reasoning_effort format for its reasoning models. #issue
   "nvidia": {
@@ -187,7 +207,7 @@ export const PROVIDER_CAPABILITIES = {
  * vision/specific variants first, text-only/generic families last, to avoid
  * a broad family pattern swallowing an exception (e.g. glm-4.6v vs glm-5).
  */
-export const PATTERN_CAPABILITIES = [
+export const PATTERN_CAPABILITIES: Array<{ pattern: string; caps: PartialModelCapabilities }> = [
   // ── Claude (4.6+ = adaptive thinking; older/haiku = budget) ──────
   { pattern: "*claude*opus-5*",     caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 } },
   { pattern: "*claude*opus-4.6*",   caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
@@ -325,11 +345,11 @@ export const PATTERN_CAPABILITIES = [
  * @param {string} model
  * @returns {object} full capabilities object
  */
-export function getCapabilitiesForModel(provider, model) {
+export function getCapabilitiesForModel(provider?: string | null, model?: string | null): ModelCapabilities {
   if (!model) return { ...DEFAULT_CAPABILITIES };
 
   // Canonical exact lookup strips vendor prefix: "anthropic/claude-opus-4.7" -> "claude-opus-4.7".
-  const baseModel = model.includes("/") ? model.split("/").pop() : model;
+  const baseModel = model.includes("/") ? model.split("/").pop() || model : model;
 
   // 1. Provider-specific override
   if (provider) {

@@ -2,8 +2,12 @@
 
 import { CircleHelp } from "lucide-react";
 
+export interface TooltipProps {
+  text: string;
+}
+
 /** Inline tooltip, Claude Code CLI style */
-export default function Tooltip({ text }) {
+export default function Tooltip({ text }: TooltipProps) {
   return (
     <span className="relative group inline-flex items-center" tabIndex={0} aria-label={text}>
       <CircleHelp size={14} className="cursor-help text-text-muted" aria-hidden="true" />

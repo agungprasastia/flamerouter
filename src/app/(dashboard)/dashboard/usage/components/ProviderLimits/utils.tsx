@@ -1,5 +1,46 @@
 import { getModelsByProviderId } from "@/shared/constants/providerModels";
 
+// ─── Shared types ────────────────────────────────────────────────────────────
+export type QuotaEntry = {
+  name?: string;
+  modelKey?: string;
+  used?: number;
+  total?: number;
+  remaining?: number;
+  remainingPercentage?: number;
+  resetAt?: string | null;
+  unit?: string;
+  recurring?: boolean;
+  message?: string;
+  [key: string]: unknown;
+};
+
+export type ConnectionItem = {
+  id: string;
+  name?: string;
+  email?: string;
+  displayName?: string;
+  provider?: string;
+  isActive?: boolean;
+  authType?: string;
+  providerSpecificData?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export type QuotaData = Record<string, { quotas?: QuotaEntry[] }>;
+
+export type Pagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+export type Totals = {
+  eligibleConnections: number;
+  providerFilteredConnections: number;
+};
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 export const QUOTA_CACHE_KEY = "quotaCacheData";
 export const REFRESH_INTERVAL_MS = 60000;
@@ -22,7 +63,7 @@ export const QUOTA_SORT_OPTIONS = [
 ];
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
-export function getConnectionLabel(connection) {
+export function getConnectionLabel(connection: ConnectionItem) {
   return (
     connection.name?.trim() ||
     connection.email?.trim() ||
@@ -31,7 +72,7 @@ export function getConnectionLabel(connection) {
   );
 }
 
-export function getConnectionQuotaRemaining(connection, quotaData) {
+export function getConnectionQuotaRemaining(connection: ConnectionItem, quotaData: QuotaData) {
   const quota = quotaData[connection.id]?.quotas?.[0];
   if (!quota) return Number.POSITIVE_INFINITY;
   if (typeof quota.remaining === "number") return quota.remaining;
@@ -39,11 +80,11 @@ export function getConnectionQuotaRemaining(connection, quotaData) {
 }
 
 export function sortVisibleConnections(
-  connections,
-  quotaData,
-  expiringFirst,
-  providerFilter,
-  quotaSortMode,
+  connections: ConnectionItem[],
+  quotaData: QuotaData,
+  expiringFirst: boolean,
+  providerFilter: string,
+  quotaSortMode: string,
 ) {
   if (providerFilter === "codex" && quotaSortMode !== "default") {
     return [...connections].sort((a, b) => {
@@ -62,14 +103,14 @@ export function sortVisibleConnections(
 
   if (!expiringFirst) return connections;
 
-  const getEarliestResetTime = (connection) => {
+  const getEarliestResetTime = (connection: ConnectionItem) => {
     const resetTimes = (quotaData[connection.id]?.quotas || [])
-      .map((quota) =>
+      .map((quota: QuotaEntry) =>
         quota.resetAt
           ? new Date(quota.resetAt).getTime()
           : Number.POSITIVE_INFINITY,
       )
-      .filter((time) => Number.isFinite(time));
+      .filter((time: number) => Number.isFinite(time));
     return resetTimes.length > 0
       ? Math.min(...resetTimes)
       : Number.POSITIVE_INFINITY;
@@ -85,22 +126,22 @@ export function sortVisibleConnections(
   });
 }
 
-export function buildLoadingState(connections) {
-  const nextLoadingState = {};
-  connections.forEach((connection) => {
+export function buildLoadingState(connections: ConnectionItem[]) {
+  const nextLoadingState: Record<string, boolean> = {};
+  connections.forEach((connection: ConnectionItem) => {
     nextLoadingState[connection.id] = true;
   });
   return nextLoadingState;
 }
 
-export function filterQuotaStateByConnections(state, connections) {
-  const visibleIds = new Set(connections.map((connection) => connection.id));
+export function filterQuotaStateByConnections<T extends Record<string, unknown>>(state: T, connections: ConnectionItem[]): T {
+  const visibleIds = new Set(connections.map((connection: ConnectionItem) => connection.id));
   return Object.fromEntries(
     Object.entries(state).filter(([id]) => visibleIds.has(id)),
-  );
+  ) as T;
 }
 
-export function getConnectionsPageRange(pagination) {
+export function getConnectionsPageRange(pagination: Pagination) {
   if (!pagination.total) {
     return { start: 0, end: 0 };
   }
@@ -110,9 +151,9 @@ export function getConnectionsPageRange(pagination) {
 }
 
 export function getConnectionsEmptyMessage(
-  totals,
-  providerFilter,
-  accountFilter,
+  totals: Totals,
+  providerFilter: string,
+  accountFilter: string,
 ) {
   if (!totals.eligibleConnections) {
     return {
@@ -140,20 +181,20 @@ export function getConnectionsEmptyMessage(
   };
 }
 
-export function sortRequestFromExpiringFirst(expiringFirst) {
+export function sortRequestFromExpiringFirst(expiringFirst: boolean) {
   return expiringFirst ? "expiring" : "priority";
 }
 
-export function getPageSizeLabel(pageSize, isCustomPageSize) {
+export function getPageSizeLabel(pageSize: number, isCustomPageSize: boolean) {
   return isCustomPageSize ? `Custom: ${pageSize} / page` : `${pageSize} / page`;
 }
 
-export function getConnectionsPaginationSummary(pagination) {
+export function getConnectionsPaginationSummary(pagination: Pagination) {
   const { start, end } = getConnectionsPageRange(pagination);
   return `Showing ${start}-${end} of ${pagination.total}`;
 }
 
-export function getSafePagination(pagination, fallbackPageSize) {
+export function getSafePagination(pagination: Pagination | null | undefined, fallbackPageSize: number): Pagination {
   return (
     pagination || {
       page: 1,
@@ -164,7 +205,7 @@ export function getSafePagination(pagination, fallbackPageSize) {
   );
 }
 
-export function getSafeTotals(totals, fallbackTotal = 0) {
+export function getSafeTotals(totals: Totals | null | undefined, fallbackTotal = 0): Totals {
   return (
     totals || {
       eligibleConnections: fallbackTotal,
@@ -173,19 +214,22 @@ export function getSafeTotals(totals, fallbackTotal = 0) {
   );
 }
 
-export function shouldResetPage(previousValue, nextValue) {
+export function shouldResetPage(previousValue: unknown, nextValue: unknown) {
   return previousValue !== nextValue;
 }
 
-export function getPaginationPageValue(dataPagination, fallbackPage) {
+export function getPaginationPageValue(dataPagination: { page?: number } | null | undefined, fallbackPage: number) {
   return dataPagination?.page || fallbackPage;
 }
 
-export function getProviderOptions(dataProviderOptions) {
+export function getProviderOptions(dataProviderOptions: unknown[] | null | undefined) {
   return dataProviderOptions || [];
 }
 
-export async function reconcileConnectionsPage(fetchConnections, targetPage) {
+export async function reconcileConnectionsPage(
+  fetchConnections: (page: number) => Promise<unknown>,
+  targetPage: number,
+) {
   return await fetchConnections(targetPage);
 }
 
@@ -200,7 +244,7 @@ export function getQuotaCache() {
   }
 }
 
-export function setQuotaCache(connectionId, quotaEntry) {
+export function setQuotaCache(connectionId: string, quotaEntry: QuotaEntry) {
   if (typeof window === "undefined") return;
   try {
     const cache = getQuotaCache();
@@ -219,13 +263,13 @@ export function setQuotaCache(connectionId, quotaEntry) {
  * @param {string|Date} date - ISO date string or Date object
  * @returns {string} Formatted countdown (e.g., "2d 5h 30m", "4h 40m", "15m") or "-"
  */
-export function formatResetTime(date) {
+export function formatResetTime(date: string | number | Date | null | undefined) {
   if (!date) return "-";
 
   try {
-    const resetDate = typeof date === "string" ? new Date(date) : date;
+    const resetDate = date instanceof Date ? date : new Date(date);
     const now = new Date();
-    const diffMs = resetDate - now;
+    const diffMs = resetDate.getTime() - now.getTime();
 
     if (diffMs <= 0) return "-";
 
@@ -258,7 +302,7 @@ export function formatResetTime(date) {
  * @param {number} percentage - Remaining percentage (0-100)
  * @returns {string} Color name: "green" | "yellow" | "red"
  */
-export function getStatusColor(percentage) {
+export function getStatusColor(percentage: number) {
   if (percentage > 70) return "green";
   if (percentage >= 30) return "yellow";
   return "red"; // 0-29% including 0% (out of quota) - show red
@@ -269,7 +313,7 @@ export function getStatusColor(percentage) {
  * @param {number} percentage - Remaining percentage (0-100)
  * @returns {string} Emoji: "🟢" | "🟡" | "🔴"
  */
-export function getStatusEmoji(percentage) {
+export function getStatusEmoji(percentage: number) {
   if (percentage > 70) return "🟢";
   if (percentage >= 30) return "🟡";
   return "🔴"; // 0-29% including 0% (out of quota) - show red
@@ -281,7 +325,7 @@ export function getStatusEmoji(percentage) {
  * @param {number} total - Total amount
  * @returns {number} Remaining percentage (0-100)
  */
-export function calculatePercentage(used, total) {
+export function calculatePercentage(used: number, total: number) {
   if (!total || total === 0) return 0;
   if (!used || used < 0) return 100;
   if (used >= total) return 0;
@@ -294,7 +338,7 @@ export function calculatePercentage(used, total) {
  * @param {Object} quota - Normalized quota object
  * @returns {number} Remaining percentage (0-100)
  */
-export function getRemainingPercentage(quota) {
+export function getRemainingPercentage(quota: QuotaEntry | null | undefined) {
   if (quota?.remaining !== undefined) {
     return Math.max(0, Math.round(quota.remaining));
   }
@@ -303,23 +347,26 @@ export function getRemainingPercentage(quota) {
     return Math.round(quota.remainingPercentage);
   }
 
-  return calculatePercentage(quota?.used, quota?.total);
+  return calculatePercentage(quota?.used ?? 0, quota?.total ?? 0);
 }
 
-export function getQuotaVisibilityKey(quota) {
+export function getQuotaVisibilityKey(quota: QuotaEntry | null | undefined) {
   if (!quota || typeof quota !== "object") return "";
   return String(quota.modelKey || quota.name || "").trim();
 }
 
-function getProviderHiddenQuotaSet(provider, quotaVisibility) {
+function getProviderHiddenQuotaSet(
+  provider: string,
+  quotaVisibility: Record<string, { hidden?: unknown[] }>,
+) {
   const hidden = quotaVisibility?.[provider]?.hidden;
   return new Set(Array.isArray(hidden) ? hidden.map(String) : []);
 }
 
 export function filterQuotasByVisibility(
-  provider,
-  quotas = [],
-  quotaVisibility = {},
+  provider: string,
+  quotas: QuotaEntry[] = [],
+  quotaVisibility: Record<string, { hidden?: unknown[] }> = {},
 ) {
   if (!Array.isArray(quotas) || quotas.length === 0) return [];
   const hidden = getProviderHiddenQuotaSet(provider, quotaVisibility);
@@ -328,9 +375,9 @@ export function filterQuotasByVisibility(
 }
 
 export function getHiddenQuotaRows(
-  provider,
-  quotas = [],
-  quotaVisibility = {},
+  provider: string,
+  quotas: QuotaEntry[] = [],
+  quotaVisibility: Record<string, { hidden?: unknown[] }> = {},
 ) {
   if (!Array.isArray(quotas) || quotas.length === 0) return [];
   const hidden = getProviderHiddenQuotaSet(provider, quotaVisibility);
@@ -344,16 +391,16 @@ export function getHiddenQuotaRows(
  * @param {Object} data - Raw quota data from provider
  * @returns {Array<Object>} Normalized quota objects with { name, used, total, resetAt }
  */
-export function parseQuotaData(provider, data) {
+export function parseQuotaData(provider: string, data: Record<string, unknown> | null | undefined): QuotaEntry[] {
   if (!data || typeof data !== "object") return [];
 
-  const normalizedQuotas = [];
+  const normalizedQuotas: QuotaEntry[] = [];
 
   try {
     switch (provider.toLowerCase()) {
       case "github":
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
               used: quota.used || 0,
@@ -381,7 +428,7 @@ export function parseQuotaData(provider, data) {
 
       case "codex":
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([quotaType, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([quotaType, quota]) => {
             normalizedQuotas.push({
               name: quotaType,
               used: quota.used || 0,
@@ -395,7 +442,7 @@ export function parseQuotaData(provider, data) {
 
       case "kiro":
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([quotaType, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([quotaType, quota]) => {
             normalizedQuotas.push({
               name: quotaType,
               used: quota.used || 0,
@@ -416,7 +463,7 @@ export function parseQuotaData(provider, data) {
         // `remaining` as a 0-100 percentage and would render 348 credits
         // as "348%". The percentage is computed from used/total instead.
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([quotaType, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([quotaType, quota]) => {
             if (
               quotaType === "organization" &&
               (!quota || (Number(quota.total) || 0) === 0)
@@ -447,10 +494,10 @@ export function parseQuotaData(provider, data) {
             used: 0,
             total: 0,
             resetAt: null,
-            message: data.message,
+            message: data.message as string | undefined,
           });
         } else if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
               used: quota.used || 0,
@@ -467,7 +514,7 @@ export function parseQuotaData(provider, data) {
         // its used/total values would otherwise compute the wrong direction
         // (e.g. used=95.5 / total=100 → 4% instead of 96%).
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
               used: quota.used || 0,
@@ -485,7 +532,7 @@ export function parseQuotaData(provider, data) {
         // so the UI can show "Expires in" for bonus packs (whose resetAt is
         // a hard expiry, not a refresh) instead of "Reset in".
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
               used: quota.used || 0,
@@ -502,7 +549,7 @@ export function parseQuotaData(provider, data) {
         // Do NOT forward absolute `remaining` — getRemainingPercentage treats
         // it as a 0–100 percentage (same as Qoder). Use remainingPercentage.
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
               used: quota.used || 0,
@@ -517,7 +564,7 @@ export function parseQuotaData(provider, data) {
       case "kimi":
         // Weekly / Ratelimit from /v1/usages. Prefer remainingPercentage only.
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
               used: quota.used || 0,
@@ -532,7 +579,7 @@ export function parseQuotaData(provider, data) {
       case "deepseek":
         // Credit balance — remainingPercentage only (no absolute remaining).
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
               used: quota.used || 0,
@@ -548,7 +595,7 @@ export function parseQuotaData(provider, data) {
         // Session (5h) / Weekly (7d) usage % from ollama.com/api/usage.
         // remainingPercentage only — no absolute remaining (UI treats remaining as %).
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
               used: quota.used || 0,
@@ -563,7 +610,7 @@ export function parseQuotaData(provider, data) {
       default:
         // Generic fallback for unknown providers
         if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
+          Object.entries(data.quotas as Record<string, QuotaEntry>).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
               used: quota.used || 0,
@@ -585,8 +632,8 @@ export function parseQuotaData(provider, data) {
 
     normalizedQuotas.sort((a, b) => {
       // Use modelKey for antigravity, otherwise use name
-      const keyA = a.modelKey || a.name;
-      const keyB = b.modelKey || b.name;
+      const keyA = a.modelKey || a.name || "";
+      const keyB = b.modelKey || b.name || "";
       const orderA = orderMap.get(keyA) ?? 999;
       const orderB = orderMap.get(keyB) ?? 999;
       return orderA - orderB;

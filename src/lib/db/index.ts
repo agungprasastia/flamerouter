@@ -111,17 +111,50 @@ export {
   getDistinctProviders,
 } from "./repos/requestDetailsRepo";
 
+interface DbRow {
+  id: string;
+  provider: string;
+  authType: string;
+  name: string | null;
+  email: string | null;
+  priority: number | null;
+  isActive: number;
+  data: string;
+  type?: string;
+  kind?: string | null;
+  key?: string;
+  machineId?: string;
+  testStatus?: string;
+  models?: string;
+  createdAt: string;
+  updatedAt: string;
+  value?: string;
+}
+
+export interface DbExportPayload {
+  settings: unknown;
+  providerConnections: Array<Record<string, unknown>>;
+  providerNodes: Array<Record<string, unknown>>;
+  proxyPools: Array<Record<string, unknown>>;
+  apiKeys: Array<{ id: string; key: string; name?: string | null; machineId?: string | null; isActive?: boolean; createdAt?: string }>;
+  combos: Array<{ id: string; name: string; kind?: string | null; models?: unknown[]; createdAt?: string; updatedAt?: string }>;
+  modelAliases: Record<string, unknown>;
+  customModels: Array<{ providerAlias?: string; id?: string; type?: string; [key: string]: unknown }>;
+  mitmAlias: Record<string, unknown>;
+  pricing: Record<string, unknown>;
+}
+
 // Export/import full DB
-export async function exportDb() {
+export async function exportDb(): Promise<DbExportPayload> {
   const db = await getAdapter();
   const { exportSettings } = await import("./repos/settingsRepo");
 
-  const out = {
+  const out: DbExportPayload = {
     settings: await exportSettings(),
     providerConnections: db
-      .all(`SELECT * FROM providerConnections`)
+      .all<DbRow>(`SELECT * FROM providerConnections`)
       .map((r) => ({
-        ...parseJson(r.data, {}),
+        ...(parseJson<Record<string, unknown>>(r.data, {}) || {}),
         id: r.id,
         provider: r.provider,
         authType: r.authType,
@@ -132,35 +165,35 @@ export async function exportDb() {
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
       })),
-    providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({
-      ...parseJson(r.data, {}),
+    providerNodes: db.all<DbRow>(`SELECT * FROM providerNodes`).map((r) => ({
+      ...(parseJson<Record<string, unknown>>(r.data, {}) || {}),
       id: r.id,
       type: r.type,
       name: r.name,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     })),
-    proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({
-      ...parseJson(r.data, {}),
+    proxyPools: db.all<DbRow>(`SELECT * FROM proxyPools`).map((r) => ({
+      ...(parseJson<Record<string, unknown>>(r.data, {}) || {}),
       id: r.id,
       isActive: r.isActive === 1,
       testStatus: r.testStatus,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({
+    apiKeys: db.all<DbRow>(`SELECT * FROM apiKeys`).map((r) => ({
       id: r.id,
-      key: r.key,
+      key: r.key || "",
       name: r.name,
       machineId: r.machineId,
       isActive: r.isActive === 1,
       createdAt: r.createdAt,
     })),
-    combos: db.all(`SELECT * FROM combos`).map((r) => ({
+    combos: db.all<DbRow>(`SELECT * FROM combos`).map((r) => ({
       id: r.id,
-      name: r.name,
+      name: r.name || "",
       kind: r.kind,
-      models: parseJson(r.models, []),
+      models: parseJson<unknown[]>(r.models, []) || [],
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     })),
@@ -170,23 +203,25 @@ export async function exportDb() {
     pricing: {},
   };
 
-  for (const r of db.all(
+  for (const r of db.all<{ key: string; value: string }>(
     `SELECT key, value FROM kv WHERE scope = 'modelAliases'`,
   ))
     out.modelAliases[r.key] = parseJson(r.value);
-  for (const r of db.all(
+  for (const r of db.all<{ key: string; value: string }>(
     `SELECT key, value FROM kv WHERE scope = 'customModels'`,
-  ))
-    out.customModels.push(parseJson(r.value));
-  for (const r of db.all(`SELECT key, value FROM kv WHERE scope = 'mitmAlias'`))
+  )) {
+    const parsed = parseJson(r.value);
+    if (parsed) out.customModels.push(parsed as DbExportPayload["customModels"][number]);
+  }
+  for (const r of db.all<{ key: string; value: string }>(`SELECT key, value FROM kv WHERE scope = 'mitmAlias'`))
     out.mitmAlias[r.key] = parseJson(r.value);
-  for (const r of db.all(`SELECT key, value FROM kv WHERE scope = 'pricing'`))
+  for (const r of db.all<{ key: string; value: string }>(`SELECT key, value FROM kv WHERE scope = 'pricing'`))
     out.pricing[r.key] = parseJson(r.value);
 
   return out;
 }
 
-export async function importDb(payload) {
+export async function importDb(payload: Partial<DbExportPayload>) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("Invalid database payload");
   }

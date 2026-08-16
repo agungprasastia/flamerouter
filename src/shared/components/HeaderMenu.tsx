@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import PropTypes from "prop-types";
 import { useTheme } from "@/shared/hooks/useTheme";
 import ChangelogModal from "./ChangelogModal";
 import { ConfirmModal } from "./Modal";
@@ -38,13 +37,13 @@ export default function HeaderMenu({ onLogout }: { onLogout: () => void }) {
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const { toggleTheme, isDark } = useTheme();
-  const menuRef = useRef(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const handleShutdown = async () => {
     setIsShuttingDown(true);
     try {
       await fetch("/api/version/shutdown", { method: "POST" });
-    } catch (e) {
+    } catch {
       // Expected to fail as server shuts down; ignore error
     }
     setIsShuttingDown(false);
@@ -52,8 +51,8 @@ export default function HeaderMenu({ onLogout }: { onLogout: () => void }) {
   };
 
   useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setIsOpen(false);
       }
     };

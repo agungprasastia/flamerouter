@@ -1,18 +1,29 @@
 import { KIRO_CONFIG, assertValidAwsRegion } from "../constants/oauth";
 import { extractEmailFromAccessToken } from "../providerHelpers";
 
+interface KiroConfigLike {
+  startUrl?: string;
+  clientName?: string;
+  clientType?: string;
+  scopes?: string[];
+  grantTypes?: string[];
+  issuerUrl?: string;
+  [key: string]: unknown;
+}
+
 const kiro = {
   config: KIRO_CONFIG,
   flowType: "device_code",
   // Kiro uses AWS SSO OIDC - requires client registration first
-  requestDeviceCode: async (config, codeChallenge, options = {}) => {
+  requestDeviceCode: async (_config: KiroConfigLike, _codeChallenge?: string, options: Record<string, unknown> = {}) => {
+    const cfg = KIRO_CONFIG as unknown as KiroConfigLike;
     const trimmedRegion =
       typeof options.region === "string" ? options.region.trim() : "";
     const region = trimmedRegion || "us-east-1";
     assertValidAwsRegion(region);
     const trimmedStartUrl =
       typeof options.startUrl === "string" ? options.startUrl.trim() : "";
-    const startUrl = trimmedStartUrl || config.startUrl;
+    const startUrl = trimmedStartUrl || cfg.startUrl || "https://view.awsapps.com/start";
     const authMethod = options.authMethod === "idc" ? "idc" : "builder-id";
     const registerClientUrl = `https://oidc.${region}.amazonaws.com/client/register`;
     const deviceAuthUrl = `https://oidc.${region}.amazonaws.com/device_authorization`;
@@ -25,11 +36,11 @@ const kiro = {
         Accept: "application/json",
       },
       body: JSON.stringify({
-        clientName: config.clientName,
-        clientType: config.clientType,
-        scopes: config.scopes,
-        grantTypes: config.grantTypes,
-        issuerUrl: config.issuerUrl,
+        clientName: cfg.clientName,
+        clientType: cfg.clientType,
+        scopes: cfg.scopes,
+        grantTypes: cfg.grantTypes,
+        issuerUrl: cfg.issuerUrl,
       }),
     });
 
@@ -38,7 +49,7 @@ const kiro = {
       throw new Error(`Client registration failed: ${error}`);
     }
 
-    const clientInfo = await registerRes.json();
+    const clientInfo = (await registerRes.json()) as { clientId: string; clientSecret: string };
 
     // Step 2: Request device authorization
     const deviceRes = await fetch(deviceAuthUrl, {
@@ -59,7 +70,14 @@ const kiro = {
       throw new Error(`Device authorization failed: ${error}`);
     }
 
-    const deviceData = await deviceRes.json();
+    const deviceData = (await deviceRes.json()) as {
+      deviceCode: string;
+      userCode: string;
+      verificationUri: string;
+      verificationUriComplete?: string;
+      expiresIn?: number;
+      interval?: number;
+    };
 
     // Return combined data for polling
     return {
@@ -69,7 +87,6 @@ const kiro = {
       verification_uri_complete: deviceData.verificationUriComplete,
       expires_in: deviceData.expiresIn,
       interval: deviceData.interval || 5,
-      // Store client credentials for token exchange
       _clientId: clientInfo.clientId,
       _clientSecret: clientInfo.clientSecret,
       _region: region,
@@ -77,8 +94,8 @@ const kiro = {
       _startUrl: startUrl,
     };
   },
-  pollToken: async (config, deviceCode, codeVerifier, extraData) => {
-    const region = extraData?._region || "us-east-1";
+  pollToken: async (_config: KiroConfigLike, deviceCode?: string, _codeVerifier?: string, extraData?: Record<string, unknown>) => {
+    const region = (extraData?._region as string) || "us-east-1";
     assertValidAwsRegion(region);
     const tokenUrl = `https://oidc.${region}.amazonaws.com/token`;
     const response = await fetch(tokenUrl, {
@@ -95,10 +112,18 @@ const kiro = {
       }),
     });
 
-    let data;
+    let data: {
+      accessToken?: string;
+      refreshToken?: string;
+      expiresIn?: number;
+      profileArn?: string;
+      error?: string;
+      error_description?: string;
+      message?: string;
+    };
     try {
-      data = await response.json();
-    } catch (e) {
+      data = (await response.json()) as typeof data;
+    } catch {
       const text = await response.text();
       data = { error: "invalid_response", error_description: text };
     }
@@ -112,7 +137,6 @@ const kiro = {
           refresh_token: data.refreshToken,
           expires_in: data.expiresIn,
           profile_arn: data?.profileArn || null,
-          // Store client credentials for refresh
           _clientId: extraData?._clientId,
           _clientSecret: extraData?._clientSecret,
           _region: extraData?._region,
@@ -130,8 +154,9 @@ const kiro = {
       },
     };
   },
-  mapTokens: (tokens) => {
-    const email = extractEmailFromAccessToken(tokens.access_token);
+  mapTokens: (tokens: Record<string, unknown>) => {
+    const email = extractEmailFromAccessToken(tokens.access_token as string);
+    const cfg = KIRO_CONFIG as unknown as KiroConfigLike;
     const mapped = {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
@@ -143,7 +168,7 @@ const kiro = {
         clientSecret: tokens._clientSecret,
         region: tokens._region || "us-east-1",
         authMethod: tokens._authMethod || "builder-id",
-        startUrl: tokens._startUrl || KIRO_CONFIG.startUrl,
+        startUrl: tokens._startUrl || cfg.startUrl,
       },
     };
     return mapped;

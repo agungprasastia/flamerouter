@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, ReactNode } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { FREE_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
 
 // Keep providers without serviceKinds (default LLM) or with "llm" in serviceKinds
-function isLLMProvider(id) {
-  const p = AI_PROVIDERS[id];
+function isLLMProvider(id: string) {
+  const p = (AI_PROVIDERS as Record<string, { serviceKinds?: string[] }>)[id];
   if (!p?.serviceKinds) return true;
   return p.serviceKinds.includes("llm");
 }
@@ -16,6 +16,9 @@ import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/Overview
 import UsageTable, {
   fmt,
   fmtTime,
+  UsageTableColumn,
+  UsageGroupedData,
+  UsageItemData,
 } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
 import dynamic from "next/dynamic";
 // Lazy-load: keeps @xyflow/react out of the shared bundle until topology renders
@@ -23,10 +26,69 @@ const ProviderTopology = dynamic(
   () => import("@/app/(dashboard)/dashboard/usage/components/ProviderTopology"),
   { ssr: false },
 );
+import type { ProviderItem, ActiveRequestItem } from "@/app/(dashboard)/dashboard/usage/components/ProviderTopology";
 import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
 
-function timeAgo(timestamp) {
-  const diff = Math.floor((Date.now() - new Date(timestamp)) / 1000);
+export interface RequestItem {
+  model?: string;
+  provider?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  latencyMs?: number;
+  durationMs?: number;
+  latency?: { total?: number };
+  status?: string;
+  timestamp?: string | number;
+}
+
+export interface UsageDataItem {
+  promptTokens?: number;
+  completionTokens?: number;
+  cachedTokens?: number;
+  cost?: number;
+  requests?: number;
+  lastUsed?: string | number | null;
+  rawModel?: string;
+  provider?: string;
+  accountName?: string;
+  connectionId?: string;
+  keyName?: string;
+  endpoint?: string;
+  [key: string]: unknown;
+}
+
+export interface SortedUsageItem extends UsageDataItem {
+  key: string;
+  totalTokens: number;
+  totalCost: number;
+  inputCost: number;
+  cachedCost: number;
+  outputCost: number;
+  pending: number;
+  [key: string]: unknown;
+}
+
+export interface UsageStatsData {
+  byModel?: Record<string, UsageDataItem>;
+  byAccount?: Record<string, UsageDataItem>;
+  byApiKey?: Record<string, UsageDataItem>;
+  byEndpoint?: Record<string, UsageDataItem>;
+  activeRequests?: Array<{ connectionId?: string; model?: string; provider?: string }>;
+  recentRequests?: RequestItem[];
+  errorProvider?: string;
+  pending?: {
+    byModel?: Record<string, number>;
+    byAccount?: Record<string, Record<string, number>>;
+  };
+  totalRequests?: number;
+  totalTokens?: number;
+  totalCost?: number;
+  activeConnections?: number;
+}
+
+function timeAgo(timestamp?: string | number) {
+  if (!timestamp) return "—";
+  const diff = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -34,7 +96,7 @@ function timeAgo(timestamp) {
 }
 
 // Auto-update time display every second without re-rendering parent
-function TimeAgo({ timestamp }) {
+function TimeAgo({ timestamp }: { timestamp?: string | number }) {
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -45,7 +107,7 @@ function TimeAgo({ timestamp }) {
   return <>{timeAgo(timestamp)}</>;
 }
 
-function RecentRequests({ requests = [] }) {
+function RecentRequests({ requests = [] }: { requests?: RequestItem[] }) {
   return (
     <section className="flex h-[480px] min-w-0 flex-col overflow-hidden border-y border-border lg:border-l lg:pl-6">
       {/* Header */}
@@ -135,28 +197,27 @@ function RecentRequests({ requests = [] }) {
   );
 }
 
-function sortData(dataMap, pendingMap = {}, sortBy, sortOrder) {
+function sortData(
+  dataMap?: Record<string, UsageDataItem> | null,
+  pendingMap: Record<string, number> = {},
+  sortBy = "rawModel",
+  sortOrder = "asc",
+): SortedUsageItem[] {
   return Object.entries(dataMap || {})
     .map(([key, data]) => {
-      const totalTokens =
-        (data.promptTokens || 0) + (data.completionTokens || 0);
+      const promptTokens = data.promptTokens || 0;
+      const completionTokens = data.completionTokens || 0;
+      const totalTokens = promptTokens + completionTokens;
       const totalCost = data.cost || 0;
-      // ponytail: cost split is a token-share allocation of the (rate-accurate)
-      // server total, not a per-rate recompute. cached is a subset of prompt, so
-      // peel it out of the input share. Upgrade to a stored per-component cost
-      // breakdown if exact cached-rate cost display is needed.
       const cachedTokens = data.cachedTokens || 0;
-      const nonCachedInput = Math.max(
-        0,
-        (data.promptTokens || 0) - cachedTokens,
-      );
+      const nonCachedInput = Math.max(0, promptTokens - cachedTokens);
       const inputCost =
         totalTokens > 0 ? nonCachedInput * (totalCost / totalTokens) : 0;
       const cachedCost =
         totalTokens > 0 ? cachedTokens * (totalCost / totalTokens) : 0;
       const outputCost =
         totalTokens > 0
-          ? (data.completionTokens || 0) * (totalCost / totalTokens)
+          ? completionTokens * (totalCost / totalTokens)
           : 0;
       return {
         ...data,
@@ -169,25 +230,28 @@ function sortData(dataMap, pendingMap = {}, sortBy, sortOrder) {
         pending: pendingMap[key] || 0,
       };
     })
-    .sort((a, b) => {
-      let valA = a[sortBy];
-      let valB = b[sortBy];
-      if (typeof valA === "string") valA = valA.toLowerCase();
-      if (typeof valB === "string") valB = valB.toLowerCase();
-      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
-      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+    .sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
+      const aVal = a[sortBy] as string | number | undefined;
+      const bVal = b[sortBy] as string | number | undefined;
+      let valA: string | number | undefined = typeof aVal === "string" ? aVal.toLowerCase() : aVal;
+      let valB: string | number | undefined = typeof bVal === "string" ? bVal.toLowerCase() : bVal;
+      if (typeof valA === "number" && typeof valB === "number") {
+        return sortOrder === "asc" ? valA - valB : valB - valA;
+      }
+      if (String(valA) < String(valB)) return sortOrder === "asc" ? -1 : 1;
+      if (String(valA) > String(valB)) return sortOrder === "asc" ? 1 : -1;
       return 0;
     });
 }
 
-function getGroupKey(item, keyField) {
+function getGroupKey(item: SortedUsageItem, keyField: string): string {
   switch (keyField) {
     case "rawModel":
       return item.rawModel || "Unknown Model";
     case "accountName":
       return (
         item.accountName ||
-        `Account ${item.connectionId?.slice(0, 8)}...` ||
+        (item.connectionId ? `Account ${item.connectionId.slice(0, 8)}...` : "") ||
         "Unknown Account"
       );
     case "keyName":
@@ -195,13 +259,33 @@ function getGroupKey(item, keyField) {
     case "endpoint":
       return item.endpoint || "Unknown Endpoint";
     default:
-      return item[keyField] || "Unknown";
+      return (item[keyField] as string) || "Unknown";
   }
 }
 
-function groupDataByKey(data, keyField) {
+export interface GroupSummary {
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  cost: number;
+  inputCost: number;
+  cachedCost: number;
+  outputCost: number;
+  lastUsed: string | number | null;
+  pending: number;
+}
+
+export interface GroupedUsageData {
+  groupKey: string;
+  summary: UsageItemData;
+  items: SortedUsageItem[];
+}
+
+function groupDataByKey(data: SortedUsageItem[], keyField: string): UsageGroupedData<SortedUsageItem>[] {
   if (!Array.isArray(data)) return [];
-  const groups = {};
+  const groups: Record<string, UsageGroupedData<SortedUsageItem>> = {};
   data.forEach((item) => {
     const gk = getGroupKey(item, keyField);
     if (!groups[gk]) {
@@ -223,36 +307,39 @@ function groupDataByKey(data, keyField) {
         items: [],
       };
     }
-    const s = groups[gk].summary;
-    s.requests += item.requests || 0;
-    s.promptTokens += item.promptTokens || 0;
-    s.completionTokens += item.completionTokens || 0;
-    s.cachedTokens += item.cachedTokens || 0;
-    s.totalTokens += item.totalTokens || 0;
-    s.cost += item.cost || 0;
-    s.inputCost += item.inputCost || 0;
-    s.cachedCost += item.cachedCost || 0;
-    s.outputCost += item.outputCost || 0;
-    s.pending += item.pending || 0;
-    if (
-      item.lastUsed &&
-      (!s.lastUsed || new Date(item.lastUsed) > new Date(s.lastUsed))
-    ) {
-      s.lastUsed = item.lastUsed;
+    const currentGroup = groups[gk];
+    if (currentGroup) {
+      const s = currentGroup.summary;
+      s.requests = (Number(s.requests) || 0) + (item.requests || 0);
+      s.promptTokens = (Number(s.promptTokens) || 0) + (item.promptTokens || 0);
+      s.completionTokens = (Number(s.completionTokens) || 0) + (item.completionTokens || 0);
+      s.cachedTokens = (Number(s.cachedTokens) || 0) + (item.cachedTokens || 0);
+      s.totalTokens = (Number(s.totalTokens) || 0) + (item.totalTokens || 0);
+      s.cost = (Number(s.cost) || 0) + (item.cost || 0);
+      s.inputCost = (Number(s.inputCost) || 0) + (item.inputCost || 0);
+      s.cachedCost = (Number(s.cachedCost) || 0) + (item.cachedCost || 0);
+      s.outputCost = (Number(s.outputCost) || 0) + (item.outputCost || 0);
+      s.pending = (Number(s.pending) || 0) + (item.pending || 0);
+      if (
+        item.lastUsed &&
+        (!s.lastUsed || new Date(item.lastUsed).getTime() > new Date(s.lastUsed as string | number).getTime())
+      ) {
+        s.lastUsed = item.lastUsed;
+      }
+      currentGroup.items.push(item);
     }
-    groups[gk].items.push(item);
   });
   return Object.values(groups);
 }
 
-const MODEL_COLUMNS = [
+const MODEL_COLUMNS: UsageTableColumn[] = [
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
   { field: "requests", label: "Requests", align: "right" },
   { field: "lastUsed", label: "Last Used", align: "right" },
 ];
 
-const ACCOUNT_COLUMNS = [
+const ACCOUNT_COLUMNS: UsageTableColumn[] = [
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
   { field: "accountName", label: "Account" },
@@ -260,7 +347,7 @@ const ACCOUNT_COLUMNS = [
   { field: "lastUsed", label: "Last Used", align: "right" },
 ];
 
-const API_KEY_COLUMNS = [
+const API_KEY_COLUMNS: UsageTableColumn[] = [
   { field: "keyName", label: "API Key Name" },
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
@@ -268,7 +355,7 @@ const API_KEY_COLUMNS = [
   { field: "lastUsed", label: "Last Used", align: "right" },
 ];
 
-const ENDPOINT_COLUMNS = [
+const ENDPOINT_COLUMNS: UsageTableColumn[] = [
   { field: "endpoint", label: "Endpoint" },
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
@@ -291,23 +378,29 @@ const PERIODS = [
   { value: "60d", label: "60D" },
 ];
 
+export interface UsageStatsProps {
+  period?: string;
+  setPeriod?: (period: string) => void;
+  hidePeriodSelector?: boolean;
+}
+
 export default function UsageStats({
   period: periodProp,
   setPeriod: setPeriodProp,
   hidePeriodSelector = false,
-} = {}) {
+}: UsageStatsProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   const sortBy = searchParams.get("sortBy") || "rawModel";
   const sortOrder = searchParams.get("sortOrder") || "asc";
 
-  const [stats, setStats] = useState(null);
+  const [stats, setStats] = useState<UsageStatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
   const [tableView, setTableView] = useState("model");
-  const [viewMode, setViewMode] = useState("costs");
-  const [providers, setProviders] = useState([]);
+  const [viewMode, setViewMode] = useState<"costs" | "tokens">("costs");
+  const [providers, setProviders] = useState<ProviderItem[]>([]);
   const [periodLocal, setPeriodLocal] = useState("today");
   const isInitialLoad = useRef(true);
   const hasLoadedStats = useRef(false);
@@ -323,20 +416,20 @@ export default function UsageStats({
     ])
       .then(([d, nodesData]) => {
         // Build node name lookup for custom providers
-        const nodeNameMap = {};
+        const nodeNameMap: Record<string, string> = {};
         for (const node of nodesData?.nodes || []) {
-          nodeNameMap[node.id] = node.name;
+          if (node.id && node.name) nodeNameMap[node.id] = node.name;
         }
-        const seen = new Set();
+        const seen = new Set<string>();
         const unique = (d?.connections || [])
-          .filter((c) => {
+          .filter((c: { provider: string; isActive?: boolean }) => {
             if (c.isActive === false) return false;
             if (!isLLMProvider(c.provider)) return false;
             if (seen.has(c.provider)) return false;
             seen.add(c.provider);
             return true;
           })
-          .map((c) => ({
+          .map((c: { provider: string; name?: string; isActive?: boolean }) => ({
             ...c,
             nodeName: nodeNameMap[c.provider] || null,
           }));
@@ -363,7 +456,7 @@ export default function UsageStats({
       .then((data) => {
         if (data) {
           hasLoadedStats.current = true;
-          setStats((prev) => ({ ...prev, ...data }));
+          setStats((prev) => ({ ...(prev || {}), ...data }));
         }
       })
       .catch(() => {})
@@ -403,7 +496,7 @@ export default function UsageStats({
   }, []);
 
   const toggleSort = useCallback(
-    (tableType, field) => {
+    (tableType: string, field: string) => {
       const params = new URLSearchParams(searchParams.toString());
       if (params.get("sortBy") === field) {
         params.set(
@@ -433,18 +526,18 @@ export default function UsageStats({
           ),
           storageKey: "usage-stats:expanded-models",
           emptyMessage: "No usage recorded yet.",
-          renderSummaryCells: (group) => (
+          renderSummaryCells: (group: UsageGroupedData<SortedUsageItem>) => (
             <>
               <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-right">
-                {fmt(group.summary.requests)}
+                {fmt(group.summary.requests as number | string | undefined)}
               </td>
               <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">
-                {fmtTime(group.summary.lastUsed)}
+                {fmtTime(group.summary.lastUsed as string | number | null | undefined)}
               </td>
             </>
           ),
-          renderDetailCells: (item) => (
+          renderDetailCells: (item: SortedUsageItem) => (
             <>
               <td
                 className={`px-6 py-3 font-medium transition-colors ${item.pending > 0 ? "text-primary" : ""}`}
@@ -468,16 +561,17 @@ export default function UsageStats({
         };
       }
       case "account": {
-        const pendingMap = {};
+        const pendingMap: Record<string, number> = {};
         if (stats?.pending?.byAccount) {
           Object.entries(stats.byAccount || {}).forEach(
             ([accountKey, data]) => {
-              const connPending = stats.pending.byAccount[data.connectionId];
+              const connId = data.connectionId as string;
+              const connPending = connId ? stats?.pending?.byAccount?.[connId] : undefined;
               if (connPending) {
                 const modelKey = data.provider
                   ? `${data.rawModel} (${data.provider})`
-                  : data.rawModel;
-                pendingMap[accountKey] = connPending[modelKey] || 0;
+                  : (data.rawModel as string);
+                pendingMap[accountKey] = (modelKey ? connPending[modelKey] : undefined) || 0;
               }
             },
           );
@@ -490,25 +584,25 @@ export default function UsageStats({
           ),
           storageKey: "usage-stats:expanded-accounts",
           emptyMessage: "No account-specific usage recorded yet.",
-          renderSummaryCells: (group) => (
+          renderSummaryCells: (group: UsageGroupedData<SortedUsageItem>) => (
             <>
               <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-right">
-                {fmt(group.summary.requests)}
+                {fmt(group.summary.requests as number | string | undefined)}
               </td>
               <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">
-                {fmtTime(group.summary.lastUsed)}
+                {fmtTime(group.summary.lastUsed as string | number | null | undefined)}
               </td>
             </>
           ),
-          renderDetailCells: (item) => (
+          renderDetailCells: (item: SortedUsageItem) => (
             <>
               <td
                 className={`px-6 py-3 font-medium transition-colors ${item.pending > 0 ? "text-primary" : ""}`}
               >
                 {item.accountName ||
-                  `Account ${item.connectionId?.slice(0, 8)}...`}
+                  (item.connectionId ? `Account ${item.connectionId.slice(0, 8)}...` : "")}
               </td>
               <td
                 className={`px-6 py-3 font-medium transition-colors ${item.pending > 0 ? "text-primary" : ""}`}
@@ -540,19 +634,19 @@ export default function UsageStats({
           ),
           storageKey: "usage-stats:expanded-apikeys",
           emptyMessage: "No API key usage recorded yet.",
-          renderSummaryCells: (group) => (
+          renderSummaryCells: (group: UsageGroupedData<SortedUsageItem>) => (
             <>
               <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-right">
-                {fmt(group.summary.requests)}
+                {fmt(group.summary.requests as number | string | undefined)}
               </td>
               <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">
-                {fmtTime(group.summary.lastUsed)}
+                {fmtTime(group.summary.lastUsed as string | number | null | undefined)}
               </td>
             </>
           ),
-          renderDetailCells: (item) => (
+          renderDetailCells: (item: SortedUsageItem) => (
             <>
               <td className="px-6 py-3 font-medium">{item.keyName}</td>
               <td className="px-6 py-3">{item.rawModel}</td>
@@ -579,19 +673,19 @@ export default function UsageStats({
           ),
           storageKey: "usage-stats:expanded-endpoints",
           emptyMessage: "No endpoint usage recorded yet.",
-          renderSummaryCells: (group) => (
+          renderSummaryCells: (group: UsageGroupedData<SortedUsageItem>) => (
             <>
               <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-right">
-                {fmt(group.summary.requests)}
+                {fmt(group.summary.requests as number | string | undefined)}
               </td>
               <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">
-                {fmtTime(group.summary.lastUsed)}
+                {fmtTime(group.summary.lastUsed as string | number | null | undefined)}
               </td>
             </>
           ),
-          renderDetailCells: (item) => (
+          renderDetailCells: (item: SortedUsageItem) => (
             <>
               <td className="px-6 py-3 font-medium font-mono text-sm">
                 {item.endpoint}
@@ -651,7 +745,7 @@ export default function UsageStats({
           </div>
         )}
 
-        {loading ? spinner : <OverviewCards stats={stats} />}
+        {loading ? spinner : stats && <OverviewCards stats={stats} />}
       </section>
 
       {/* Provider topology + Recent Requests */}
@@ -661,11 +755,11 @@ export default function UsageStats({
         <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           <ProviderTopology
             providers={providers}
-            activeRequests={stats.activeRequests || []}
-            lastProvider={stats.recentRequests?.[0]?.provider || ""}
-            errorProvider={stats.errorProvider || ""}
+            activeRequests={stats?.activeRequests || []}
+            lastProvider={stats?.recentRequests?.[0]?.provider || ""}
+            errorProvider={stats?.errorProvider || ""}
           />
-          <RecentRequests requests={stats.recentRequests || []} />
+          <RecentRequests requests={stats?.recentRequests || []} />
         </div>
       )}
 

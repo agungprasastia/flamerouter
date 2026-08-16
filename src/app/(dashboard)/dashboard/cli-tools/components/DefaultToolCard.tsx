@@ -2,13 +2,60 @@
 
 import { useState } from "react";
 import { Card, ModelSelectModal } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import {
   getProviderIconSrc,
   markProviderIconMissing,
 } from "@/shared/utils/providerIcon";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import Image from "next/image";
-import ApiKeySelect from "./ApiKeySelect";
+import ApiKeySelect, { type ApiKeyItem } from "./ApiKeySelect";
+
+export interface ToolNote {
+  type?: "cloudCheck" | "warning" | "info" | "error" | string;
+  text: string;
+}
+
+export interface ToolGuideStep {
+  step: number | string;
+  title: string;
+  desc?: string;
+  type?: "apiKeySelector" | "modelSelector" | string;
+  value?: string;
+  copyable?: boolean;
+}
+
+export interface ToolCodeBlock {
+  language: string;
+  code: string;
+}
+
+export interface ToolCardDef {
+  id?: string;
+  name: string;
+  description?: string;
+  image?: string;
+  icon?: string;
+  color?: string;
+  requiresExternalUrl?: boolean;
+  requiresCloud?: boolean;
+  notes?: ToolNote[];
+  guideSteps?: ToolGuideStep[];
+  codeBlock?: ToolCodeBlock;
+  [key: string]: unknown;
+}
+
+export interface DefaultToolCardProps {
+  toolId: string;
+  tool: ToolCardDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  baseUrl?: string;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  cloudEnabled?: boolean;
+  tunnelEnabled?: boolean;
+}
 
 export default function DefaultToolCard({
   toolId,
@@ -16,21 +63,21 @@ export default function DefaultToolCard({
   isExpanded,
   onToggle,
   baseUrl,
-  apiKeys,
+  apiKeys = [],
   activeProviders = [],
   cloudEnabled = false,
   tunnelEnabled = false,
-}) {
-  const [copiedField, setCopiedField] = useState(null);
-  const [showModelModal, setShowModelModal] = useState(false);
-  const [modelValue, setModelValue] = useState("");
+}: DefaultToolCardProps) {
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [showModelModal, setShowModelModal] = useState<boolean>(false);
+  const [modelValue, setModelValue] = useState<string>("");
 
   // Initialize state directly with computed value - no need for useEffect
-  const [selectedApiKey, setSelectedApiKey] = useState(() =>
+  const [selectedApiKey, setSelectedApiKey] = useState<string>(() =>
     apiKeys?.length > 0 ? apiKeys[0].key : "",
   );
 
-  const replaceVars = (text) => {
+  const replaceVars = (text: string): string => {
     const keyToUse =
       selectedApiKey && selectedApiKey.trim()
         ? selectedApiKey
@@ -52,13 +99,13 @@ export default function DefaultToolCard({
 
   const { copy: copyToClipboard } = useCopyToClipboard();
 
-  const handleCopy = async (text, field) => {
+  const handleCopy = async (text: string, field: string) => {
     await copyToClipboard(replaceVars(text), `toolcard-${field}`);
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const handleSelectModel = (model) => {
+  const handleSelectModel = (model: ModelSelectItem) => {
     setModelValue(model.value);
   };
 
@@ -207,7 +254,7 @@ export default function DefaultToolCard({
                     {item.copyable && (
                       <button
                         onClick={() =>
-                          handleCopy(item.value, `${item.step}-${item.title}`)
+                          handleCopy(item.value!, `${item.step}-${item.title}`)
                         }
                         className="shrink-0 px-3 py-2 bg-bg-secondary hover:bg-bg-tertiary rounded-lg border border-border transition-colors"
                       >
@@ -231,7 +278,7 @@ export default function DefaultToolCard({
                 {tool.codeBlock.language}
               </span>
               <button
-                onClick={() => handleCopy(tool.codeBlock.code, "codeblock")}
+                onClick={() => handleCopy(tool.codeBlock!.code, "codeblock")}
                 className="flex items-center gap-1 px-2 py-1 text-xs bg-bg-secondary hover:bg-bg-tertiary rounded border border-border transition-colors"
               >
                 <span className="material-symbols-outlined text-sm">
@@ -262,7 +309,7 @@ export default function DefaultToolCard({
           className="size-8 object-contain rounded-lg"
           sizes="32px"
           onError={(e) => {
-            e.target.style.display = "none";
+            (e.target as HTMLElement).style.display = "none";
           }}
           loading="lazy"
           decoding="async"
@@ -297,7 +344,7 @@ export default function DefaultToolCard({
         sizes="32px"
         onError={(e) => {
           markProviderIconMissing(toolId);
-          e.target.style.display = "none";
+          (e.target as HTMLElement).style.display = "none";
         }}
         loading="lazy"
         decoding="async"

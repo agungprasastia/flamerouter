@@ -8,8 +8,33 @@ import {
   isCustomEmbeddingProvider,
 } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
+import type { RegistryModel } from "@/shared/constants/providerModels";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { Row } from "./exampleShared";
+
+interface EmbeddingExampleCardProps {
+  providerId: string;
+  customAlias?: string;
+}
+
+interface EmbeddingItem {
+  object: string;
+  index: number;
+  embedding: Array<number | string>;
+}
+
+interface EmbeddingResponseData {
+  object?: string;
+  data?: EmbeddingItem[];
+  model?: string;
+  usage?: { prompt_tokens?: number; total_tokens?: number };
+  [key: string]: unknown;
+}
+
+interface RunResult {
+  data: EmbeddingResponseData;
+  latencyMs: number;
+}
 
 const DEFAULT_RESPONSE_EXAMPLE = `{
   "object": "list",
@@ -22,18 +47,18 @@ const DEFAULT_RESPONSE_EXAMPLE = `{
   "usage": { "prompt_tokens": 9, "total_tokens": 9 }
 }`;
 
-export function EmbeddingExampleCard({ providerId, customAlias }) {
+export function EmbeddingExampleCard({ providerId, customAlias }: EmbeddingExampleCardProps) {
   const isCustom = isCustomEmbeddingProvider(providerId);
   const providerAlias = isCustom
     ? customAlias || providerId
     : getProviderAlias(providerId);
-  const embeddingModels = isCustom
+  const embeddingModels: RegistryModel[] = isCustom
     ? []
     : getModelsByProviderId(providerId).filter(
         (m) => getModelKind(m) === "embedding",
       );
 
-  const [selectedModel, setSelectedModel] = useState(
+  const [selectedModel, setSelectedModel] = useState<string>(
     embeddingModels[0]?.id ?? "",
   );
   const [input, setInput] = useState(
@@ -44,7 +69,7 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
   const [useTunnel, setUseTunnel] = useState(false);
   const [localEndpoint, setLocalEndpoint] = useState("");
   const [tunnelEndpoint, setTunnelEndpoint] = useState("");
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState<RunResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const { copied: copiedCurl, copy: copyCurl } = useCopyToClipboard();
@@ -54,13 +79,13 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
     setLocalEndpoint(window.location.origin);
     fetch("/api/keys")
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { keys?: Array<{ isActive?: boolean; key: string }> }) => {
         setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || "");
       })
       .catch(() => {});
     fetch("/api/tunnel/status")
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { publicUrl?: string }) => {
         if (d.publicUrl) setTunnelEndpoint(d.publicUrl);
       })
       .catch(() => {});
@@ -70,8 +95,8 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
   const modelFull = selectedModel ? `${providerAlias}/${selectedModel}` : "";
 
   // Build request body — include dimensions only if user provided a positive number
-  const buildBody = () => {
-    const body = { model: modelFull, input: input.trim() };
+  const buildBody = (): { model: string; input: string; dimensions?: number } => {
+    const body: { model: string; input: string; dimensions?: number } = { model: modelFull, input: input.trim() };
     const dim = Number(dimensions);
     if (dimensions && Number.isFinite(dim) && dim > 0) body.dimensions = dim;
     return body;
@@ -89,7 +114,7 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
     setResult(null);
     const start = Date.now();
     try {
-      const headers = { "Content-Type": "application/json" };
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       const res = await fetch("/api/v1/embeddings", {
         method: "POST",
@@ -97,27 +122,34 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
         body: JSON.stringify(buildBody()),
       });
       const latencyMs = Date.now() - start;
-      const data = await res.json();
+      const data = (await res.json()) as EmbeddingResponseData & { error?: { message?: string } | string };
       if (!res.ok) {
-        setError(data?.error?.message || data?.error || `HTTP ${res.status}`);
+        const errorMsg =
+          typeof data?.error === "object" && data?.error?.message
+            ? data.error.message
+            : typeof data?.error === "string"
+              ? data.error
+              : `HTTP ${res.status}`;
+        setError(errorMsg);
         return;
       }
       setResult({ data, latencyMs });
     } catch (e) {
-      setError(e.message || "Network error");
+      const err = e as { message?: string };
+      setError(err.message || "Network error");
     } finally {
       setRunning(false);
     }
   };
 
   // Compact embedding array: first 4 values + count
-  const formatResultJson = (data) => {
+  const formatResultJson = (data?: EmbeddingResponseData | null): string => {
     if (!data) return DEFAULT_RESPONSE_EXAMPLE;
-    const clone = JSON.parse(JSON.stringify(data));
-    (clone.data || []).forEach((item) => {
+    const clone = JSON.parse(JSON.stringify(data)) as EmbeddingResponseData;
+    (clone.data || []).forEach((item: EmbeddingItem) => {
       if (Array.isArray(item.embedding) && item.embedding.length > 4) {
         item.embedding = [
-          ...item.embedding.slice(0, 4).map((v) => parseFloat(v.toFixed(6))),
+          ...item.embedding.slice(0, 4).map((v: number | string) => typeof v === "number" ? parseFloat(v.toFixed(6)) : v),
           `... (${item.embedding.length} dims)`,
         ];
       }

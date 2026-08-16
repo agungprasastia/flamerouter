@@ -1,18 +1,30 @@
 import { GITHUB_CONFIG } from "../constants/oauth";
 
+interface GithubConfigLike {
+  clientId?: string;
+  scopes?: string;
+  deviceCodeUrl?: string;
+  tokenUrl?: string;
+  copilotTokenUrl?: string;
+  userInfoUrl?: string;
+  apiVersion?: string;
+  userAgent?: string;
+  [key: string]: unknown;
+}
+
 const github = {
   config: GITHUB_CONFIG,
   flowType: "device_code",
-  requestDeviceCode: async (config) => {
-    const response = await fetch(config.deviceCodeUrl, {
+  requestDeviceCode: async (config: GithubConfigLike) => {
+    const response = await fetch(config.deviceCodeUrl || "", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
       },
       body: new URLSearchParams({
-        client_id: config.clientId,
-        scope: config.scopes,
+        client_id: config.clientId || "",
+        scope: config.scopes || "",
       }),
     });
 
@@ -21,28 +33,26 @@ const github = {
       throw new Error(`Device code request failed: ${error}`);
     }
 
-    return await response.json();
+    return (await response.json()) as Record<string, unknown>;
   },
-  pollToken: async (config, deviceCode) => {
-    const response = await fetch(config.tokenUrl, {
+  pollToken: async (config: GithubConfigLike, deviceCode: string) => {
+    const response = await fetch(config.tokenUrl || "", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
       },
       body: new URLSearchParams({
-        client_id: config.clientId,
+        client_id: config.clientId || "",
         device_code: deviceCode,
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
       }),
     });
 
-    // Handle response properly - if not ok, try to get error as text first
-    let data;
+    let data: Record<string, unknown>;
     try {
-      data = await response.json();
-    } catch (e) {
-      // If response is not JSON, get as text
+      data = (await response.json()) as Record<string, unknown>;
+    } catch {
       const text = await response.text();
       data = { error: "invalid_response", error_description: text };
     }
@@ -52,45 +62,44 @@ const github = {
       data: data,
     };
   },
-  postExchange: async (tokens) => {
+  postExchange: async (tokens: Record<string, unknown>) => {
+    const cfg = GITHUB_CONFIG as unknown as GithubConfigLike;
     // Get Copilot token using GitHub access token
-    const copilotRes = await fetch(GITHUB_CONFIG.copilotTokenUrl, {
+    const copilotRes = await fetch(cfg.copilotTokenUrl || "", {
       headers: {
         Authorization: `Bearer ${tokens.access_token}`,
         Accept: "application/json",
-        "X-GitHub-Api-Version": GITHUB_CONFIG.apiVersion,
-        "User-Agent": GITHUB_CONFIG.userAgent,
+        "X-GitHub-Api-Version": cfg.apiVersion || "",
+        "User-Agent": cfg.userAgent || "FlameRouter",
       },
     });
-    const copilotToken = copilotRes.ok ? await copilotRes.json() : {};
+    const copilotToken = copilotRes.ok ? ((await copilotRes.json()) as Record<string, unknown>) : {};
 
     // Get user info from GitHub
-    const userRes = await fetch(GITHUB_CONFIG.userInfoUrl, {
+    const userRes = await fetch(cfg.userInfoUrl || "", {
       headers: {
         Authorization: `Bearer ${tokens.access_token}`,
         Accept: "application/json",
-        "X-GitHub-Api-Version": GITHUB_CONFIG.apiVersion,
-        "User-Agent": GITHUB_CONFIG.userAgent,
+        "X-GitHub-Api-Version": cfg.apiVersion || "",
+        "User-Agent": cfg.userAgent || "FlameRouter",
       },
     });
-    const userInfo = userRes.ok ? await userRes.json() : {};
+    const userInfo = userRes.ok ? ((await userRes.json()) as Record<string, unknown>) : {};
 
     return { copilotToken, userInfo };
   },
-  mapTokens: (tokens, extra) => ({
+  mapTokens: (tokens: Record<string, unknown>, extra?: { userInfo?: { email?: string; login?: string; name?: string }; copilotToken?: { token?: string; expires_at?: number } } | null) => ({
     accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    expiresIn: tokens.expires_in,
-    name: extra?.userInfo?.login || extra?.userInfo?.name,
+    tokenType: tokens.token_type,
+    scope: tokens.scope,
+    email: extra?.userInfo?.email || extra?.userInfo?.login,
     displayName: extra?.userInfo?.name || extra?.userInfo?.login,
-    email: extra?.userInfo?.email || null,
     providerSpecificData: {
-      copilotToken: extra?.copilotToken?.token,
-      copilotTokenExpiresAt: extra?.copilotToken?.expires_at,
-      githubUserId: extra?.userInfo?.id,
+      githubEmail: extra?.userInfo?.email,
       githubLogin: extra?.userInfo?.login,
       githubName: extra?.userInfo?.name,
-      githubEmail: extra?.userInfo?.email,
+      copilotToken: extra?.copilotToken?.token,
+      copilotExpiresAt: extra?.copilotToken?.expires_at,
     },
   }),
 };

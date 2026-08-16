@@ -2,37 +2,65 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Card, Button, Badge, Input } from "@/shared/components";
+import type { ApiKeyItem } from "./ApiKeySelect";
 
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20129";
+
+export interface MitmServerStatus {
+  running?: boolean;
+  certExists?: boolean;
+  certTrusted?: boolean;
+  isWin?: boolean;
+  hasCachedPassword?: boolean;
+  needsSudoPassword?: boolean;
+  isAdmin?: boolean;
+  mitmRouterBaseUrl?: string;
+  dnsStatus?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface Port443Conflict {
+  owner: {
+    name?: string;
+    pid?: number | string;
+  };
+  password?: string;
+}
+
+export interface MitmServerCardProps {
+  apiKeys?: ApiKeyItem[];
+  cloudEnabled?: boolean;
+  onStatusChange?: (status: MitmServerStatus) => void;
+}
 
 /**
  * Shared MITM infrastructure card — manages SSL cert + server start/stop.
  * DNS per-tool is handled separately in MitmToolCard.
  */
 export default function MitmServerCard({
-  apiKeys,
-  cloudEnabled,
+  apiKeys = [],
+  cloudEnabled = false,
   onStatusChange,
-}) {
-  const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [sudoPassword, setSudoPassword] = useState("");
-  const [selectedApiKey, setSelectedApiKey] = useState(
+}: MitmServerCardProps) {
+  const [status, setStatus] = useState<MitmServerStatus | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
+  const [sudoPassword, setSudoPassword] = useState<string>("");
+  const [selectedApiKey, setSelectedApiKey] = useState<string>(
     () => apiKeys?.[0]?.key || "",
   );
-  const [pendingAction, setPendingAction] = useState(null);
-  const [modalError, setModalError] = useState(null);
-  const [actionError, setActionError] = useState(null);
-  const [mitmRouterBaseUrl, setMitmRouterBaseUrl] = useState(
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [mitmRouterBaseUrl, setMitmRouterBaseUrl] = useState<string>(
     DEFAULT_MITM_ROUTER_BASE,
   );
-  const [port443Conflict, setPort443Conflict] = useState(null);
+  const [port443Conflict, setPort443Conflict] = useState<Port443Conflict | null>(null);
 
   const serverIsWindows = status?.isWin === true;
   const canRunWithoutPassword =
     serverIsWindows ||
-    status?.hasCachedPassword ||
+    Boolean(status?.hasCachedPassword) ||
     status?.needsSudoPassword === false;
   const isAdmin = status?.isAdmin !== false;
   // No privilege: not admin/root AND (Win OR no cached sudo password)
@@ -45,7 +73,7 @@ export default function MitmServerCard({
     try {
       const res = await fetch("/api/cli-tools/antigravity-mitm");
       if (res.ok) {
-        const data = await res.json();
+        const data: MitmServerStatus = await res.json();
         setStatus(data);
         if (data.mitmRouterBaseUrl) {
           setMitmRouterBaseUrl(data.mitmRouterBaseUrl);
@@ -63,7 +91,7 @@ export default function MitmServerCard({
     });
   }, [fetchStatus]);
 
-  const handleAction = (action) => {
+  const handleAction = (action: string) => {
     setActionError(null);
     // Wait for status to load before deciding whether to show sudo modal
     if (!status) return;
@@ -76,11 +104,11 @@ export default function MitmServerCard({
     }
   };
 
-  const doAction = async (action, password, forceKillPort443 = false) => {
+  const doAction = async (action: string, password?: string, forceKillPort443 = false) => {
     setLoading(true);
     setActionError(null);
     try {
-      let res;
+      let res: Response;
       if (action === "trust-cert") {
         res = await fetch("/api/cli-tools/antigravity-mitm", {
           method: "PATCH",
@@ -127,8 +155,9 @@ export default function MitmServerCard({
       setSudoPassword("");
       setPort443Conflict(null);
       await fetchStatus();
-    } catch (e) {
-      setActionError(e.message || "Network error");
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      setActionError(err.message || "Network error");
     } finally {
       setLoading(false);
       setPendingAction(null);
@@ -145,7 +174,9 @@ export default function MitmServerCard({
       setModalError("Sudo password is required");
       return;
     }
-    doAction(pendingAction, sudoPassword);
+    if (pendingAction) {
+      doAction(pendingAction, sudoPassword);
+    }
   };
 
   const isRunning = status?.running;
@@ -251,7 +282,7 @@ export default function MitmServerCard({
                 {apiKeys?.length > 0 && (
                   <datalist id="mitm-api-keys">
                     {apiKeys.map((key) => (
-                      <option key={key.id} value={key.key}>
+                      <option key={key.id || key.key} value={key.key}>
                         {key.name || key.key}
                       </option>
                     ))}
@@ -410,7 +441,7 @@ export default function MitmServerCard({
               <div className="flex flex-col gap-1 text-xs text-text-muted">
                 <p>Port 443 is currently used by another process:</p>
                 <p className="font-mono text-text-main" data-i18n-skip="true">
-                  {port443Conflict.owner.name} (PID {port443Conflict.owner.pid})
+                  {port443Conflict.owner?.name} (PID {port443Conflict.owner?.pid})
                 </p>
                 <p>Kill this process to start MITM Server?</p>
               </div>

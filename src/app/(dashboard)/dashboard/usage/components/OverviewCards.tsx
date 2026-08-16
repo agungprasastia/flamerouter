@@ -1,10 +1,21 @@
 "use client";
 
-import PropTypes from "prop-types";
-const fmt = (n) => new Intl.NumberFormat().format(n || 0);
-const fmtCost = (n) => `$${(n || 0).toFixed(2)}`;
+const fmt = (n: number | string | undefined | null) => new Intl.NumberFormat().format(Number(n) || 0);
+const fmtCost = (n: number | string | undefined | null) => `$${(Number(n) || 0).toFixed(2)}`;
 
-export default function OverviewCards({ stats }) {
+export interface OverviewStatsData {
+  totalRequests?: number;
+  totalPromptTokens?: number;
+  totalCachedTokens?: number;
+  totalCompletionTokens?: number;
+  totalCost?: number;
+}
+
+export interface OverviewCardsProps {
+  stats: OverviewStatsData;
+}
+
+export default function OverviewCards({ stats }: OverviewCardsProps) {
   const metrics = [
     ["Total Requests", fmt(stats.totalRequests), ""],
     ["Input Tokens", fmt(stats.totalPromptTokens), "text-primary"],
@@ -38,7 +49,3 @@ export default function OverviewCards({ stats }) {
     </div>
   );
 }
-
-OverviewCards.propTypes = {
-  stats: PropTypes.object.isRequired,
-};

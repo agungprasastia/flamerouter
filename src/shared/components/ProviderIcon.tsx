@@ -70,6 +70,3 @@ export default function ProviderIcon({
     />
   );
 }
-  fallbackText: PropTypes.string,
-  fallbackColor: PropTypes.string,
-};

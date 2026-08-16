@@ -38,9 +38,9 @@ function UsageContent() {
       ? tabFromUrl
       : "overview";
 
-  const handleTabChange = (value) => {
+  const handleTabChange = (value: string) => {
     if (value === activeTab) return;
-    const params = new URLSearchParams(searchParams);
+    const params = new URLSearchParams(searchParams.toString());
     params.set("tab", value);
     router.push(`/dashboard/usage?${params.toString()}`, { scroll: false });
   };

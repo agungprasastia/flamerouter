@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import PropTypes from "prop-types";
 import Card from "./Card";
 import Select from "./Select";
 import Badge from "./Badge";
@@ -13,8 +12,22 @@ const STRATEGIES = [
   { value: "random", label: "Random" },
 ];
 
-export default function NoAuthProxyCard({ providerId }) {
-  const [proxyPools, setProxyPools] = useState([]);
+export interface ProxyPoolItem {
+  id: string;
+  name: string;
+}
+
+export interface ProviderStrategyOverride {
+  proxyPoolId?: string;
+  rotateStrategy?: string;
+}
+
+export interface NoAuthProxyCardProps {
+  providerId: string;
+}
+
+export default function NoAuthProxyCard({ providerId }: NoAuthProxyCardProps) {
+  const [proxyPools, setProxyPools] = useState<ProxyPoolItem[]>([]);
   const [proxyPoolId, setProxyPoolId] = useState(NONE_PROXY_POOL_VALUE);
   const [rotateStrategy, setRotateStrategy] = useState("none");
   const [saving, setSaving] = useState(false);
@@ -30,7 +43,7 @@ export default function NoAuthProxyCard({ providerId }) {
         r.ok ? r.json() : {},
       ),
     ])
-      .then(([poolData, settingsData]) => {
+      .then(([poolData, settingsData]: [{ proxyPools?: ProxyPoolItem[] }, { providerStrategies?: Record<string, ProviderStrategyOverride> }]) => {
         if (cancelled) return;
         setProxyPools(poolData.proxyPools || []);
         const override =
@@ -45,13 +58,13 @@ export default function NoAuthProxyCard({ providerId }) {
   }, [providerId]);
 
   const save = useCallback(
-    async (poolId, strategy) => {
+    async (poolId: string, strategy: string) => {
       setSaving(true);
       try {
         const res = await fetch("/api/settings", { cache: "no-store" });
         const data = res.ok ? await res.json() : {};
-        const current = data.providerStrategies || {};
-        const override = { ...(current[providerId] || {}) };
+        const current: Record<string, ProviderStrategyOverride> = data.providerStrategies || {};
+        const override: ProviderStrategyOverride = { ...(current[providerId] || {}) };
         if (poolId === NONE_PROXY_POOL_VALUE) delete override.proxyPoolId;
         else override.proxyPoolId = poolId;
         if (strategy === "none") delete override.rotateStrategy;
@@ -75,12 +88,12 @@ export default function NoAuthProxyCard({ providerId }) {
     [providerId],
   );
 
-  const handlePoolChange = (newPoolId) => {
+  const handlePoolChange = (newPoolId: string) => {
     setProxyPoolId(newPoolId);
     save(newPoolId, rotateStrategy);
   };
 
-  const handleStrategyChange = (newStrategy) => {
+  const handleStrategyChange = (newStrategy: string) => {
     setRotateStrategy(newStrategy);
     save(proxyPoolId, newStrategy);
   };
@@ -159,7 +172,3 @@ export default function NoAuthProxyCard({ providerId }) {
     </Card>
   );
 }
-
-NoAuthProxyCard.propTypes = {
-  providerId: PropTypes.string.isRequired,
-};

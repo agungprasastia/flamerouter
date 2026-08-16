@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, RefObject } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import PropTypes from "prop-types";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import HeaderMenu from "@/shared/components/HeaderMenu";
 import HeaderLanguage from "@/shared/components/HeaderLanguage";
 import ThemeToggle from "@/shared/components/ThemeToggle";
-import { useHeaderSearchStore } from "@/store/headerSearchStore";
+import { useHeaderSearchStore, HeaderSearchState } from "@/store/headerSearchStore";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import {
   MEDIA_PROVIDER_KINDS,
@@ -35,9 +34,23 @@ import {
   Terminal,
   UserRound,
   X,
+  LucideIcon,
 } from "lucide-react";
 
-const pageIcons = {
+interface BreadcrumbItem {
+  label: string;
+  href?: string;
+  image?: string;
+}
+
+interface PageInfo {
+  title: string;
+  description: string;
+  icon?: string;
+  breadcrumbs: BreadcrumbItem[];
+}
+
+const pageIcons: Record<string, LucideIcon> = {
   api: KeyRound,
   dns: Database,
   layers: Layers3,
@@ -55,7 +68,7 @@ const pageIcons = {
   perm_media: Images,
 };
 
-const getPageInfo = (pathname) => {
+const getPageInfo = (pathname: string | null): PageInfo => {
   if (!pathname) return { title: "", description: "", breadcrumbs: [] };
 
   // Media provider detail: /dashboard/media-providers/[kind]/[id]
@@ -63,10 +76,10 @@ const getPageInfo = (pathname) => {
     /\/media-providers\/([^/]+)\/([^/]+)$/,
   );
   if (mediaDetailMatch) {
-    const kindId = mediaDetailMatch[1];
-    const providerId = mediaDetailMatch[2];
+    const kindId = mediaDetailMatch[1] ?? "";
+    const providerId = mediaDetailMatch[2] ?? "";
     const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kindId);
-    const provider = AI_PROVIDERS[providerId];
+    const provider = (AI_PROVIDERS as Record<string, any>)[providerId];
     return {
       title: provider?.name || providerId,
       description: "",
@@ -81,7 +94,7 @@ const getPageInfo = (pathname) => {
         },
         {
           label: provider?.name || providerId,
-          image: getProviderIconSrc(providerId),
+          image: getProviderIconSrc(providerId) ?? undefined,
         },
       ],
     };
@@ -90,7 +103,7 @@ const getPageInfo = (pathname) => {
   // Media provider kind: /dashboard/media-providers/[kind]
   const mediaKindMatch = pathname.match(/\/media-providers\/([^/]+)$/);
   if (mediaKindMatch) {
-    const kindId = mediaKindMatch[1];
+    const kindId = mediaKindMatch[1] ?? "";
     const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kindId);
     return {
       title: kindConfig?.label || kindId,
@@ -103,9 +116,9 @@ const getPageInfo = (pathname) => {
   // Provider detail page: /dashboard/providers/[id]
   const providerMatch = pathname.match(/\/providers\/([^/]+)$/);
   if (providerMatch) {
-    const providerId = providerMatch[1];
+    const providerId = providerMatch[1] ?? "";
     const providerInfo =
-      OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId];
+      (OAUTH_PROVIDERS as Record<string, any>)[providerId] || (APIKEY_PROVIDERS as Record<string, any>)[providerId];
     if (providerInfo) {
       return {
         title: providerInfo.name,
@@ -114,7 +127,7 @@ const getPageInfo = (pathname) => {
           { label: "Providers", href: "/dashboard/providers" },
           {
             label: providerInfo.name,
-            image: getProviderIconSrc(providerInfo.id),
+            image: getProviderIconSrc(providerInfo.id) ?? undefined,
           },
         ],
       };
@@ -231,11 +244,17 @@ const getPageInfo = (pathname) => {
   return { title: "", description: "", breadcrumbs: [] };
 };
 
+export interface HeaderProps {
+  onMenuClick?: () => void;
+  menuButtonRef?: RefObject<HTMLButtonElement | null>;
+  showMenuButton?: boolean;
+}
+
 export default function Header({
   onMenuClick,
   menuButtonRef,
   showMenuButton = true,
-}) {
+}: HeaderProps) {
   const pathname = usePathname();
   const [displayName, setDisplayName] = useState("");
   const [loginMethod, setLoginMethod] = useState("");
@@ -243,7 +262,7 @@ export default function Header({
   // Memoize page info to prevent unnecessary recalculations
   const pageInfo = useMemo(() => getPageInfo(pathname), [pathname]);
   const { title, description, icon, breadcrumbs } = pageInfo;
-  const PageIcon = pageIcons[icon] || Images;
+  const PageIcon = (icon ? pageIcons[icon] : undefined) || Images;
 
   useEffect(() => {
     let cancelled = false;
@@ -391,10 +410,10 @@ export default function Header({
 }
 
 function HeaderSearch() {
-  const visible = useHeaderSearchStore((s: any) => s.visible);
-  const query = useHeaderSearchStore((s: any) => s.query);
-  const placeholder = useHeaderSearchStore((s: any) => s.placeholder);
-  const setQuery = useHeaderSearchStore((s: any) => s.setQuery);
+  const visible = useHeaderSearchStore((s: HeaderSearchState) => s.visible);
+  const query = useHeaderSearchStore((s: HeaderSearchState) => s.query);
+  const placeholder = useHeaderSearchStore((s: HeaderSearchState) => s.placeholder);
+  const setQuery = useHeaderSearchStore((s: HeaderSearchState) => s.setQuery);
 
   if (!visible) return null;
 
@@ -426,8 +445,3 @@ function HeaderSearch() {
     </div>
   );
 }
-
-Header.propTypes = {
-  onMenuClick: PropTypes.func,
-  showMenuButton: PropTypes.bool,
-};

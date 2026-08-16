@@ -1,9 +1,15 @@
 // Inline stdio<->SSE bridge for MCP. Spawns one child per plugin on demand,
 // broadcasts JSON-RPC frames over SSE, accepts client messages via HTTP POST.
 
-const { spawn } = require("child_process");
-const crypto = require("crypto");
-const { LOCAL_STDIO_PLUGINS } = require("@/shared/constants/coworkPlugins");
+import { spawn, type ChildProcess } from "child_process";
+import crypto from "crypto";
+import { LOCAL_STDIO_PLUGINS, type CoworkPlugin } from "@/shared/constants/coworkPlugins";
+
+export interface BridgeEntry {
+  proc: ChildProcess;
+  sessions: Map<string, (event: string) => void>;
+  buffer: string;
+}
 
 const G_KEY = "__flamerouterMcpBridges";
 const MAX_TEXT_CHARS = 50000;
@@ -12,7 +18,7 @@ const COLLAPSE_KEEP_HEAD = 10;
 const COLLAPSE_KEEP_TAIL = 5;
 
 // Drop noise nodes, collapse repeated siblings, hard-truncate. Preserve [ref=eXX].
-function smartFilterText(text) {
+function smartFilterText(text: string): string {
   if (typeof text !== "string" || text.length < 2000) return text;
   let out = text;
   out = out.replace(/^\s*-\s*generic:?\s*$/gm, "");
@@ -26,14 +32,15 @@ function smartFilterText(text) {
 }
 
 // Group consecutive lines sharing the same leading indent + role prefix; collapse if >= COLLAPSE_THRESHOLD.
-function collapseRepeated(text) {
+function collapseRepeated(text: string): string {
   const lines = text.split("\n");
-  const out = [];
+  const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
+    if (line === undefined) break;
     const m = line.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
-    if (!m) {
+    if (!m || m[1] === undefined || m[2] === undefined) {
       out.push(line);
       i++;
       continue;
@@ -43,6 +50,7 @@ function collapseRepeated(text) {
     let j = i;
     while (j < lines.length) {
       const ln = lines[j];
+      if (ln === undefined) break;
       const mm = ln.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
       if (mm && mm[1] === indent && mm[2] === role) {
         j++;
@@ -70,23 +78,40 @@ function collapseRepeated(text) {
         role,
         COLLAPSE_KEEP_TAIL,
       );
-      for (let k = i; k < headEnd; k++) out.push(lines[k]);
+      for (let k = i; k < headEnd; k++) {
+        const item = lines[k];
+        if (item !== undefined) out.push(item);
+      }
       out.push(
         `${indent}... [${groupLen - COLLAPSE_KEEP_HEAD - COLLAPSE_KEEP_TAIL} similar "${role}" items omitted by flamerouter bridge]`,
       );
-      for (let k = tailStart; k < j; k++) out.push(lines[k]);
+      for (let k = tailStart; k < j; k++) {
+        const item = lines[k];
+        if (item !== undefined) out.push(item);
+      }
     } else {
-      for (let k = i; k < j; k++) out.push(lines[k]);
+      for (let k = i; k < j; k++) {
+        const item = lines[k];
+        if (item !== undefined) out.push(item);
+      }
     }
     i = j;
   }
   return out.join("\n");
 }
 
-function findNthSiblingEnd(lines, start, indent, role, n) {
+function findNthSiblingEnd(
+  lines: string[],
+  start: number,
+  indent: string,
+  role: string,
+  n: number,
+): number {
   let count = 0;
   for (let k = start; k < lines.length; k++) {
-    const mm = lines[k].match(/^(\s*)-\s*([a-zA-Z]+)\b/);
+    const line = lines[k];
+    if (line === undefined) continue;
+    const mm = line.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
     if (mm && mm[1] === indent && mm[2] === role) {
       count++;
       if (count > n) return k;
@@ -95,19 +120,30 @@ function findNthSiblingEnd(lines, start, indent, role, n) {
   return lines.length;
 }
 
-function findLastNSiblingStart(lines, end, indent, role, n) {
-  const positions = [];
+function findLastNSiblingStart(
+  lines: string[],
+  end: number,
+  indent: string,
+  role: string,
+  n: number,
+): number {
+  const positions: number[] = [];
   for (let k = 0; k < end; k++) {
-    const mm = lines[k].match(/^(\s*)-\s*([a-zA-Z]+)\b/);
+    const line = lines[k];
+    if (line === undefined) continue;
+    const mm = line.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
     if (mm && mm[1] === indent && mm[2] === role) positions.push(k);
   }
-  return positions.length > n ? positions[positions.length - n] : end;
+  const targetPos = positions[positions.length - n];
+  return positions.length > n && targetPos !== undefined ? targetPos : end;
 }
 
 // Apply filter to JSON-RPC tool/result content text blocks only.
-function filterFrame(line) {
+function filterFrame(line: string): string {
   try {
-    const msg = JSON.parse(line);
+    const msg = JSON.parse(line) as {
+      result?: { content?: Array<{ type?: string; text?: string }> };
+    };
     const content = msg?.result?.content;
     if (!Array.isArray(content)) return line;
     let mutated = false;
@@ -125,17 +161,26 @@ function filterFrame(line) {
     return line;
   }
 }
-const getStore = () => {
-  if (!globalThis[G_KEY]) globalThis[G_KEY] = new Map();
-  return globalThis[G_KEY];
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __flamerouterMcpBridges: Map<string, BridgeEntry> | undefined;
+}
+
+const getStore = (): Map<string, BridgeEntry> => {
+  if (!globalThis[G_KEY]) globalThis[G_KEY] = new Map<string, BridgeEntry>();
+  return globalThis[G_KEY] as Map<string, BridgeEntry>;
 };
 
 // Only preset stdio plugins may spawn. No user-defined commands (RCE prevention).
-function findPlugin(name) {
-  return LOCAL_STDIO_PLUGINS.find((p) => p.name === name) || null;
+export function findPlugin(name: string): CoworkPlugin | null {
+  return (
+    (LOCAL_STDIO_PLUGINS.find((p) => p.name === name) as CoworkPlugin | undefined) ||
+    null
+  );
 }
 
-function getOrSpawn(name) {
+export function getOrSpawn(name: string): BridgeEntry {
   const store = getStore();
   let entry = store.get(name);
   if (entry?.proc && !entry.proc.killed && entry.proc.exitCode === null)
@@ -151,17 +196,18 @@ function getOrSpawn(name) {
     throw new Error(`Unknown local plugin: ${name}`);
   }
 
-  const proc = spawn(plugin.command, plugin.args, {
+  const proc = spawn(plugin.command, plugin.args as string[], {
     stdio: ["pipe", "pipe", "pipe"],
     env: process.env,
   });
-  entry = { proc, sessions: new Map(), buffer: "" };
+  entry = { proc, sessions: new Map<string, (event: string) => void>(), buffer: "" };
   store.set(name, entry);
 
   // Parse newline-delimited JSON-RPC from child stdout, broadcast to all sessions.
-  proc.stdout.on("data", (chunk) => {
+  proc.stdout?.on("data", (chunk: Buffer | string) => {
+    if (!entry) return;
     entry.buffer += chunk.toString("utf8");
-    let idx;
+    let idx: number;
     while ((idx = entry.buffer.indexOf("\n")) >= 0) {
       const raw = entry.buffer.slice(0, idx).trim();
       entry.buffer = entry.buffer.slice(idx + 1);
@@ -177,10 +223,10 @@ function getOrSpawn(name) {
     }
   });
 
-  proc.stderr.on("data", (d) =>
+  proc.stderr?.on("data", (d: Buffer | string) =>
     console.log(`[mcp:${name}]`, d.toString().trim()),
   );
-  proc.on("exit", (code) => {
+  proc.on("exit", (code: number | null) => {
     console.log(`[mcp:${name}] exited`, code);
     store.delete(name);
   });
@@ -188,14 +234,17 @@ function getOrSpawn(name) {
   return entry;
 }
 
-function registerSession(name, sendFn) {
+export function registerSession(
+  name: string,
+  sendFn: (event: string) => void,
+): string {
   const entry = getOrSpawn(name);
   const sid = crypto.randomUUID();
   entry.sessions.set(sid, sendFn);
   return sid;
 }
 
-function unregisterSession(name, sid) {
+export function unregisterSession(name: string, sid: string): void {
   const entry = getStore().get(name);
   if (!entry) return;
   entry.sessions.delete(sid);
@@ -211,7 +260,7 @@ function unregisterSession(name, sid) {
 }
 
 // Kill all spawned MCP children — called on app shutdown to prevent orphans.
-function killAllBridges() {
+export function killAllBridges(): void {
   const store = getStore();
   for (const [name, entry] of store) {
     try {
@@ -223,25 +272,14 @@ function killAllBridges() {
   }
 }
 
-function sendToChild(name, jsonRpc) {
+export function sendToChild(name: string, jsonRpc: unknown): void {
   const entry = getStore().get(name);
   if (!entry?.proc?.stdin?.writable)
     throw new Error(`Bridge not running: ${name}`);
   entry.proc.stdin.write(`${JSON.stringify(jsonRpc)}\n`);
 }
 
-function isRunning(name) {
+export function isRunning(name: string): boolean {
   const entry = getStore().get(name);
   return !!(entry?.proc && !entry.proc.killed && entry.proc.exitCode === null);
 }
-
-module.exports = {
-  getOrSpawn,
-  registerSession,
-  unregisterSession,
-  sendToChild,
-  isRunning,
-  findPlugin,
-  killAllBridges,
-};
-export {};

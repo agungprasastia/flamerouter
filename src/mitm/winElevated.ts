@@ -1,4 +1,4 @@
-const { exec, execSync } = require("child_process");
+import { exec, execSync } from "child_process";
 
 const IS_WIN = process.platform === "win32";
 
@@ -21,7 +21,7 @@ function isAdmin() {
 /**
  * Quote a string safely for PowerShell single-quoted literal.
  */
-function quotePs(value) {
+function quotePs(value: unknown) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
@@ -32,7 +32,7 @@ function quotePs(value) {
  * IMPORTANT: each call triggers ONE UAC popup. Batch multiple admin tasks
  * into a single script string to minimize popups.
  */
-function runElevatedPowerShell(script) {
+function runElevatedPowerShell(script: string) {
   if (!IS_WIN) return Promise.reject(new Error("Windows-only"));
 
   const encoded = Buffer.from(script, "utf16le").toString("base64");
@@ -81,4 +81,4 @@ function runElevatedPowerShell(script) {
   });
 }
 
-module.exports = { isAdmin, runElevatedPowerShell, quotePs };
+export { isAdmin, runElevatedPowerShell, quotePs };

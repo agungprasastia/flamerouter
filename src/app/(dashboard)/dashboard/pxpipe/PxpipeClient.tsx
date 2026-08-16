@@ -13,13 +13,14 @@ import {
 } from "recharts";
 import { Card, Button } from "@/shared/components";
 
-const fmtTokens = (n) => {
+const fmtTokens = (n: number | undefined | null) => {
+  if (!n) return "0";
   if (n >= 1000000) return `${(n / 1000000).toFixed(2)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-  return String(n || 0);
+  return String(n);
 };
 
-const fmtUptime = (ms) => {
+const fmtUptime = (ms: number | undefined | null) => {
   if (!ms || ms <= 0) return "—";
   const m = Math.floor(ms / 60000);
   const h = Math.floor(m / 60);
@@ -34,7 +35,7 @@ const WINDOW_TABS = [
   { id: "all", label: "All time" },
 ];
 
-const REASON_LABELS = {
+const REASON_LABELS: Record<string, string> = {
   applied: "Prompt exceeded threshold",
   below_threshold: "Below size threshold",
   not_profitable: "Compression not profitable",
@@ -49,7 +50,14 @@ const REASON_LABELS = {
   not_installed: "Not installed",
 };
 
-function SummaryCard({ label, value, sub, tone }) {
+interface SummaryCardProps {
+  label: string;
+  value: string | number;
+  sub?: string;
+  tone?: string;
+}
+
+function SummaryCard({ label, value, sub, tone }: SummaryCardProps) {
   return (
     <Card className="p-4">
       <p className="text-xs text-text-muted uppercase tracking-wide">{label}</p>
@@ -59,11 +67,65 @@ function SummaryCard({ label, value, sub, tone }) {
   );
 }
 
+interface PxpipeWindowStats {
+  requests: number;
+  compressed: number;
+  bypassed: number;
+  tokensBeforeEst: number;
+  tokensAfterEst: number;
+  tokensSavedEst: number;
+  savedPct: number;
+  imagesGenerated: number;
+  avgCompressionMs: number;
+  errors: number;
+}
+
+interface PxpipeTimelinePoint {
+  date: string;
+  tokensSavedEst: number;
+}
+
+interface PxpipeRecentEvent {
+  ts: number | string;
+  provider?: string;
+  model?: string;
+  applied: boolean;
+  tokensBeforeEst?: number;
+  tokensAfterEst?: number;
+  tokensSavedEst?: number;
+  savedPct?: number;
+  durationMs?: number;
+  reason?: string;
+  detail?: string;
+}
+
+interface PxpipeStatsData {
+  windows?: Record<string, PxpipeWindowStats>;
+  timeline?: PxpipeTimelinePoint[];
+  recent?: PxpipeRecentEvent[];
+}
+
+interface PxpipeStatusData {
+  installed?: boolean;
+  running?: boolean;
+  enabled?: boolean;
+  version?: string | null;
+  uptimeMs?: number;
+}
+
+interface PxpipeHealthData {
+  healthy?: boolean;
+}
+
+interface PxpipeLogsData {
+  installLog?: string | null;
+}
+
 export default function PxpipeClient() {
-  const [status, setStatus] = useState(null);
-  const [health, setHealth] = useState(null);
-  const [stats, setStats] = useState(null);
-  const [logs, setLogs] = useState(null);
+  const [status, setStatus] = useState<PxpipeStatusData | null>(null);
+  const [health, setHealth] = useState<PxpipeHealthData | null>(null);
+  const [stats, setStats] = useState<PxpipeStatsData | null>(null);
+  const [logs, setLogs] = useState<PxpipeLogsData | null>(null);
   const [windowId, setWindowId] = useState("last7d");
   const [loading, setLoading] = useState(true);
 
@@ -247,7 +309,10 @@ export default function PxpipeClient() {
                 width={48}
               />
               <Tooltip
-                formatter={(v) => [fmtTokens(v), "Tokens saved"]}
+                formatter={(v) => [
+                  fmtTokens(typeof v === "number" ? v : Number(v) || 0),
+                  "Tokens saved",
+                ]}
                 labelFormatter={(d) => d}
               />
               <Area
@@ -323,7 +388,7 @@ export default function PxpipeClient() {
                     >
                       {ev.applied
                         ? "Compressed"
-                        : REASON_LABELS[ev.reason] || ev.reason}
+                        : (ev.reason ? REASON_LABELS[ev.reason] || ev.reason : "—")}
                     </span>
                   </td>
                 </tr>

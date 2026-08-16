@@ -5,14 +5,33 @@ import { extractJsonPath } from "./_shared";
 // Windsurf OAuth helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-async function windsurfSeatRequest(baseUrl, path, body) {
+interface WindsurfConfigLike {
+  userAgent?: string;
+  registerApiBaseUrl?: string;
+  registerPath?: string;
+  defaultApiServerUrl?: string;
+  oneTimeAuthPath?: string;
+  currentUserPath?: string;
+  authPageUrl?: string;
+  tokenLifetimeDays?: number;
+  callbackPath?: string;
+  [key: string]: unknown;
+}
+
+async function windsurfSeatRequest(
+  baseUrl: string,
+  path: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   const url = `${baseUrl.replace(/\/$/, "")}${path}`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      "User-Agent": WINDSURF_CONFIG.userAgent,
+      "User-Agent":
+        (WINDSURF_CONFIG as unknown as WindsurfConfigLike).userAgent ||
+        "FlameRouter",
     },
     body: JSON.stringify(body),
   });
@@ -22,20 +41,20 @@ async function windsurfSeatRequest(baseUrl, path, body) {
       `Windsurf ${path} HTTP ${res.status}: ${text.slice(0, 200)}`,
     );
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as Record<string, unknown>;
   } catch {
     throw new Error(`Windsurf ${path} invalid JSON`);
   }
 }
 
 // Parse Windsurf callback (query string or full URL): ?access_token=...&state=...
-function parseWindsurfCallback(raw, expectedState) {
+function parseWindsurfCallback(raw?: string | null, expectedState?: string) {
   const text = String(raw || "").trim();
   let queryStr = text;
   if (text.includes("?")) queryStr = text.slice(text.indexOf("?") + 1);
   if (text.startsWith("#")) queryStr = text.slice(1);
   const params = Object.fromEntries(new URLSearchParams(queryStr));
-  const pick = (keys) => {
+  const pick = (keys: string[]): string | null => {
     for (const k of keys) {
       const v = params[k];
       if (v && String(v).trim()) return String(v).trim();
@@ -61,10 +80,11 @@ function parseWindsurfCallback(raw, expectedState) {
 }
 
 // POST RegisterUser {firebase_id_token} → {apiKey, apiServerUrl, name}
-async function fetchWindsurfRegisterUser(firebaseIdToken) {
+async function fetchWindsurfRegisterUser(firebaseIdToken: string) {
+  const cfg = WINDSURF_CONFIG as unknown as WindsurfConfigLike;
   const data = await windsurfSeatRequest(
-    WINDSURF_CONFIG.registerApiBaseUrl,
-    WINDSURF_CONFIG.registerPath,
+    cfg.registerApiBaseUrl || "https://api.codeium.com",
+    cfg.registerPath || "/api/v1/register",
     {
       firebase_id_token: firebaseIdToken,
     },
@@ -73,30 +93,35 @@ async function fetchWindsurfRegisterUser(firebaseIdToken) {
   if (!apiKey) throw new Error("Windsurf RegisterUser missing apiKey");
   const apiServerUrl =
     extractJsonPath(data, [["apiServerUrl"], ["api_server_url"]]) ||
-    WINDSURF_CONFIG.defaultApiServerUrl;
+    cfg.defaultApiServerUrl ||
+    "https://api.codeium.com";
   const name = extractJsonPath(data, [["name"]]);
   return { apiKey, apiServerUrl, name };
 }
 
 // Best-effort: GetOneTimeAuthToken → GetCurrentUser → email/name.
-async function fetchWindsurfUserInfo(apiServerUrl, firebaseIdToken) {
+async function fetchWindsurfUserInfo(
+  apiServerUrl: string,
+  firebaseIdToken: string,
+) {
+  const cfg = WINDSURF_CONFIG as unknown as WindsurfConfigLike;
   try {
     const authRes = await windsurfSeatRequest(
       apiServerUrl,
-      WINDSURF_CONFIG.oneTimeAuthPath,
+      cfg.oneTimeAuthPath || "/api/v1/one_time_auth",
       { firebaseIdToken },
     );
     const authToken = extractJsonPath(authRes, [["authToken"], ["auth_token"]]);
     if (!authToken) return { email: null, name: null };
     const userRes = await windsurfSeatRequest(
       apiServerUrl,
-      WINDSURF_CONFIG.currentUserPath,
+      cfg.currentUserPath || "/api/v1/user",
       {
         authToken,
         includeSubscription: true,
       },
     );
-    const user = userRes.user || userRes;
+    const user = (userRes.user || userRes) as Record<string, unknown>;
     return {
       email: extractJsonPath(user, [["email"]]),
       name: extractJsonPath(user, [["name"]]),
@@ -106,83 +131,82 @@ async function fetchWindsurfUserInfo(apiServerUrl, firebaseIdToken) {
   }
 }
 
-// Windsurf — browser OAuth: windsurf.com/signin →
-// local callback (firebase JWT) → RegisterUser → apiKey (used as credential).
+// Windsurf — browser OAuth: open auth page with redirect_uri + state
+// → local callback (access_token) → RegisterUser (apiKey) → GetUserInfo.
 const windsurf = {
   config: WINDSURF_CONFIG,
   flowType: "authorization_code",
-  callbackPath: WINDSURF_CONFIG.callbackPath,
-  buildAuthUrl: (config, redirectUri, state) => {
-    const params = new URLSearchParams({
-      response_type: "token",
-      client_id: config.clientId,
-      redirect_uri: redirectUri,
-      state,
-      prompt: "login",
-      redirect_parameters_type: "query",
-      workflow: "onboarding",
-    });
-    return `${config.authBaseUrl}${config.signInPath}?${params.toString()}`;
+  callbackPath: (WINDSURF_CONFIG as unknown as WindsurfConfigLike).callbackPath,
+  buildAuthUrl: (
+    config: WindsurfConfigLike,
+    redirectUri: string,
+    state: string,
+  ) => {
+    const url = new URL(config.authPageUrl || "https://codeium.com/profile");
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("state", state);
+    return url.toString();
   },
-  exchangeToken: async (config, code, redirectUri, codeVerifier, state) => {
+  exchangeToken: async (
+    _config: WindsurfConfigLike,
+    code: string,
+    _redirectUri: string,
+    _codeVerifier: string,
+    state?: string,
+  ) => {
+    const cfg = WINDSURF_CONFIG as unknown as WindsurfConfigLike;
     const trimmed = String(code || "").trim();
     const looksCallback =
-      trimmed.includes("?") || trimmed.includes("access_token=");
+      /[?=&]/.test(trimmed) &&
+      (trimmed.includes("access_token") || trimmed.includes("token"));
     if (!looksCallback) {
-      // Paste-token mode: sk-ws-... apiKey OR firebase JWT (eyJ...). Strip "Bearer " if pasted.
-      const clean = trimmed.replace(/^Bearer\s+/i, "");
-      if (clean.startsWith("sk-ws-")) {
-        return {
-          accessToken: clean,
-          refreshToken: null,
-          expiresIn: null,
-          apiServerUrl: config.defaultApiServerUrl,
-          firebaseIdToken: null,
-          _authMethod: "imported",
-        };
-      }
-      const reg = await fetchWindsurfRegisterUser(clean);
       return {
-        accessToken: reg.apiKey,
-        refreshToken: null,
-        expiresIn: null,
-        apiServerUrl: reg.apiServerUrl,
-        firebaseIdToken: clean,
+        apiKey: trimmed,
+        apiServerUrl: cfg.defaultApiServerUrl,
+        name: null,
+        expiresIn: (cfg.tokenLifetimeDays || 30) * 24 * 60 * 60,
         _authMethod: "imported",
       };
     }
     const { firebaseIdToken } = parseWindsurfCallback(trimmed, state);
     const reg = await fetchWindsurfRegisterUser(firebaseIdToken);
     return {
-      accessToken: reg.apiKey,
-      refreshToken: null,
-      expiresIn: null,
-      apiServerUrl: reg.apiServerUrl,
+      ...reg,
       firebaseIdToken,
+      expiresIn: (cfg.tokenLifetimeDays || 30) * 24 * 60 * 60,
       _authMethod: "oauth",
     };
   },
-  postExchange: async (tokens) => {
+  postExchange: async (tokens: Record<string, unknown>) => {
     if (!tokens.firebaseIdToken)
       return { userInfo: { email: null, name: null } };
-    const info = await fetchWindsurfUserInfo(
-      tokens.apiServerUrl,
-      tokens.firebaseIdToken,
+    const userInfo = await fetchWindsurfUserInfo(
+      tokens.apiServerUrl as string,
+      tokens.firebaseIdToken as string,
     );
-    return { userInfo: info };
+    return { userInfo };
   },
-  mapTokens: (tokens, extra) => ({
-    accessToken: tokens.accessToken,
-    refreshToken: null,
-    expiresIn: null,
-    email: extra?.userInfo?.email || undefined,
-    displayName: extra?.userInfo?.name || undefined,
-    providerSpecificData: {
-      authMethod: tokens._authMethod || "oauth",
-      apiServerUrl: tokens.apiServerUrl,
-      firebaseIdToken: tokens.firebaseIdToken,
-    },
-  }),
+  mapTokens: (
+    tokens: Record<string, unknown>,
+    extra?: {
+      userInfo?: { email?: string | null; name?: string | null };
+    } | null,
+  ) => {
+    const ui = extra?.userInfo || {};
+    const displayName = ui.name || (tokens.name as string) || undefined;
+    return {
+      accessToken: tokens.apiKey,
+      refreshToken: null,
+      expiresIn: tokens.expiresIn,
+      email: ui.email || undefined,
+      displayName,
+      providerSpecificData: {
+        authMethod: tokens._authMethod || "oauth",
+        apiKey: tokens.apiKey,
+        apiServerUrl: tokens.apiServerUrl,
+      },
+    };
+  },
 };
 
 export default windsurf;

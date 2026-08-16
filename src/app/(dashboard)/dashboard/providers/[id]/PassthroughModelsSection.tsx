@@ -5,6 +5,17 @@ import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
 
+interface PassthroughModelRowProps {
+  modelId: string;
+  fullModel: string;
+  copied?: string | null;
+  onCopy: (text: string, id?: string) => void;
+  onDeleteAlias: () => void | Promise<void>;
+  onTest?: () => void | Promise<void>;
+  testStatus?: "ok" | "error" | "testing" | string | null;
+  isTesting?: boolean;
+}
+
 function PassthroughModelRow({
   modelId,
   fullModel,
@@ -14,7 +25,7 @@ function PassthroughModelRow({
   onTest,
   testStatus,
   isTesting,
-}) {
+}: PassthroughModelRowProps) {
   const borderColor =
     testStatus === "ok"
       ? "border-green-500/40"
@@ -113,6 +124,24 @@ PassthroughModelRow.propTypes = {
   isTesting: PropTypes.bool,
 };
 
+interface PassthroughCustomModelItem {
+  id: string;
+  name?: string;
+  type?: string;
+  [key: string]: unknown;
+}
+
+interface PassthroughModelsSectionProps {
+  providerAlias: string;
+  modelAliases: Record<string, string>;
+  customModels?: PassthroughCustomModelItem[];
+  copied?: string | null;
+  onCopy: (text: string, id?: string) => void;
+  onDeleteAlias: (alias: string) => Promise<void> | void;
+  onAddCustomModel: (modelId: string) => Promise<void> | void;
+  onDeleteCustomModel: (modelId: string) => Promise<void> | void;
+}
+
 export default function PassthroughModelsSection({
   providerAlias,
   modelAliases,
@@ -122,7 +151,7 @@ export default function PassthroughModelsSection({
   onDeleteAlias,
   onAddCustomModel,
   onDeleteCustomModel,
-}) {
+}: PassthroughModelsSectionProps) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
 
@@ -202,7 +231,7 @@ export default function PassthroughModelsSection({
               onDeleteAlias={() =>
                 source === "custom"
                   ? onDeleteCustomModel(id)
-                  : onDeleteAlias(alias)
+                  : onDeleteAlias(alias || id)
               }
             />
           ))}

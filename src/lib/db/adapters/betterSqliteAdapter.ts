@@ -1,13 +1,29 @@
 import { PRAGMA_SQL } from "../schema";
+import type { DatabaseAdapter } from "../driver";
 
 // Periodic checkpoint to keep WAL file small (avoid huge -wal/-shm growth)
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
-export function createBetterSqliteAdapter(filePath) {
-  let Database;
+interface BetterSqliteStatement {
+  run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+}
+
+interface BetterSqliteDatabase {
+  exec(sql: string): void;
+  prepare(sql: string): BetterSqliteStatement;
+  transaction<T>(fn: () => T): () => T;
+  pragma(sql: string): unknown;
+  close(): void;
+}
+
+export function createBetterSqliteAdapter(filePath: string): DatabaseAdapter & { raw: unknown; checkpoint: () => void } {
+  let Database: new (path: string) => BetterSqliteDatabase;
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require("better-sqlite3");
-    Database = mod.default || mod;
+    Database = (mod.default || mod) as new (path: string) => BetterSqliteDatabase;
   } catch {
     throw new Error("better-sqlite3 is not installed");
   }
@@ -15,9 +31,9 @@ export function createBetterSqliteAdapter(filePath) {
   const db = new Database(filePath);
   db.exec(PRAGMA_SQL);
 
-  const stmtCache = new Map();
+  const stmtCache = new Map<string, BetterSqliteStatement>();
 
-  function prepare(sql) {
+  function prepare(sql: string): BetterSqliteStatement {
     let stmt = stmtCache.get(sql);
     if (!stmt) {
       stmt = db.prepare(sql);
@@ -59,19 +75,19 @@ export function createBetterSqliteAdapter(filePath) {
 
   return {
     driver: "better-sqlite3",
-    run(sql, params = []) {
+    run(sql: string, params: unknown[] = []) {
       return prepare(sql).run(...params);
     },
-    get(sql, params = []) {
-      return prepare(sql).get(...params);
+    get<T = unknown>(sql: string, params: unknown[] = []): T | undefined {
+      return prepare(sql).get(...params) as T | undefined;
     },
-    all(sql, params = []) {
-      return prepare(sql).all(...params);
+    all<T = unknown>(sql: string, params: unknown[] = []): T[] {
+      return prepare(sql).all(...params) as T[];
     },
-    exec(sql) {
+    exec(sql: string) {
       return db.exec(sql);
     },
-    transaction(fn) {
+    transaction<T>(fn: () => T): T {
       return db.transaction(fn)();
     },
     checkpoint() {

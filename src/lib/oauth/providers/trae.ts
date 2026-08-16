@@ -7,35 +7,36 @@ import { extractJsonPath } from "./_shared";
 // ───────────────────────────────────────────────────────────────────────────
 
 // Per-login device context. No IDE access in flamerouter, so use stable defaults.
-function buildTraeDeviceContext() {
+function buildTraeDeviceContext(): Record<string, string> {
   return {
-    plugin_version: TRAE_CONFIG.defaultPluginVersion,
+    plugin_version: (TRAE_CONFIG as unknown as { defaultPluginVersion?: string }).defaultPluginVersion || "1.0.0",
     machine_id: crypto.randomUUID(),
-    device_id: TRAE_CONFIG.defaultDeviceId,
+    device_id: (TRAE_CONFIG as unknown as { defaultDeviceId?: string }).defaultDeviceId || "unknown",
     x_device_brand: "unknown",
     x_device_type: "unknown",
     x_os_version: "unknown",
     x_env: "",
-    x_app_version: TRAE_CONFIG.defaultAppVersion,
-    x_app_type: TRAE_CONFIG.defaultAppType,
+    x_app_version: (TRAE_CONFIG as unknown as { defaultAppVersion?: string }).defaultAppVersion || "1.0.0",
+    x_app_type: (TRAE_CONFIG as unknown as { defaultAppType?: string }).defaultAppType || "ide",
   };
 }
 
 // POST GetLoginGuidance → { Result: { LoginHost } }
-async function fetchTraeLoginGuidance(loginTraceId) {
+async function fetchTraeLoginGuidance(loginTraceId: string): Promise<string> {
   const body = JSON.stringify({
     loginTraceID: loginTraceId,
     login_trace_id: loginTraceId,
   });
   let lastErr = "no successful response";
-  for (const url of TRAE_CONFIG.loginGuidanceUrls) {
+  const urls = (TRAE_CONFIG as unknown as { loginGuidanceUrls?: string[] }).loginGuidanceUrls || [];
+  for (const url of urls) {
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          "User-Agent": TRAE_CONFIG.userAgent,
+          "User-Agent": (TRAE_CONFIG as unknown as { userAgent?: string }).userAgent || "FlameRouter",
         },
         body,
       });
@@ -43,7 +44,7 @@ async function fetchTraeLoginGuidance(loginTraceId) {
         lastErr = `${url} HTTP ${res.status}`;
         continue;
       }
-      const data = await res.json();
+      const data = (await res.json()) as Record<string, unknown>;
       const loginHost = extractJsonPath(data, [
         ["Result", "LoginHost"],
         ["Result", "loginHost"],
@@ -56,54 +57,56 @@ async function fetchTraeLoginGuidance(loginTraceId) {
       ]);
       if (loginHost) return loginHost;
       lastErr = `${url} missing LoginHost`;
-    } catch (e) {
-      lastErr = `${url} ${e.message}`;
+    } catch (e: unknown) {
+      const err = e as Error;
+      lastErr = `${url} ${err.message}`;
     }
   }
   throw new Error(`Trae GetLoginGuidance failed: ${lastErr}`);
 }
 
 // Build the browser verification URL the user opens to sign in.
-function buildTraeVerificationUrl(loginHost, loginTraceId, callbackUrl, ctx) {
+function buildTraeVerificationUrl(loginHost: string, loginTraceId: string, callbackUrl: string, ctx: Record<string, string>): string {
+  const cfg = TRAE_CONFIG as unknown as { authorizationPath?: string; clientId?: string };
   const url = new URL(
     loginHost.startsWith("http")
       ? loginHost
       : `https://${loginHost.replace(/^\/+/, "")}`,
   );
-  url.pathname = TRAE_CONFIG.authorizationPath;
+  url.pathname = cfg.authorizationPath || "/auth";
   const p = new URLSearchParams();
   p.set("login_version", "1");
   p.set("auth_from", "trae");
   p.set("login_channel", "native_ide");
-  p.set("plugin_version", ctx.plugin_version);
+  p.set("plugin_version", ctx.plugin_version || "");
   p.set("auth_type", "local");
-  p.set("client_id", TRAE_CONFIG.clientId);
+  p.set("client_id", cfg.clientId || "");
   p.set("redirect", "0");
   p.set("login_trace_id", loginTraceId);
   p.set("auth_callback_url", callbackUrl);
-  p.set("machine_id", ctx.machine_id);
-  p.set("device_id", ctx.device_id);
-  p.set("x_device_id", ctx.device_id);
-  p.set("x_machine_id", ctx.machine_id);
-  p.set("x_device_brand", ctx.x_device_brand);
-  p.set("x_device_type", ctx.x_device_type);
-  p.set("x_os_version", ctx.x_os_version);
-  p.set("x_env", ctx.x_env);
-  p.set("x_app_version", ctx.x_app_version);
-  p.set("x_app_type", ctx.x_app_type);
+  p.set("machine_id", ctx.machine_id || "");
+  p.set("device_id", ctx.device_id || "");
+  p.set("x_device_id", ctx.device_id || "");
+  p.set("x_machine_id", ctx.machine_id || "");
+  p.set("x_device_brand", ctx.x_device_brand || "");
+  p.set("x_device_type", ctx.x_device_type || "");
+  p.set("x_os_version", ctx.x_os_version || "");
+  p.set("x_env", ctx.x_env || "");
+  p.set("x_app_version", ctx.x_app_version || "");
+  p.set("x_app_type", ctx.x_app_type || "");
   url.search = p.toString();
   return url.toString();
 }
 
 // Parse the Trae OAuth callback (query string or full URL).
 // Expected: ?isRedirect=true&refreshToken=...&loginHost=...[&x-cloudide-token=...]
-function parseTraeCallback(raw) {
+function parseTraeCallback(raw?: string | null): { refreshToken: string; loginHost: string; cloudideToken: string | null } {
   const text = String(raw || "").trim();
   let queryStr = text;
   if (text.includes("?")) queryStr = text.slice(text.indexOf("?") + 1);
   if (text.startsWith("#")) queryStr = text.slice(1);
   const params = Object.fromEntries(new URLSearchParams(queryStr));
-  const pick = (keys) => {
+  const pick = (keys: string[]) => {
     for (const k of keys) {
       const v = params[k];
       if (v && String(v).trim()) return String(v).trim();
@@ -140,26 +143,27 @@ function parseTraeCallback(raw) {
 // Allowed API origins for ExchangeToken/GetUserInfo — hardcoded HTTPS allowlist only.
 // loginHost from the callback is intentionally NOT honored (SSRF guard: a callback
 // attacker could otherwise point this at internal hosts/cloud metadata).
-function traeApiOrigins() {
-  return [...TRAE_CONFIG.apiOrigins];
+function traeApiOrigins(): string[] {
+  return [...((TRAE_CONFIG as unknown as { apiOrigins?: string[] }).apiOrigins || [])];
 }
 
 // POST ExchangeToken {ClientID, RefreshToken, ClientSecret, UserID} → {Result:{AccessToken,RefreshToken,ExpiresAt}}
-async function fetchTraeExchangeToken(refreshToken, cloudideToken) {
+async function fetchTraeExchangeToken(refreshToken: string, cloudideToken?: string | null): Promise<Record<string, unknown>> {
+  const cfg = TRAE_CONFIG as unknown as { clientId?: string; clientSecret?: string; exchangeTokenPath?: string; userAgent?: string };
   const body = JSON.stringify({
-    ClientID: TRAE_CONFIG.clientId,
+    ClientID: cfg.clientId,
     RefreshToken: refreshToken,
-    ClientSecret: TRAE_CONFIG.clientSecret,
+    ClientSecret: cfg.clientSecret,
     UserID: "",
   });
   let lastErr = "no successful response";
   for (const origin of traeApiOrigins()) {
-    const url = `${origin.replace(/\/$/, "")}${TRAE_CONFIG.exchangeTokenPath}`;
+    const url = `${origin.replace(/\/$/, "")}${cfg.exchangeTokenPath}`;
     try {
-      const headers = {
+      const headers: Record<string, string> = {
         Accept: "application/json",
         "Content-Type": "application/json",
-        "User-Agent": TRAE_CONFIG.userAgent,
+        "User-Agent": cfg.userAgent || "FlameRouter",
       };
       if (cloudideToken) headers["x-cloudide-token"] = cloudideToken;
       const res = await fetch(url, { method: "POST", headers, body });
@@ -168,9 +172,9 @@ async function fetchTraeExchangeToken(refreshToken, cloudideToken) {
         lastErr = `${url} HTTP ${res.status}`;
         continue;
       }
-      let data;
+      let data: Record<string, unknown>;
       try {
-        data = JSON.parse(text);
+        data = JSON.parse(text) as Record<string, unknown>;
       } catch {
         lastErr = `${url} invalid JSON`;
         continue;
@@ -208,30 +212,32 @@ async function fetchTraeExchangeToken(refreshToken, cloudideToken) {
           ["expiresAt"],
         ]),
       };
-    } catch (e) {
-      lastErr = `${url} ${e.message}`;
+    } catch (e: unknown) {
+      const err = e as Error;
+      lastErr = `${url} ${err.message}`;
     }
   }
   throw new Error(`Trae ExchangeToken failed: ${lastErr}`);
 }
 
 // POST GetUserInfo with x-cloudide-token → identity fields used by SOLO common_params.
-async function fetchTraeUserInfo(accessToken) {
+async function fetchTraeUserInfo(accessToken?: string | null): Promise<Record<string, string | null>> {
+  const cfg = TRAE_CONFIG as unknown as { getUserInfoPath?: string; userAgent?: string };
   for (const origin of traeApiOrigins()) {
-    const url = `${origin.replace(/\/$/, "")}${TRAE_CONFIG.getUserInfoPath}`;
+    const url = `${origin.replace(/\/$/, "")}${cfg.getUserInfoPath}`;
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          "User-Agent": TRAE_CONFIG.userAgent,
-          "x-cloudide-token": accessToken,
+          "User-Agent": cfg.userAgent || "FlameRouter",
+          "x-cloudide-token": accessToken || "",
         },
         body: JSON.stringify({}),
       });
       if (!res.ok) continue;
-      const data = await res.json();
+      const data = (await res.json()) as Record<string, unknown>;
       return {
         email: extractJsonPath(data, [
           ["Result", "NonPlainTextEmail"],
@@ -277,7 +283,7 @@ async function fetchTraeUserInfo(accessToken) {
 }
 
 // Map AIRegion (e.g. "SG", "US") → SOLO scope used in common_params.
-function traeScopeForRegion(aiRegion) {
+function traeScopeForRegion(aiRegion?: string | null): string {
   const r = (aiRegion || "").toLowerCase();
   if (r === "sg" || r.includes("singapore")) return "marscode-sg";
   if (r === "cn" || r.includes("cn") || r.includes("china"))
@@ -291,35 +297,34 @@ function traeScopeForRegion(aiRegion) {
 const trae = {
   config: TRAE_CONFIG,
   flowType: "authorization_code",
-  callbackPath: TRAE_CONFIG.callbackPath,
-  prepareConfig: async (config) => {
+  callbackPath: (TRAE_CONFIG as unknown as { callbackPath?: string })?.callbackPath,
+  prepareConfig: async (config: Record<string, unknown>) => {
     const loginTraceID = crypto.randomUUID();
     const loginHost = await fetchTraeLoginGuidance(loginTraceID);
     return { ...config, loginTraceID, loginHost };
   },
-  buildAuthUrl: (config, redirectUri, state) => {
+  buildAuthUrl: (config: Record<string, unknown>, redirectUri: string, state: string) => {
     const ctx = buildTraeDeviceContext();
-    const traceId = config.loginTraceID || state;
+    const traceId = (config.loginTraceID as string) || state;
     return buildTraeVerificationUrl(
-      config.loginHost,
+      (config.loginHost as string) || "",
       traceId,
       redirectUri,
       ctx,
     );
   },
-  exchangeToken: async (config, code) => {
+  exchangeToken: async (_config: Record<string, unknown>, code: string) => {
+    const cfg = TRAE_CONFIG as unknown as { tokenLifetimeDays?: number };
     const trimmed = String(code || "").trim();
-    // Paste-token mode: raw Cloud-IDE-JWT (no refresh exchange)
     const looksCallback =
       /[?=&]/.test(trimmed) &&
       (trimmed.includes("refreshToken") || trimmed.includes("refresh_token"));
     if (!looksCallback) {
-      // Strip "Cloud-IDE-JWT " / "Bearer " prefix users paste from the Authorization header
       const clean = trimmed.replace(/^(Cloud-IDE-JWT|Bearer)\s+/i, "");
       return {
         accessToken: clean,
         refreshToken: null,
-        expiresIn: TRAE_CONFIG.tokenLifetimeDays * 24 * 60 * 60,
+        expiresIn: (cfg.tokenLifetimeDays || 30) * 24 * 60 * 60,
         _authMethod: "imported",
       };
     }
@@ -329,20 +334,19 @@ const trae = {
       _authMethod: "oauth",
     };
   },
-  postExchange: async (tokens) => {
-    const userInfo = await fetchTraeUserInfo(tokens.accessToken);
+  postExchange: async (tokens: Record<string, unknown>) => {
+    const userInfo = await fetchTraeUserInfo(tokens.accessToken as string);
     return { userInfo };
   },
-  mapTokens: (tokens, extra) => {
+  mapTokens: (tokens: Record<string, unknown>, extra?: { userInfo?: Record<string, string | null> } | null) => {
+    const cfg = TRAE_CONFIG as unknown as { tokenLifetimeDays?: number; defaultAppVersion?: string };
     const expiresIn =
-      tokens.expiresIn ||
+      (tokens.expiresIn as number) ||
       (tokens.expiresAt
         ? Math.max(60, Number(tokens.expiresAt) - Math.floor(Date.now() / 1000))
-        : TRAE_CONFIG.tokenLifetimeDays * 24 * 60 * 60);
+        : (cfg.tokenLifetimeDays || 30) * 24 * 60 * 60);
     const ui = extra?.userInfo || {};
     const aiRegion = ui.aiRegion || "US-East";
-    // SOLO common_params defaults — identity fields web_id/biz_user_id are not
-    // exposed by GetUserInfo; empty strings are accepted upstream (verified).
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -360,7 +364,7 @@ const trae = {
         bizUserId: "",
         userUniqueId: "",
         appLanguage: "en",
-        appVersion: TRAE_CONFIG.defaultAppVersion,
+        appVersion: cfg.defaultAppVersion || "1.0.0",
         userRegion: aiRegion === "SG" ? "SG" : "US",
         userIdentity: "Free",
       },

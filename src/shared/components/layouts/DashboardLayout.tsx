@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { useNotificationStore } from "@/store/notificationStore";
 import Sidebar from "../Sidebar";
@@ -11,16 +11,17 @@ import {
   Info,
   TriangleAlert,
   X,
+  LucideIcon,
 } from "lucide-react";
 
-const toastIcons = {
+const toastIcons: Record<string, LucideIcon> = {
   success: CheckCircle2,
   error: CircleAlert,
   warning: TriangleAlert,
   info: Info,
 };
 
-function getToastStyle(type) {
+function getToastStyle(type: string) {
   if (type === "success") {
     return {
       wrapper: "border-green-500/30 text-green-600 dark:text-green-400",
@@ -41,10 +42,14 @@ function getToastStyle(type) {
   };
 }
 
-export default function DashboardLayout({ children }) {
+export interface DashboardLayoutProps {
+  children: ReactNode;
+}
+
+export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const menuButtonRef = useRef(null);
-  const mobileSidebarRef = useRef(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const mobileSidebarRef = useRef<HTMLDivElement | null>(null);
   const pathname = usePathname();
   const notifications = useNotificationStore((state) => state.notifications);
   const removeNotification = useNotificationStore(
@@ -57,10 +62,10 @@ export default function DashboardLayout({ children }) {
     const menuButton = menuButtonRef.current;
     const frame = requestAnimationFrame(() => {
       mobileSidebarRef.current
-        ?.querySelector("a, button")
+        ?.querySelector<HTMLElement>("a, button")
         ?.focus();
     });
-    const dismissOnEscape = (event) => {
+    const dismissOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSidebarOpen(false);
     };
     document.addEventListener("keydown", dismissOnEscape);

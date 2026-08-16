@@ -9,30 +9,69 @@ import {
   Input,
   ModelSelectModal,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import Image from "next/image";
+import type { ApiKeyItem } from "./ApiKeySelect";
+import type { ToolCardDef } from "./DefaultToolCard";
+
+export interface AntigravityDefaultModel {
+  id?: string;
+  name: string;
+  alias: string;
+  mandatory?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AntigravityToolDef extends ToolCardDef {
+  defaultModels?: AntigravityDefaultModel[];
+}
+
+export interface AntigravityStatus {
+  running?: boolean;
+  certExists?: boolean;
+  certTrusted?: boolean;
+  dnsConfigured?: boolean;
+  isWin?: boolean;
+  hasCachedPassword?: boolean;
+  needsSudoPassword?: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface AntigravityToolCardProps {
+  tool: AntigravityToolDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  baseUrl?: string;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  hasActiveProviders?: boolean;
+  cloudEnabled?: boolean;
+  initialStatus?: AntigravityStatus | null;
+}
 
 export default function AntigravityToolCard({
   tool,
   isExpanded,
   onToggle,
   baseUrl,
-  apiKeys,
-  activeProviders,
-  hasActiveProviders,
-  cloudEnabled,
+  apiKeys = [],
+  activeProviders = [],
+  hasActiveProviders = false,
+  cloudEnabled = false,
   initialStatus,
-}) {
-  const [status, setStatus] = useState(initialStatus || null);
-  const [loading, setLoading] = useState(false);
-  const [startingStep, setStartingStep] = useState(null); // "cert" | "server" | "dns" | null
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [sudoPassword, setSudoPassword] = useState("");
-  const [selectedApiKey, setSelectedApiKey] = useState("");
-  const [message, setMessage] = useState(null);
-  const [modelMappings, setModelMappings] = useState({});
-  const [modalOpen, setModalOpen] = useState(false);
-  const [currentEditingAlias, setCurrentEditingAlias] = useState(null);
-  const [modelAliases, setModelAliases] = useState({});
+}: AntigravityToolCardProps) {
+  const [status, setStatus] = useState<AntigravityStatus | null>(initialStatus || null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [startingStep, setStartingStep] = useState<"cert" | "server" | "dns" | null>(null);
+  const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
+  const [sudoPassword, setSudoPassword] = useState<string>("");
+  const [selectedApiKey, setSelectedApiKey] = useState<string>("");
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [modelMappings, setModelMappings] = useState<Record<string, string>>({});
+  const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [currentEditingAlias, setCurrentEditingAlias] = useState<string | null>(null);
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
 
   /* eslint-disable react-hooks/immutability, react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -98,7 +137,7 @@ export default function AntigravityToolCard({
   const serverIsWindows = status?.isWin === true;
   const canRunWithoutPassword =
     serverIsWindows ||
-    status?.hasCachedPassword ||
+    Boolean(status?.hasCachedPassword) ||
     status?.needsSudoPassword === false;
 
   const handleStart = () => {
@@ -119,7 +158,7 @@ export default function AntigravityToolCard({
     }
   };
 
-  const doStart = async (password) => {
+  const doStart = async (password: string) => {
     setLoading(true);
     setMessage(null);
     // Show steps progressing in order
@@ -147,15 +186,16 @@ export default function AntigravityToolCard({
         setStartingStep(null);
         setMessage({ type: "error", text: data.error || "Failed to start" });
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = error as { message?: string };
       setStartingStep(null);
-      setMessage({ type: "error", text: error.message });
+      setMessage({ type: "error", text: err.message || "Failed to start" });
     } finally {
       setLoading(false);
     }
   };
 
-  const doStop = async (password) => {
+  const doStop = async (password: string) => {
     setLoading(true);
     setMessage(null);
     try {
@@ -174,8 +214,9 @@ export default function AntigravityToolCard({
       } else {
         setMessage({ type: "error", text: data.error || "Failed to stop" });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to stop" });
     } finally {
       setLoading(false);
     }
@@ -193,12 +234,12 @@ export default function AntigravityToolCard({
     }
   };
 
-  const openModelSelector = (alias) => {
+  const openModelSelector = (alias: string) => {
     setCurrentEditingAlias(alias);
     setModalOpen(true);
   };
 
-  const handleModelSelect = (model) => {
+  const handleModelSelect = (model: ModelSelectItem) => {
     if (currentEditingAlias) {
       setModelMappings((prev) => ({
         ...prev,
@@ -207,7 +248,7 @@ export default function AntigravityToolCard({
     }
   };
 
-  const handleModelMappingChange = (alias, value) => {
+  const handleModelMappingChange = (alias: string, value: string) => {
     setModelMappings((prev) => ({
       ...prev,
       [alias]: value,
@@ -231,8 +272,9 @@ export default function AntigravityToolCard({
       }
 
       setMessage({ type: "success", text: "Mappings saved!" });
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to save mappings" });
     } finally {
       setLoading(false);
     }
@@ -248,19 +290,21 @@ export default function AntigravityToolCard({
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
-            <Image
-              src="/providers/antigravity.png"
-              alt={tool.name}
-              width={32}
-              height={32}
-              className="size-8 object-contain rounded-lg"
-              sizes="32px"
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-              loading="lazy"
-              decoding="async"
-            />
+            {tool.image ? (
+              <Image
+                src="/providers/antigravity.png"
+                alt={tool.name}
+                width={32}
+                height={32}
+                className="size-8 object-contain rounded-lg"
+                sizes="32px"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = "none";
+                }}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -292,9 +336,9 @@ export default function AntigravityToolCard({
           {/* Status indicators — ordered: Cert → Server → DNS */}
           <div className="flex items-center gap-1">
             {[
-              { key: "cert", label: "Cert", ok: status?.certExists },
-              { key: "server", label: "Server", ok: status?.running },
-              { key: "dns", label: "DNS", ok: status?.dnsConfigured },
+              { key: "cert" as const, label: "Cert", ok: status?.certExists },
+              { key: "server" as const, label: "Server", ok: status?.running },
+              { key: "dns" as const, label: "DNS", ok: status?.dnsConfigured },
             ].map(({ key, label, ok }, i) => {
               const isLoading = startingStep === key;
               return (
@@ -380,7 +424,7 @@ export default function AntigravityToolCard({
                     className="w-full min-w-0 px-2 py-2 bg-surface rounded text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
                   >
                     {apiKeys.map((key) => (
-                      <option key={key.id} value={key.key}>
+                      <option key={key.id || key.key} value={key.key}>
                         {key.key}
                       </option>
                     ))}
@@ -394,7 +438,7 @@ export default function AntigravityToolCard({
                 )}
               </div>
 
-              {tool.defaultModels.map((model) => (
+              {(tool.defaultModels || []).map((model) => (
                 <div
                   key={model.alias}
                   className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2"

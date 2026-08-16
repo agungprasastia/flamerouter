@@ -8805,4 +8805,36 @@ export const REGISTRY = [
     ]
   }
 ];
+
+type RegistryEntry = {
+  id: string;
+  alias?: string;
+  transport?: Record<string, unknown>;
+  oauth?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+// oauth block is canonical for these fields; inject into transport so consumers
+// reading this.config.{clientId,clientSecret,tokenUrl} keep working.
+const OAUTH_INJECT_FIELDS = ["clientId", "clientSecret", "tokenUrl"] as const;
+
+function buildTransport(transport: Record<string, unknown> | undefined, oauth: Record<string, unknown> | undefined): Record<string, unknown> {
+  const t: Record<string, unknown> = { ...transport };
+  if (oauth) {
+    for (const f of OAUTH_INJECT_FIELDS) {
+      if (t[f] === undefined && oauth[f] !== undefined) t[f] = oauth[f];
+    }
+  }
+  return t;
+}
+
+/** Per-provider transport configs (oauth fields injected), keyed by provider id. */
+export const PROVIDERS: Record<string, Record<string, unknown>> = {};
+/** Per-provider OAuth flow configs, keyed by provider id (only providers with oauth). */
+export const PROVIDER_OAUTH: Record<string, Record<string, unknown>> = {};
+for (const entry of REGISTRY as RegistryEntry[]) {
+  if (entry.transport) PROVIDERS[entry.id] = buildTransport(entry.transport, entry.oauth);
+  if (entry.oauth) PROVIDER_OAUTH[entry.id] = entry.oauth;
+}
+
 export default REGISTRY;

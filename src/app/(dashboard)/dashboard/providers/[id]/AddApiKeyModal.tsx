@@ -8,6 +8,29 @@ import { planBulkAdd } from "@/shared/utils/bulkAdd";
 
 const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
 
+type ProxyPoolItem = {
+  id: string;
+  name?: string;
+  [key: string]: unknown;
+};
+
+type AddApiKeyModalProps = {
+  isOpen: boolean;
+  provider: string;
+  providerName: string;
+  isCompatible: boolean;
+  isAnthropic: boolean;
+  authType: string;
+  authHint?: string;
+  website?: string;
+  proxyPools?: ProxyPoolItem[];
+  error?: string;
+  existingNames?: string[];
+  onSave: (formData: Record<string, unknown>) => void;
+  onBulkDone: (results: Record<string, unknown>) => void;
+  onClose: () => void;
+};
+
 export default function AddApiKeyModal({
   isOpen,
   provider,
@@ -23,7 +46,7 @@ export default function AddApiKeyModal({
   onSave,
   onBulkDone,
   onClose,
-}) {
+}: AddApiKeyModalProps) {
   const NONE_PROXY_POOL_VALUE = "__none__";
   const isOllamaLocal = provider === "ollama-local";
   const isCookie = authType === "cookie";
@@ -45,9 +68,19 @@ export default function AddApiKeyModal({
 
   const isAzure = provider === "azure";
   const isCloudflareAi = provider === "cloudflare-ai";
-  const providerRegions = AI_PROVIDERS?.[provider]?.regions || null;
+  const providerEntry = AI_PROVIDERS?.[provider] as {
+    regions?: Array<{ id: string; label?: string } | string>;
+    defaultRegion?: string;
+    [key: string]: unknown;
+  } | undefined;
+  const providerRegions = providerEntry?.regions || null;
   const defaultRegion =
-    AI_PROVIDERS?.[provider]?.defaultRegion || providerRegions?.[0]?.id || "";
+    providerEntry?.defaultRegion ||
+    (typeof providerRegions?.[0] === "object" && providerRegions[0] !== null
+      ? providerRegions[0].id
+      : typeof providerRegions?.[0] === "string"
+        ? providerRegions[0]
+        : "");
 
   const [formData, setFormData] = useState({
     name: "",
@@ -66,7 +99,7 @@ export default function AddApiKeyModal({
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
   const [region, setRegion] = useState(defaultRegion);
   const [validating, setValidating] = useState(false);
-  const [validationResult, setValidationResult] = useState(null);
+  const [validationResult, setValidationResult] = useState<"success" | "failed" | null>(null);
   const [saving, setSaving] = useState(false);
   const bulkPlaceholder = isCloudflareAi
     ? `name1|sk-key1|acc123456\nname2|sk-key2|def789012\nsk-key-only-auto-named`
@@ -76,7 +109,7 @@ export default function AddApiKeyModal({
 
   const [mode, setMode] = useState("single"); // "single" | "bulk"
   const [bulkText, setBulkText] = useState("");
-  const [bulkResult, setBulkResult] = useState(null); // { success, failed }
+  const [bulkResult, setBulkResult] = useState<{ success: number; failed: number } | null>(null);
 
   const buildProviderSpecificData = () => {
     if (isOllamaLocal && formData.ollamaHostUrl.trim()) {
@@ -221,7 +254,7 @@ export default function AddApiKeyModal({
     }
     setSaving(false);
     setBulkResult({ success, failed });
-    if (success > 0 && onBulkDone) onBulkDone();
+    if (success > 0 && onBulkDone) onBulkDone({ success, failed });
   };
 
   if (!provider) return null;
@@ -390,10 +423,14 @@ export default function AddApiKeyModal({
                 label="Region"
                 value={region}
                 onChange={(e) => setRegion(e.target.value)}
-                options={providerRegions.map((r) => ({
-                  value: r.id,
-                  label: r.label,
-                }))}
+                options={providerRegions.map((r) => {
+                  const id = typeof r === "string" ? r : r.id;
+                  const label = typeof r === "string" ? r : r.label || r.id;
+                  return {
+                    value: id,
+                    label: label,
+                  };
+                })}
               />
             )}
             {isCompatible && (

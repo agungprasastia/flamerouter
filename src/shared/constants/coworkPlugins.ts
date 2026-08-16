@@ -49,14 +49,36 @@ export const LOCAL_STDIO_PLUGINS = [
   },
 ];
 
-function buildManagedMcpServers(plugins) {
-  const list = Array.isArray(plugins) ? plugins : [];
-  const out = [];
-  const seen = new Set();
+export interface CoworkPlugin {
+  name: string;
+  title?: string;
+  description?: string;
+  url?: string;
+  transport?: string;
+  oauth?: boolean;
+  toolNames?: string[];
+  extensionUrl?: string;
+  command?: string;
+  args?: string[];
+  [key: string]: unknown;
+}
+
+export interface ManagedMcpServerEntry {
+  name: string;
+  url: string;
+  transport: string;
+  oauth?: boolean;
+  toolPolicy?: Record<string, string>;
+}
+
+function buildManagedMcpServers(plugins?: unknown): ManagedMcpServerEntry[] {
+  const list = Array.isArray(plugins) ? (plugins as Array<Partial<CoworkPlugin>>) : [];
+  const out: ManagedMcpServerEntry[] = [];
+  const seen = new Set<string>();
   for (const p of list) {
     if (!p?.name || !p?.url || seen.has(p.name)) continue;
     seen.add(p.name);
-    const entry = {
+    const entry: ManagedMcpServerEntry = {
       name: p.name,
       url: p.url,
       transport: p.transport || (/\/sse(\b|\/)/i.test(p.url) ? "sse" : "http"),
@@ -66,14 +88,14 @@ function buildManagedMcpServers(plugins) {
       // Strip any pre-existing "{name}-" prefixes (idempotent across re-applies),
       // then emit both bare + single-prefixed variants to match runtime tool naming.
       const prefix = `${p.name}-`;
-      const bare = new Set();
+      const bare = new Set<string>();
       for (const raw of p.toolNames) {
         if (typeof raw !== "string" || !raw) continue;
         let t = raw;
         while (t.startsWith(prefix)) t = t.slice(prefix.length);
         bare.add(t);
       }
-      const policy = {};
+      const policy: Record<string, string> = {};
       for (const t of bare) {
         policy[t] = "allow";
         policy[`${prefix}${t}`] = "allow";

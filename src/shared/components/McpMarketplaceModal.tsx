@@ -6,21 +6,57 @@ import Modal from "./Modal";
 const REGISTRY_ENDPOINT = "/api/cli-tools/cowork-mcp-registry";
 const TOOLS_ENDPOINT = "/api/cli-tools/cowork-mcp-tools";
 
+export interface McpServerItem {
+  url: string;
+  name?: string;
+  slug?: string;
+  title?: string;
+  description?: string;
+  iconUrl?: string;
+  oauth?: boolean;
+  toolCount?: number;
+  toolNames?: string[];
+  transport?: string;
+}
+
+export interface McpAddData {
+  name: string;
+  title?: string;
+  description?: string;
+  url: string;
+  transport?: string;
+  oauth?: boolean;
+  toolNames: string[];
+}
+
+export interface McpMarketplaceModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onAdd?: (data: McpAddData) => void;
+  addedNames?: string[];
+}
+
+interface ToolCacheItem {
+  tools: Array<{ name: string }>;
+  requiresAuth?: boolean;
+  error?: string;
+}
+
 export default function McpMarketplaceModal({
   isOpen,
   onClose,
   onAdd,
   addedNames = [],
-}) {
-  const [servers, setServers] = useState([]);
+}: McpMarketplaceModalProps) {
+  const [servers, setServers] = useState<McpServerItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
-  const [error, setError] = useState(null);
-  const [expandedUrl, setExpandedUrl] = useState(null);
-  const [toolsCache, setToolsCache] = useState({});
-  const [toolsLoading, setToolsLoading] = useState({});
-  const [toolSelection, setToolSelection] = useState({});
+  const [filter, setFilter] = useState<"all" | "authless" | "oauth">("all");
+  const [error, setError] = useState<string | null>(null);
+  const [expandedUrl, setExpandedUrl] = useState<string | null>(null);
+  const [toolsCache, setToolsCache] = useState<Record<string, ToolCacheItem>>({});
+  const [toolsLoading, setToolsLoading] = useState<Record<string, boolean>>({});
+  const [toolSelection, setToolSelection] = useState<Record<string, Record<string, boolean>>>({});
 
   useEffect(() => {
     if (!isOpen) return;
@@ -32,9 +68,12 @@ export default function McpMarketplaceModal({
         if (d.error) setError(d.error);
         else setServers(d.servers || []);
       })
-      .catch((e) => setError(e.message))
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : "Failed to load registry";
+        setError(msg);
+      })
       .finally(() => setLoading(false));
-  }, [isOpen]);
+  }, [isOpen, servers.length]);
 
   const addedSet = useMemo(() => new Set(addedNames), [addedNames]);
 
@@ -52,7 +91,7 @@ export default function McpMarketplaceModal({
     });
   }, [servers, search, filter]);
 
-  const fetchTools = async (server) => {
+  const fetchTools = async (server: McpServerItem) => {
     if (toolsCache[server.url]) return;
     setToolsLoading((p) => ({ ...p, [server.url]: true }));
     try {
@@ -62,7 +101,7 @@ export default function McpMarketplaceModal({
         body: JSON.stringify({ url: server.url }),
       });
       const d = await r.json();
-      const tools = d.tools || [];
+      const tools = (d.tools as Array<{ name: string }>) || [];
       const fallback = Array.isArray(server.toolNames) ? server.toolNames : [];
       const toolNames = tools.length > 0 ? tools.map((t) => t.name) : fallback;
       setToolsCache((p) => ({
@@ -74,17 +113,18 @@ export default function McpMarketplaceModal({
         ...p,
         [server.url]: Object.fromEntries(toolNames.map((t) => [t, true])),
       }));
-    } catch (e) {
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to probe tools";
       setToolsCache((p) => ({
         ...p,
-        [server.url]: { tools: [], error: e.message },
+        [server.url]: { tools: [], error: msg },
       }));
     } finally {
       setToolsLoading((p) => ({ ...p, [server.url]: false }));
     }
   };
 
-  const expandServer = (server) => {
+  const expandServer = (server: McpServerItem) => {
     if (expandedUrl === server.url) {
       setExpandedUrl(null);
       return;
@@ -93,14 +133,14 @@ export default function McpMarketplaceModal({
     fetchTools(server);
   };
 
-  const toggleTool = (url, tool) => {
+  const toggleTool = (url: string, tool: string) => {
     setToolSelection((prev) => ({
       ...prev,
       [url]: { ...prev[url], [tool]: !prev[url]?.[tool] },
     }));
   };
 
-  const setAllTools = (url, value) => {
+  const setAllTools = (url: string, value: boolean) => {
     const sel = toolSelection[url] || {};
     setToolSelection((prev) => ({
       ...prev,
@@ -108,11 +148,11 @@ export default function McpMarketplaceModal({
     }));
   };
 
-  const confirmAdd = (server) => {
+  const confirmAdd = (server: McpServerItem) => {
     const sel = toolSelection[server.url] || {};
     const enabled = Object.keys(sel).filter((t) => sel[t]);
     onAdd?.({
-      name: server.slug || server.name,
+      name: server.slug || server.name || "",
       title: server.title,
       description: server.description,
       url: server.url,
@@ -141,7 +181,7 @@ export default function McpMarketplaceModal({
           />
           <select
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={(e) => setFilter(e.target.value as "all" | "authless" | "oauth")}
             className="px-2 py-1.5 bg-surface rounded text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50"
           >
             <option value="all">All</option>
@@ -173,7 +213,8 @@ export default function McpMarketplaceModal({
               </div>
             )}
             {filtered.map((s) => {
-              const added = addedSet.has(s.slug || s.name);
+              const nameKey = s.slug || s.name || "";
+              const added = addedSet.has(nameKey);
               const expanded = expandedUrl === s.url;
               const cache = toolsCache[s.url];
               const isLoadingTools = toolsLoading[s.url];
@@ -193,7 +234,7 @@ export default function McpMarketplaceModal({
                         alt=""
                         className="size-7 rounded shrink-0 object-contain"
                         onError={(e) => {
-                          e.target.style.display = "none";
+                          (e.target as HTMLElement).style.display = "none";
                         }}
                         loading="lazy"
                         decoding="async"
@@ -213,7 +254,7 @@ export default function McpMarketplaceModal({
                             Authless
                           </span>
                         )}
-                        {s.toolCount > 0 && (
+                        {typeof s.toolCount === "number" && s.toolCount > 0 && (
                           <span className="text-[10px] text-text-muted">
                             {s.toolCount} tools
                           </span>

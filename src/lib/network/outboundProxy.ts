@@ -1,4 +1,4 @@
-function normalizeString(value) {
+function normalizeString(value?: unknown): string {
   if (value === undefined || value === null) return "";
   return String(value).trim();
 }
@@ -12,7 +12,7 @@ const ALLOWED_PROXY_SCHEMES = [
   "socks4a:",
 ];
 
-function validateProxyUrl(url) {
+function validateProxyUrl(url?: string | null): string | null {
   if (!url) return null;
   if (/[\n\r`$]/.test(url)) return null;
   try {
@@ -24,11 +24,17 @@ function validateProxyUrl(url) {
   }
 }
 
+export interface OutboundProxyOptions {
+  outboundProxyEnabled?: boolean;
+  outboundProxyUrl?: string;
+  outboundNoProxy?: string;
+}
+
 export function applyOutboundProxyEnv({
   outboundProxyEnabled,
   outboundProxyUrl,
   outboundNoProxy,
-} = {}) {
+}: OutboundProxyOptions = {}): void {
   if (typeof process === "undefined" || !process.env) return;
   const enabled = Boolean(outboundProxyEnabled);
   const proxyUrl = normalizeString(outboundProxyUrl);

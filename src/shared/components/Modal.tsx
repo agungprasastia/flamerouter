@@ -134,6 +134,18 @@ export default function Modal({
   );
 }
 
+export interface ConfirmModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm?: () => void | Promise<void>;
+  title?: string;
+  message?: ReactNode;
+  confirmText?: string;
+  cancelText?: string;
+  variant?: "primary" | "secondary" | "danger" | "ghost" | string;
+  loading?: boolean;
+}
+
 export function ConfirmModal({
   isOpen,
   onClose,
@@ -144,7 +156,7 @@ export function ConfirmModal({
   cancelText = "Cancel",
   variant = "danger",
   loading = false,
-}: any) {
+}: ConfirmModalProps) {
   return (
     <Modal
       isOpen={isOpen}

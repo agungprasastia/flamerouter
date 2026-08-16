@@ -1,9 +1,15 @@
 import { CLINEPASS_CONFIG } from "../constants/oauth";
 
+interface ClinePassConfigLike {
+  authorizeUrl?: string;
+  tokenUrl?: string;
+  [key: string]: unknown;
+}
+
 const clinepass = {
   config: CLINEPASS_CONFIG,
   flowType: "authorization_code",
-  buildAuthUrl: (config, redirectUri) => {
+  buildAuthUrl: (config: ClinePassConfigLike, redirectUri: string) => {
     const params = new URLSearchParams({
       client_type: "extension",
       callback_url: redirectUri,
@@ -11,7 +17,7 @@ const clinepass = {
     });
     return `${config.authorizeUrl}?${params.toString()}`;
   },
-  exchangeToken: async (config, code, redirectUri) => {
+  exchangeToken: async (config: ClinePassConfigLike, code: string, redirectUri: string) => {
     try {
       // Cline encodes token data as base64 in the code param
       let base64 = code;
@@ -20,7 +26,14 @@ const clinepass = {
       const decoded = Buffer.from(base64, "base64").toString("utf-8");
       const lastBrace = decoded.lastIndexOf("}");
       if (lastBrace === -1) throw new Error("No JSON found in decoded code");
-      const tokenData = JSON.parse(decoded.substring(0, lastBrace + 1));
+      const tokenData = JSON.parse(decoded.substring(0, lastBrace + 1)) as {
+        accessToken?: string;
+        refreshToken?: string;
+        email?: string;
+        firstName?: string;
+        lastName?: string;
+        expiresAt?: string | number;
+      };
       return {
         access_token: tokenData.accessToken,
         refresh_token: tokenData.refreshToken,
@@ -29,8 +42,8 @@ const clinepass = {
         lastName: tokenData.lastName,
         expires_at: tokenData.expiresAt,
       };
-    } catch (e) {
-      const response = await fetch(config.tokenUrl, {
+    } catch {
+      const response = await fetch(config.tokenUrl || "", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -47,7 +60,12 @@ const clinepass = {
         const error = await response.text();
         throw new Error(`ClinePass token exchange failed: ${error}`);
       }
-      const data = await response.json();
+      const data = (await response.json()) as {
+        data?: { accessToken?: string; refreshToken?: string; userInfo?: { email?: string }; expiresAt?: string | number };
+        accessToken?: string;
+        refreshToken?: string;
+        expiresAt?: string | number;
+      };
       return {
         access_token: data.data?.accessToken || data.accessToken,
         refresh_token: data.data?.refreshToken || data.refreshToken,
@@ -56,11 +74,11 @@ const clinepass = {
       };
     }
   },
-  mapTokens: (tokens) => ({
+  mapTokens: (tokens: Record<string, unknown>) => ({
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
     expiresIn: tokens.expires_at
-      ? Math.floor((new Date(tokens.expires_at).getTime() - Date.now()) / 1000)
+      ? Math.floor((new Date(tokens.expires_at as string | number).getTime() - Date.now()) / 1000)
       : 3600,
     email: tokens.email,
     providerSpecificData: {

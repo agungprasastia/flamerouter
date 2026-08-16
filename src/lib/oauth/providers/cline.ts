@@ -1,9 +1,15 @@
 import { CLINE_CONFIG } from "../constants/oauth";
 
+interface ClineConfigLike {
+  authorizeUrl?: string;
+  tokenExchangeUrl?: string;
+  [key: string]: unknown;
+}
+
 const cline = {
   config: CLINE_CONFIG,
   flowType: "authorization_code",
-  buildAuthUrl: (config, redirectUri) => {
+  buildAuthUrl: (config: ClineConfigLike, redirectUri: string) => {
     const params = new URLSearchParams({
       client_type: "extension",
       callback_url: redirectUri,
@@ -11,7 +17,7 @@ const cline = {
     });
     return `${config.authorizeUrl}?${params.toString()}`;
   },
-  exchangeToken: async (config, code, redirectUri) => {
+  exchangeToken: async (config: ClineConfigLike, code: string, redirectUri: string) => {
     try {
       // Cline encodes token data as base64 in the code param
       let base64 = code;
@@ -20,7 +26,14 @@ const cline = {
       const decoded = Buffer.from(base64, "base64").toString("utf-8");
       const lastBrace = decoded.lastIndexOf("}");
       if (lastBrace === -1) throw new Error("No JSON found in decoded code");
-      const tokenData = JSON.parse(decoded.substring(0, lastBrace + 1));
+      const tokenData = JSON.parse(decoded.substring(0, lastBrace + 1)) as {
+        accessToken?: string;
+        refreshToken?: string;
+        email?: string;
+        firstName?: string;
+        lastName?: string;
+        expiresAt?: string | number;
+      };
       return {
         access_token: tokenData.accessToken,
         refresh_token: tokenData.refreshToken,
@@ -29,8 +42,8 @@ const cline = {
         lastName: tokenData.lastName,
         expires_at: tokenData.expiresAt,
       };
-    } catch (e) {
-      const response = await fetch(config.tokenExchangeUrl, {
+    } catch {
+      const response = await fetch(config.tokenExchangeUrl || "", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -47,7 +60,12 @@ const cline = {
         const error = await response.text();
         throw new Error(`Cline token exchange failed: ${error}`);
       }
-      const data = await response.json();
+      const data = (await response.json()) as {
+        data?: { accessToken?: string; refreshToken?: string; userInfo?: { email?: string }; expiresAt?: string | number };
+        accessToken?: string;
+        refreshToken?: string;
+        expiresAt?: string | number;
+      };
       return {
         access_token: data.data?.accessToken || data.accessToken,
         refresh_token: data.data?.refreshToken || data.refreshToken,
@@ -56,11 +74,11 @@ const cline = {
       };
     }
   },
-  mapTokens: (tokens) => ({
+  mapTokens: (tokens: Record<string, unknown>) => ({
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
     expiresIn: tokens.expires_at
-      ? Math.floor((new Date(tokens.expires_at).getTime() - Date.now()) / 1000)
+      ? Math.floor((new Date(tokens.expires_at as string | number).getTime() - Date.now()) / 1000)
       : 3600,
     email: tokens.email,
     providerSpecificData: {

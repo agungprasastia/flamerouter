@@ -1,7 +1,11 @@
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 
-export default function CooldownTimer({ until }) {
+interface CooldownTimerProps {
+  until: string | number | Date;
+}
+
+export default function CooldownTimer({ until }: CooldownTimerProps) {
   const [remaining, setRemaining] = useState("");
 
   useEffect(() => {

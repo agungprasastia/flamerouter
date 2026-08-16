@@ -11,9 +11,6 @@ import {
 import {
   enableTunnel,
   enableTailscale,
-  isTunnelManuallyDisabled,
-  isTunnelReconnecting,
-  isTailscaleReconnecting,
   getTunnelService,
   getTailscaleService,
   setTunnelUnexpectedExitCallback,
@@ -67,8 +64,25 @@ process.setMaxListeners(20);
 // starved by DB cleanup, cloudflared download, lsof/DNS probes and OAuth pings.
 const STARTUP_DEFER_MS = 3000;
 
+interface AppSingleton {
+  signalHandlersRegistered: boolean;
+  watchdogInterval: NodeJS.Timeout | null;
+  networkMonitorInterval: NodeJS.Timeout | null;
+  lastNetworkFingerprint: string | null;
+  lastWatchdogTick: number;
+  lastOnline: boolean | null;
+  mitmStartInProgress: boolean;
+  tunnelAutoResumed: boolean;
+  tailscaleAutoResumed: boolean;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __appSingleton: AppSingleton | undefined;
+}
+
 // Survive Next.js hot reload
-const g = (global.__appSingleton ??= {
+const g: AppSingleton = (globalThis.__appSingleton ??= {
   signalHandlersRegistered: false,
   watchdogInterval: null,
   networkMonitorInterval: null,
@@ -79,6 +93,15 @@ const g = (global.__appSingleton ??= {
   tunnelAutoResumed: false,
   tailscaleAutoResumed: false,
 });
+
+export interface AppSettings {
+  tunnelEnabled?: boolean;
+  tailscaleEnabled?: boolean;
+  mitmEnabled?: boolean;
+  claudeAutoPing?: { connections?: Record<string, boolean> };
+  codexAutoPing?: { connections?: Record<string, boolean> };
+  [key: string]: unknown;
+}
 
 export async function initializeApp() {
   try {
@@ -117,9 +140,10 @@ export async function initializeApp() {
 
     // Defer the heavy work — nothing here blocks incoming requests.
     setTimeout(() => {
-      runHeavyStartup().catch((e) =>
-        console.error("[InitApp] deferred startup failed:", e.message),
-      );
+      runHeavyStartup().catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : "unknown error";
+        console.error("[InitApp] deferred startup failed:", msg);
+      });
     }, STARTUP_DEFER_MS);
   } catch (error) {
     console.error("[InitApp] Error:", error);
@@ -128,24 +152,26 @@ export async function initializeApp() {
 
 async function runHeavyStartup() {
   await cleanupProviderConnections();
-  const settings = await getSettings();
+  const settings = (await getSettings()) as AppSettings;
 
   // Auto-resume tunnel (once per process)
   if (settings.tunnelEnabled && !g.tunnelAutoResumed) {
     g.tunnelAutoResumed = true;
     console.log("[InitApp] Tunnel was enabled, auto-resuming...");
-    safeRestartTunnel("startup").catch((e) =>
-      console.log("[InitApp] Tunnel resume failed:", e.message),
-    );
+    safeRestartTunnel("startup").catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : "unknown error";
+      console.log("[InitApp] Tunnel resume failed:", msg);
+    });
   }
 
   // Auto-resume tailscale (once per process)
   if (settings.tailscaleEnabled && !g.tailscaleAutoResumed) {
     g.tailscaleAutoResumed = true;
     console.log("[InitApp] Tailscale was enabled, auto-resuming...");
-    safeRestartTailscale("startup").catch((e) =>
-      console.log("[InitApp] Tailscale resume failed:", e.message),
-    );
+    safeRestartTailscale("startup").catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : "unknown error";
+      console.log("[InitApp] Tailscale resume failed:", msg);
+    });
   }
 
   if (settings.tunnelEnabled) ensureCloudflared().catch(() => {});
@@ -161,19 +187,20 @@ async function runHeavyStartup() {
   if (hasQuotaAutoPingEnabled(settings)) {
     import("@/shared/services/quotaAutoPing")
       .then(({ startQuotaAutoPing }) => startQuotaAutoPing())
-      .catch((e) =>
-        console.log("[AutoPing] scheduler start failed:", e.message),
-      );
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : "unknown error";
+        console.log("[AutoPing] scheduler start failed:", msg);
+      });
   }
 }
 
-function hasQuotaAutoPingEnabled(settings) {
+function hasQuotaAutoPingEnabled(settings?: AppSettings | null): boolean {
   return [settings?.claudeAutoPing, settings?.codexAutoPing].some((config) =>
     Object.values(config?.connections || {}).some(Boolean),
   );
 }
 
-async function autoStartMitm(settings) {
+async function autoStartMitm(settings: AppSettings) {
   if (g.mitmStartInProgress) return;
   g.mitmStartInProgress = true;
   try {
@@ -190,19 +217,21 @@ async function autoStartMitm(settings) {
     }
 
     const keys = await getApiKeys();
-    const activeKey = keys.find((k) => k.isActive !== false);
+    const activeKey = keys.find((k: { isActive?: boolean; key?: string }) => k.isActive !== false);
 
     console.log("[InitApp] MITM was enabled, auto-starting...");
     await startMitm(activeKey?.key || "sk_flamerouter", password);
     console.log("[InitApp] MITM auto-started");
     try {
-      await restoreToolDNS(password);
+      await restoreToolDNS(password || undefined);
       console.log("[InitApp] DNS restored from saved state");
-    } catch (e) {
-      console.log("[InitApp] DNS restore failed:", e.message);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "unknown error";
+      console.log("[InitApp] DNS restore failed:", msg);
     }
-  } catch (err) {
-    console.log("[InitApp] MITM auto-start failed:", err.message);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "unknown error";
+    console.log("[InitApp] MITM auto-start failed:", msg);
   } finally {
     g.mitmStartInProgress = false;
   }
@@ -215,9 +244,9 @@ const FORCE_RESTART_REASONS =
 
 // ─── Safe restart (4 guards: spawn / cooldown / alive / internet) ────────────
 
-async function safeRestartTunnel(reason) {
+async function safeRestartTunnel(reason: string) {
   const svc = getTunnelService();
-  const settings = await getSettings();
+  const settings = (await getSettings()) as AppSettings;
   if (!settings.tunnelEnabled) return;
   if (svc.cancelToken.cancelled) return;
   if (svc.spawnInProgress) return;
@@ -241,16 +270,17 @@ async function safeRestartTunnel(reason) {
     await enableTunnel();
     svc.lastRestartAt = Date.now();
     console.log("[Tunnel] restart success");
-  } catch (err) {
-    if (!/cloudflared killed|tunnel cancelled/.test(err.message)) {
-      console.log("[Tunnel] restart failed:", err.message);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "unknown error";
+    if (!/cloudflared killed|tunnel cancelled/.test(msg)) {
+      console.log("[Tunnel] restart failed:", msg);
     }
   }
 }
 
-async function safeRestartTailscale(reason) {
+async function safeRestartTailscale(reason: string) {
   const svc = getTailscaleService();
-  const settings = await getSettings();
+  const settings = (await getSettings()) as AppSettings;
   if (!settings.tailscaleEnabled) return;
   if (svc.cancelToken.cancelled) return;
   if (svc.spawnInProgress) return;
@@ -269,8 +299,9 @@ async function safeRestartTailscale(reason) {
       await startFunnel(svc.activeLocalPort);
       svc.lastRestartAt = Date.now();
       console.log("[Tailscale] funnel re-established (daemon alive)");
-    } catch (err) {
-      console.log("[Tailscale] funnel recovery failed:", err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      console.log("[Tailscale] funnel recovery failed:", msg);
     }
     return;
   }
@@ -289,8 +320,9 @@ async function safeRestartTailscale(reason) {
     await enableTailscale();
     svc.lastRestartAt = Date.now();
     console.log("[Tailscale] restart success");
-  } catch (err) {
-    console.log("[Tailscale] restart failed:", err.message);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "unknown error";
+    console.log("[Tailscale] restart failed:", msg);
   }
 }
 
@@ -368,8 +400,9 @@ function startNetworkMonitor() {
             : "netchange";
       safeRestartTunnel(reason).catch(() => {});
       safeRestartTailscale(reason).catch(() => {});
-    } catch (err) {
-      console.log("[NetworkMonitor] error:", err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      console.log("[NetworkMonitor] error:", msg);
     }
   }, NETWORK_CHECK_INTERVAL_MS);
 
@@ -384,7 +417,7 @@ function stopNetworkMonitor() {
   g.lastOnline = null;
 }
 
-export function configureTunnelMonitoring(settings) {
+export function configureTunnelMonitoring(settings?: AppSettings | null) {
   if (settings?.tunnelEnabled || settings?.tailscaleEnabled) {
     startWatchdog();
     startNetworkMonitor();

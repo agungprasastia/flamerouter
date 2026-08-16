@@ -6,8 +6,8 @@ resolver.setServers(["1.1.1.1", "1.0.0.1", "8.8.8.8"]);
 
 // Try custom public DNS first, fall back to OS resolver
 // (Cloudflare DNS may not resolve all hostnames, e.g. *.ts.net)
-export async function resolveDns(hostname, timeoutMs) {
-  const tryResolver = (fn) =>
+export async function resolveDns(hostname: string, timeoutMs: number): Promise<boolean> {
+  const tryResolver = (fn: () => Promise<unknown>) =>
     Promise.race([
       fn(),
       new Promise((_, rej) =>

@@ -7,15 +7,15 @@ const MICROSOFT_TOKEN_ENDPOINT_HOSTS = new Set([
 const DEFAULT_REGION = "us-east-1";
 const DEFAULT_EXPIRES_IN = 3600;
 
-function normalizeString(value) {
+function normalizeString(value?: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function validateMicrosoftTokenEndpoint(rawEndpoint) {
+export function validateMicrosoftTokenEndpoint(rawEndpoint?: unknown): string {
   const tokenEndpoint = normalizeString(rawEndpoint);
   if (!tokenEndpoint) throw new Error("token_endpoint is required");
 
-  let parsed;
+  let parsed: URL;
   try {
     parsed = new URL(tokenEndpoint);
   } catch {
@@ -34,32 +34,32 @@ export function validateMicrosoftTokenEndpoint(rawEndpoint) {
   return parsed.toString();
 }
 
-export function normalizeScope(scopes) {
+export function normalizeScope(scopes?: string[] | string | null): string {
   if (Array.isArray(scopes)) {
-    return scopes.map(normalizeString).filter(Boolean).join(" ");
+    return scopes.map((s) => normalizeString(s)).filter(Boolean).join(" ");
   }
   return normalizeString(scopes);
 }
 
-export function decodeJwtPayload(jwt) {
+export function decodeJwtPayload(jwt?: string | null): Record<string, unknown> | null {
   try {
     if (!jwt || typeof jwt !== "string") return null;
     const parts = jwt.split(".");
     if (parts.length !== 3) return null;
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const base64 = (parts[1] || "").replace(/-/g, "+").replace(/_/g, "/");
     const padding = (4 - (base64.length % 4)) % 4;
     return JSON.parse(
       Buffer.from(`${base64}${"=".repeat(padding)}`, "base64").toString("utf8"),
-    );
+    ) as Record<string, unknown>;
   } catch {
     return null;
   }
 }
 
-function resolveExpiresAt(input) {
+function resolveExpiresAt(input: Record<string, unknown>): string {
   const explicit = input.expired || input.expires_at || input.expiresAt;
   if (explicit) {
-    const ms = new Date(explicit).getTime();
+    const ms = new Date(explicit as string | number | Date).getTime();
     if (Number.isFinite(ms)) return new Date(ms).toISOString();
   }
 
@@ -68,22 +68,40 @@ function resolveExpiresAt(input) {
     return new Date(Date.now() + expiresIn * 1000).toISOString();
   }
 
-  const payload = decodeJwtPayload(input.access_token || input.accessToken);
-  if (payload?.exp) {
+  const payload = decodeJwtPayload((input.access_token || input.accessToken) as string);
+  if (payload?.exp && typeof payload.exp === "number") {
     return new Date(payload.exp * 1000).toISOString();
   }
 
   return new Date(Date.now() + DEFAULT_EXPIRES_IN * 1000).toISOString();
 }
 
-export function normalizeKiroExternalIdpAuth(rawAuth) {
-  let input = rawAuth;
-  if (typeof input === "string") {
+export interface KiroExternalIdpAuthResult {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+  email: string | null;
+  providerSpecificData: {
+    profileArn: string;
+    region: string;
+    authMethod: string;
+    provider: string;
+    clientId: string;
+    tokenEndpoint: string;
+    scope: string;
+  };
+}
+
+export function normalizeKiroExternalIdpAuth(rawAuth: unknown): KiroExternalIdpAuthResult {
+  let input: Record<string, unknown> | null = null;
+  if (typeof rawAuth === "string") {
     try {
-      input = JSON.parse(input);
+      input = JSON.parse(rawAuth) as Record<string, unknown>;
     } catch {
       throw new Error("CLIProxyAPI auth JSON is invalid");
     }
+  } else if (rawAuth && typeof rawAuth === "object") {
+    input = rawAuth as Record<string, unknown>;
   }
 
   if (!input || typeof input !== "object") {
@@ -107,7 +125,7 @@ export function normalizeKiroExternalIdpAuth(rawAuth) {
   );
   const profileArn = normalizeString(input.profile_arn || input.profileArn);
   const region = normalizeString(input.region) || DEFAULT_REGION;
-  const scope = normalizeScope(input.scopes || input.scope);
+  const scope = normalizeScope((input.scopes || input.scope) as string | string[]);
 
   if (!accessToken) throw new Error("access_token is required");
   if (!refreshToken) throw new Error("refresh_token is required");
@@ -116,13 +134,12 @@ export function normalizeKiroExternalIdpAuth(rawAuth) {
   if (!profileArn) throw new Error("profile_arn is required");
 
   const payload = decodeJwtPayload(accessToken);
-  const email =
-    input.email ||
+  const email = (input.email ||
     payload?.email ||
     payload?.preferred_username ||
     payload?.upn ||
     payload?.sub ||
-    null;
+    null) as string | null;
 
   return {
     accessToken,
@@ -142,8 +159,8 @@ export function normalizeKiroExternalIdpAuth(rawAuth) {
 }
 
 export function buildExternalIdpRefreshParams(
-  refreshToken,
-  providerSpecificData = {},
+  refreshToken?: string | null,
+  providerSpecificData: Record<string, unknown> = {},
 ) {
   const clientId = normalizeString(
     providerSpecificData.clientId || providerSpecificData.client_id,
@@ -152,7 +169,7 @@ export function buildExternalIdpRefreshParams(
     providerSpecificData.tokenEndpoint || providerSpecificData.token_endpoint,
   );
   const scope = normalizeScope(
-    providerSpecificData.scope || providerSpecificData.scopes,
+    (providerSpecificData.scope || providerSpecificData.scopes) as string | string[],
   );
 
   if (!refreshToken) throw new Error("refresh token is required");

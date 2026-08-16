@@ -16,7 +16,13 @@ const KEEP_BACKUPS = 3;
 // Tables excluded from safety backups (large, non-critical, reproducible).
 const BACKUP_EXCLUDE_TABLES = ["requestDetails"];
 
-export function makeBackupDir(label) {
+export interface DbAdapterLike {
+  exec(sql: string): void;
+  all<T = unknown>(sql: string, params?: unknown[]): T[];
+  transaction<T>(fn: () => T): T;
+}
+
+export function makeBackupDir(label: string): string {
   ensureDirs();
   const ver = getAppVersion();
   const slug = `${label}-${ver}-${timestampSlug()}`;
@@ -25,7 +31,7 @@ export function makeBackupDir(label) {
   return dir;
 }
 
-export function backupFile(srcPath, destDir, destName = null) {
+export function backupFile(srcPath: string, destDir: string, destName: string | null = null): string | null {
   if (!fs.existsSync(srcPath)) return null;
   const name = destName || path.basename(srcPath);
   const dest = path.join(destDir, name);
@@ -36,7 +42,7 @@ export function backupFile(srcPath, destDir, destName = null) {
 // Lightweight DB backup via ATTACH: create an empty sqlite file, copy every
 // table EXCEPT the excluded ones into it. Avoids duplicating the huge
 // observability log, so the backup stays small regardless of DB size.
-export function backupDbLite(adapter, destDir, destName = "data.sqlite") {
+export function backupDbLite(adapter: DbAdapterLike, destDir: string, destName = "data.sqlite"): string {
   const dest = path.join(destDir, destName);
   try {
     fs.rmSync(dest, { force: true });
@@ -47,7 +53,7 @@ export function backupDbLite(adapter, destDir, destName = "data.sqlite") {
   try {
     const excluded = new Set(BACKUP_EXCLUDE_TABLES);
     const tables = adapter
-      .all(
+      .all<{ name: string; sql: string }>(
         `SELECT name, sql FROM main.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
       )
       .filter((t) => !excluded.has(t.name));

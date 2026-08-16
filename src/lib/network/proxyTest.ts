@@ -3,11 +3,21 @@ import { ProxyAgent, fetch as undiciFetch } from "undici";
 const DEFAULT_TEST_URL = "https://google.com/";
 const DEFAULT_TIMEOUT_MS = 8000;
 
-function getErrorMessage(err) {
+interface ErrorLike {
+  message?: string;
+  code?: string;
+  cause?: {
+    code?: string;
+    message?: string;
+  };
+}
+
+function getErrorMessage(err: unknown): string {
   if (!err) return "Unknown error";
-  const base = err?.message || String(err);
-  const causeCode = err?.cause?.code || err?.code;
-  const causeMessage = err?.cause?.message;
+  const e = err as ErrorLike;
+  const base = e?.message || String(err);
+  const causeCode = e?.cause?.code || e?.code;
+  const causeMessage = e?.cause?.message;
 
   if (causeMessage && causeMessage !== base) {
     return causeCode
@@ -22,12 +32,27 @@ function getErrorMessage(err) {
   return base;
 }
 
-function normalizeString(value) {
+function normalizeString(value?: unknown): string {
   if (value === undefined || value === null) return "";
   return String(value).trim();
 }
 
-export async function testProxyUrl({ proxyUrl, testUrl, timeoutMs } = {}) {
+export interface TestProxyUrlOptions {
+  proxyUrl?: string;
+  testUrl?: string;
+  timeoutMs?: number | string;
+}
+
+export interface TestProxyResult {
+  ok: boolean;
+  status: number;
+  statusText?: string;
+  url?: string;
+  elapsedMs?: number;
+  error?: string;
+}
+
+export async function testProxyUrl({ proxyUrl, testUrl, timeoutMs }: TestProxyUrlOptions = {}): Promise<TestProxyResult> {
   const normalizedProxyUrl = normalizeString(proxyUrl);
   if (!normalizedProxyUrl) {
     return { ok: false, status: 400, error: "proxyUrl is required" };
@@ -40,16 +65,17 @@ export async function testProxyUrl({ proxyUrl, testUrl, timeoutMs } = {}) {
       ? Math.min(timeoutMsRaw, 30000)
       : DEFAULT_TIMEOUT_MS;
 
-  let dispatcher;
+  let dispatcher: ProxyAgent | undefined;
 
   try {
     try {
       dispatcher = new ProxyAgent({ uri: normalizedProxyUrl });
-    } catch (err) {
+    } catch (err: unknown) {
+      const e = err as Error;
       return {
         ok: false,
         status: 400,
-        error: `Invalid proxy URL: ${err?.message || String(err)}`,
+        error: `Invalid proxy URL: ${e?.message || String(err)}`,
       };
     }
 
@@ -74,9 +100,10 @@ export async function testProxyUrl({ proxyUrl, testUrl, timeoutMs } = {}) {
         url: normalizedTestUrl,
         elapsedMs: Date.now() - startedAt,
       };
-    } catch (err) {
+    } catch (err: unknown) {
+      const e = err as { name?: string };
       const message =
-        err?.name === "AbortError"
+        e?.name === "AbortError"
           ? "Proxy test timed out"
           : getErrorMessage(err);
       return { ok: false, status: 500, error: message };

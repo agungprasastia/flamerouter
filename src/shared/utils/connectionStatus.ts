@@ -1,4 +1,9 @@
-export function getStatusVariant(isActive, effectiveStatus) {
+export type StatusVariant = "default" | "success" | "error";
+
+export function getStatusVariant(
+  isActive?: boolean | null,
+  effectiveStatus?: string | null
+): StatusVariant {
   if (isActive === false) return "default";
   if (effectiveStatus === "active" || effectiveStatus === "success")
     return "success";

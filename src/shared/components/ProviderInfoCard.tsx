@@ -2,33 +2,70 @@
 
 import Card from "./Card";
 
+interface FieldSchemaItem {
+  label: string;
+  format: (v: unknown) => string;
+  mono?: boolean;
+  isLink?: boolean;
+}
+
 // Only show fields user actually cares about
-const FIELD_SCHEMA = {
-  mode: { label: "Mode", format: (v) => v },
-  defaultModel: { label: "Model", format: (v) => v, mono: true },
-  baseUrl: { label: "Endpoint", format: (v) => v, isLink: true, mono: true },
+const FIELD_SCHEMA: Record<string, FieldSchemaItem> = {
+  mode: { label: "Mode", format: (v) => String(v) },
+  defaultModel: { label: "Model", format: (v) => String(v), mono: true },
+  baseUrl: { label: "Endpoint", format: (v) => String(v), isLink: true, mono: true },
   costPerQuery: {
     label: "Cost / call",
-    format: (v) => (v === 0 ? "Free" : `$${v.toFixed(4)}`),
+    format: (v) => {
+      const num = Number(v);
+      return num === 0 ? "Free" : `$${num.toFixed(4)}`;
+    },
   },
   pricingUrl: { label: "Pricing", format: () => "View pricing", isLink: true },
-  freeTier: { label: "Free tier", format: (v) => v },
+  freeTier: { label: "Free tier", format: (v) => String(v) },
   freeMonthlyQuota: {
     label: "Free quota",
-    format: (v) =>
-      v === 0 ? "—" : v >= 999999 ? "Unlimited" : `${v.toLocaleString()} / mo`,
+    format: (v) => {
+      const num = Number(v);
+      return num === 0 ? "—" : num >= 999999 ? "Unlimited" : `${num.toLocaleString()} / mo`;
+    },
   },
-  searchTypes: { label: "Types", format: (v) => v.join(", ") },
-  formats: { label: "Formats", format: (v) => v.join(", ") },
-  maxMaxResults: { label: "Max results", format: (v) => v },
-  maxCharacters: { label: "Max chars", format: (v) => v.toLocaleString() },
+  searchTypes: {
+    label: "Types",
+    format: (v) => (Array.isArray(v) ? v.join(", ") : String(v)),
+  },
+  formats: {
+    label: "Formats",
+    format: (v) => (Array.isArray(v) ? v.join(", ") : String(v)),
+  },
+  maxMaxResults: { label: "Max results", format: (v) => String(v) },
+  maxCharacters: {
+    label: "Max chars",
+    format: (v) => Number(v).toLocaleString(),
+  },
 };
+
+export interface ProviderNotice {
+  apiKeyUrl?: string;
+  text?: string;
+}
+
+export interface ProviderObj {
+  notice?: ProviderNotice;
+  website?: string;
+}
+
+export interface ProviderInfoCardProps {
+  config?: Record<string, unknown> | null;
+  provider?: ProviderObj | null;
+  title?: string;
+}
 
 export default function ProviderInfoCard({
   config,
   provider,
   title = "Provider Info",
-}) {
+}: ProviderInfoCardProps) {
   if (!config) return null;
 
   const rows = Object.entries(FIELD_SCHEMA)
@@ -40,9 +77,9 @@ export default function ProviderInfoCard({
       key,
       label: schema.label,
       value: schema.format(config[key]),
-      isLink: (schema as any).isLink,
-      mono: (schema as any).mono,
-      raw: config[key],
+      isLink: schema.isLink,
+      mono: schema.mono,
+      raw: String(config[key]),
     }));
 
   const signupUrl = provider?.notice?.apiKeyUrl || provider?.website;

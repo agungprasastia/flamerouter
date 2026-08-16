@@ -12,14 +12,23 @@ import {
   MitmServerCard,
   MitmToolCard,
 } from "@/app/(dashboard)/dashboard/cli-tools/components";
+import type { MitmServerStatus } from "@/app/(dashboard)/dashboard/cli-tools/components/MitmServerCard";
+import type { ApiKeyItem } from "@/app/(dashboard)/dashboard/cli-tools/components/ApiKeySelect";
+
+interface ConnectionItem {
+  id?: string;
+  provider: string;
+  isActive?: boolean;
+  [key: string]: unknown;
+}
 
 export default function MitmPageClient() {
-  const [connections, setConnections] = useState([]);
-  const [apiKeys, setApiKeys] = useState([]);
-  const [modelAliases, setModelAliases] = useState({});
+  const [connections, setConnections] = useState<ConnectionItem[]>([]);
+  const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([]);
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
   const [cloudEnabled, setCloudEnabled] = useState(false);
-  const [expandedTool, setExpandedTool] = useState(null);
-  const [mitmStatus, setMitmStatus] = useState({
+  const [expandedTool, setExpandedTool] = useState<string | null>(null);
+  const [mitmStatus, setMitmStatus] = useState<MitmServerStatus>({
     running: false,
     certExists: false,
     dnsStatus: {},
@@ -127,7 +136,7 @@ export default function MitmPageClient() {
               setExpandedTool(expandedTool === toolId ? null : toolId)
             }
             serverRunning={mitmStatus.running}
-            dnsActive={mitmStatus.dnsStatus?.[toolId] || false}
+            dnsActive={Boolean(mitmStatus.dnsStatus?.[toolId])}
             hasCachedPassword={mitmStatus.hasCachedPassword || false}
             needsSudoPassword={mitmStatus.needsSudoPassword !== false}
             isWin={mitmStatus.isWin === true}
@@ -136,12 +145,13 @@ export default function MitmPageClient() {
             hasActiveProviders={hasActiveProviders()}
             modelAliases={modelAliases}
             cloudEnabled={cloudEnabled}
-            onDnsChange={(data) =>
+            onDnsChange={(data: unknown) => {
+              const d = data as { dnsStatus?: Record<string, unknown> };
               setMitmStatus((prev) => ({
                 ...prev,
-                dnsStatus: data.dnsStatus ?? prev.dnsStatus,
-              }))
-            }
+                dnsStatus: d?.dnsStatus ?? prev.dnsStatus,
+              }));
+            }}
           />
         ))}
       </div>

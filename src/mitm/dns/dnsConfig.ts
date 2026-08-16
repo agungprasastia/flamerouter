@@ -1,17 +1,17 @@
-const { exec, spawn, execSync } = require("child_process");
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
-const { log, err } = require("../logger");
-const { TOOL_HOSTS } = require("../../shared/constants/mitmToolHosts");
-const { runElevatedPowerShell, isAdmin } = require("../winElevated");
+import { exec, spawn, execSync } from "child_process";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+import { log, err } from "../logger";
+import { TOOL_HOSTS } from "../../shared/constants/mitmToolHosts";
+import { runElevatedPowerShell, isAdmin } from "../winElevated";
 
 /**
  * Atomic-ish write for Windows hosts file with rollback on failure.
  * Strategy: write `.new` sibling → rename current to `.bak` → rename `.new` to target.
  * If anything fails mid-way, restore from `.bak`. Same-volume renames are atomic on NTFS.
  */
-function atomicWriteHostsWin(target, originalContent, newContent) {
+function atomicWriteHostsWin(target: string, originalContent: string, newContent: string) {
   const tmpNew = `${target}.flamerouter.new`;
   const tmpBak = `${target}.flamerouter.bak`;
   try {
@@ -88,7 +88,7 @@ function isSudoPasswordRequired() {
  * Execute command with sudo password via stdin (macOS/Linux only).
  * Without sudo in PATH (containers), runs via sh — same user, no elevation.
  */
-function execWithPassword(command, password) {
+function execWithPassword(command: string, password?: string) {
   return new Promise((resolve, reject) => {
     const useSudo = isSudoAvailable();
     const child = useSudo
@@ -115,7 +115,7 @@ function execWithPassword(command, password) {
       else reject(new Error(stderr || `Exit code ${code}`));
     });
 
-    if (useSudo) {
+    if (useSudo && child.stdin) {
       child.stdin.write(`${password}\n`);
       child.stdin.end();
     }
@@ -125,7 +125,7 @@ function execWithPassword(command, password) {
 /**
  * Trim trailing blank lines/whitespace, ensure file ends with exactly one newline.
  */
-function normalizeHostsContent(content) {
+function normalizeHostsContent(content: string) {
   const eol = IS_WIN ? "\r\n" : "\n";
   return content.replace(/[\r\n\s]+$/g, "") + eol;
 }
@@ -133,7 +133,7 @@ function normalizeHostsContent(content) {
 /**
  * Flush DNS cache (macOS/Linux)
  */
-async function flushDNS(sudoPassword) {
+async function flushDNS(sudoPassword?: string) {
   if (IS_WIN) return; // Windows flushes inline via ipconfig
   if (IS_MAC) {
     await execWithPassword(
@@ -151,7 +151,7 @@ async function flushDNS(sudoPassword) {
 /**
  * Check if DNS entry exists for a specific host
  */
-function checkDNSEntry(host = null) {
+function checkDNSEntry(host: string | null = null) {
   try {
     const hostsContent = fs.readFileSync(HOSTS_FILE, "utf8");
     if (host) return hostsContent.includes(host);
@@ -168,9 +168,9 @@ function checkDNSEntry(host = null) {
 function checkAllDNSStatus() {
   try {
     const hostsContent = fs.readFileSync(HOSTS_FILE, "utf8");
-    const result = {};
+    const result: Record<string, boolean> = {};
     for (const [tool, hosts] of Object.entries(TOOL_HOSTS)) {
-      result[tool] = hosts.every((h) => hostsContent.includes(h));
+      result[tool] = (hosts as string[]).every((h) => hostsContent.includes(h));
     }
     return result;
   } catch {
@@ -181,7 +181,7 @@ function checkAllDNSStatus() {
 /**
  * Add DNS entries for a specific tool
  */
-async function addDNSEntry(tool, sudoPassword) {
+async function addDNSEntry(tool: string, sudoPassword?: string) {
   const hosts = TOOL_HOSTS[tool];
   if (!hosts) throw new Error(`Unknown tool: ${tool}`);
 
@@ -215,9 +215,10 @@ async function addDNSEntry(tool, sudoPassword) {
     }
     log(`🌐 DNS ${tool}: ✅ added ${entriesToAdd.join(", ")}`);
   } catch (error) {
-    const msg = error.message?.includes("incorrect password")
+    const e = error as Error;
+    const msg = e.message?.includes("incorrect password")
       ? "Wrong sudo password"
-      : `Failed to add DNS entry: ${error.message}`;
+      : `Failed to add DNS entry: ${e.message}`;
     throw new Error(msg);
   }
 }
@@ -225,7 +226,7 @@ async function addDNSEntry(tool, sudoPassword) {
 /**
  * Remove DNS entries for a specific tool
  */
-async function removeDNSEntry(tool, sudoPassword) {
+async function removeDNSEntry(tool: string, sudoPassword?: string) {
   const hosts = TOOL_HOSTS[tool];
   if (!hosts) throw new Error(`Unknown tool: ${tool}`);
 
@@ -261,9 +262,10 @@ async function removeDNSEntry(tool, sudoPassword) {
     }
     log(`🌐 DNS ${tool}: ✅ removed ${entriesToRemove.join(", ")}`);
   } catch (error) {
-    const msg = error.message?.includes("incorrect password")
+    const e = error as Error;
+    const msg = e.message?.includes("incorrect password")
       ? "Wrong sudo password"
-      : `Failed to remove DNS entry: ${error.message}`;
+      : `Failed to remove DNS entry: ${e.message}`;
     throw new Error(msg);
   }
 }
@@ -271,12 +273,12 @@ async function removeDNSEntry(tool, sudoPassword) {
 /**
  * Remove ALL tool DNS entries (used when stopping server)
  */
-async function removeAllDNSEntries(sudoPassword) {
+async function removeAllDNSEntries(sudoPassword?: string) {
   for (const tool of Object.keys(TOOL_HOSTS)) {
     try {
       await removeDNSEntry(tool, sudoPassword);
     } catch (e) {
-      err(`DNS ${tool}: failed to remove — ${e.message}`);
+      err(`DNS ${tool}: failed to remove — ${(e as Error).message}`);
     }
   }
 }
@@ -326,7 +328,7 @@ function removeAllDNSEntriesSync() {
   }
 }
 
-module.exports = {
+export {
   TOOL_HOSTS,
   addDNSEntry,
   removeDNSEntry,

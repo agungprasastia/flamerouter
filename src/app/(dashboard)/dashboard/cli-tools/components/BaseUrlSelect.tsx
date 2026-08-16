@@ -1,33 +1,57 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 
 const STORAGE_KEY = "flamerouter.cliToolEndpointPresets";
 const CUSTOM_VALUE = "__custom__";
 const SAVE_VALUE = "__save__";
 
-const ensureV1 = (url) => {
+export interface EndpointPreset {
+  name: string;
+  baseUrl: string;
+}
+
+export interface BaseUrlOption {
+  value: string;
+  label: string;
+  url: string;
+  saved?: boolean;
+}
+
+const ensureV1 = (url?: string | null): string => {
   const trimmed = (url || "").replace(/\/+$/, "");
   if (!trimmed) return "";
   return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
 };
 
-const readSavedPresets = () => {
+const readSavedPresets = (): EndpointPreset[] => {
   if (typeof window === "undefined") return [];
   try {
     const raw = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "[]");
     if (!Array.isArray(raw)) return [];
-    return raw.filter((p) => p?.name && p?.baseUrl);
+    return raw.filter((p): p is EndpointPreset => Boolean(p?.name && p?.baseUrl));
   } catch {
     return [];
   }
 };
 
-const writeSavedPresets = (presets) => {
+const writeSavedPresets = (presets: EndpointPreset[]) => {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
 };
+
+export interface BuildOptionsParams {
+  requiresExternalUrl?: boolean;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+  cloudEnabled?: boolean;
+  cloudUrl?: string | null;
+  savedPresets: EndpointPreset[];
+  withV1?: boolean;
+}
 
 const buildOptions = ({
   requiresExternalUrl,
@@ -39,9 +63,9 @@ const buildOptions = ({
   cloudUrl,
   savedPresets,
   withV1,
-}) => {
-  const opts = [];
-  const wrap = (url) =>
+}: BuildOptionsParams): BaseUrlOption[] => {
+  const opts: BaseUrlOption[] = [];
+  const wrap = (url?: string | null) =>
     withV1 ? ensureV1(url) : (url || "").replace(/\/+$/, "");
   if (!requiresExternalUrl) {
     const localUrl = wrap(`http://127.0.0.1:${UPDATER_CONFIG.appPort}`);
@@ -71,6 +95,19 @@ const buildOptions = ({
   return opts;
 };
 
+export interface BaseUrlSelectProps {
+  value?: string | null;
+  onChange: (value: string) => void;
+  requiresExternalUrl?: boolean;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+  cloudEnabled?: boolean;
+  cloudUrl?: string | null;
+  withV1?: boolean;
+}
+
 export default function BaseUrlSelect({
   value,
   onChange,
@@ -82,11 +119,11 @@ export default function BaseUrlSelect({
   cloudEnabled = false,
   cloudUrl = "",
   withV1 = true,
-}) {
-  const [savedPresets, setSavedPresets] = useState([]);
-  const [mode, setMode] = useState("");
-  const [customInput, setCustomInput] = useState("");
-  const initializedRef = useRef(false);
+}: BaseUrlSelectProps) {
+  const [savedPresets, setSavedPresets] = useState<EndpointPreset[]>([]);
+  const [mode, setMode] = useState<string>("");
+  const [customInput, setCustomInput] = useState<string>("");
+  const initializedRef = useRef<boolean>(false);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -134,7 +171,7 @@ export default function BaseUrlSelect({
   }, [options, onChange]);
 
   /* eslint-enable react-hooks/set-state-in-effect */
-  const handleSelect = (e) => {
+  const handleSelect = (e: ChangeEvent<HTMLSelectElement>) => {
     const next = e.target.value;
     if (next === SAVE_VALUE) {
       const trimmed = (value || "").trim();
@@ -145,7 +182,7 @@ export default function BaseUrlSelect({
       } catch {}
       const name = window.prompt("Save endpoint as:", defaultName);
       if (!name?.trim()) return;
-      const updated = [
+      const updated: EndpointPreset[] = [
         ...savedPresets.filter((p) => p.name !== name.trim()),
         { name: name.trim(), baseUrl: trimmed },
       ].sort((a, b) => a.name.localeCompare(b.name));
@@ -163,7 +200,7 @@ export default function BaseUrlSelect({
     if (opt) onChange(opt.url);
   };
 
-  const handleCustomInput = (e) => {
+  const handleCustomInput = (e: ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
     setCustomInput(v);
     onChange(v);

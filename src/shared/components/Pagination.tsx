@@ -3,6 +3,15 @@
 import { cn } from "@/shared/utils/cn";
 import Button from "./Button";
 
+export interface PaginationProps {
+  currentPage: number;
+  pageSize: number;
+  totalItems: number;
+  onPageChange: (newPage: number) => void;
+  onPageSizeChange?: (newPageSize: number) => void;
+  className?: string;
+}
+
 export default function Pagination({
   currentPage,
   pageSize,
@@ -10,13 +19,13 @@ export default function Pagination({
   onPageChange,
   onPageSizeChange,
   className,
-}) {
+}: PaginationProps) {
   const totalPages = Math.ceil(totalItems / pageSize);
   const startItem = totalItems > 0 ? (currentPage - 1) * pageSize + 1 : 0;
   const endItem = Math.min(currentPage * pageSize, totalItems);
 
   const getPageNumbers = () => {
-    const pages = [];
+    const pages: number[] = [];
     const showMax = 5;
 
     let start = Math.max(1, currentPage - 2);

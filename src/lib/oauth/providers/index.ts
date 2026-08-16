@@ -1,11 +1,8 @@
-// Ensure outbound fetch respects HTTP(S)_PROXY/ALL_PROXY in Node runtime
-// clean
-
 import { generatePKCE } from "../utils/pkce";
 import {
-  extractCodexAccountInfo,
   fetchKiroProfileArn,
 } from "../providerHelpers";
+import { extractCodexAccountInfo } from "./codex";
 
 import claude from "./claude";
 import codex from "./codex";
@@ -30,30 +27,46 @@ import trae from "./trae";
 import windsurf from "./windsurf";
 import zed from "./zed";
 
+export interface OAuthProviderHandler {
+  config: Record<string, unknown>;
+  flowType: string;
+  fixedPort?: number;
+  callbackPath?: string;
+  pkceVerifierBytes?: number;
+  prepareConfig?: (config: Record<string, unknown>, meta: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>;
+  buildAuthUrl: (config: Record<string, unknown>, redirectUri: string, state: string, codeChallenge?: string, meta?: Record<string, unknown>) => string;
+  exchangeToken: (config: Record<string, unknown>, code: string, redirectUri: string, codeVerifier: string, state?: string, meta?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  postExchange?: (tokens: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+  mapTokens: (tokens: Record<string, unknown>, extra?: Record<string, unknown> | null) => Record<string, unknown>;
+  requestDeviceCode?: (config: Record<string, unknown>, codeChallenge?: string, options?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  pollToken?: (config: Record<string, unknown>, deviceCode: string, codeVerifier?: string, extraData?: Record<string, unknown>) => Promise<{ ok: boolean; data: Record<string, unknown> }>;
+  [key: string]: unknown;
+}
+
 // Provider configurations
-const PROVIDERS = {
-  claude,
-  codex,
-  xai,
-  "grok-cli": grokCli,
-  "gemini-cli": geminiCli,
-  antigravity,
-  iflow,
-  qoder,
-  github,
-  kiro,
-  cursor,
-  kimi,
-  kilocode,
-  cline,
-  clinepass,
-  gitlab,
-  "codebuddy-cn": codebuddyCn,
-  "codebuddy-intl": codebuddyIntl,
-  kimchi,
-  trae,
-  windsurf,
-  zed,
+const PROVIDERS: Record<string, OAuthProviderHandler> = {
+  claude: claude as unknown as OAuthProviderHandler,
+  codex: codex as unknown as OAuthProviderHandler,
+  xai: xai as unknown as OAuthProviderHandler,
+  "grok-cli": grokCli as unknown as OAuthProviderHandler,
+  "gemini-cli": geminiCli as unknown as OAuthProviderHandler,
+  antigravity: antigravity as unknown as OAuthProviderHandler,
+  iflow: iflow as unknown as OAuthProviderHandler,
+  qoder: qoder as unknown as OAuthProviderHandler,
+  github: github as unknown as OAuthProviderHandler,
+  kiro: kiro as unknown as OAuthProviderHandler,
+  cursor: cursor as unknown as OAuthProviderHandler,
+  kimi: kimi as unknown as OAuthProviderHandler,
+  kilocode: kilocode as unknown as OAuthProviderHandler,
+  cline: cline as unknown as OAuthProviderHandler,
+  clinepass: clinepass as unknown as OAuthProviderHandler,
+  gitlab: gitlab as unknown as OAuthProviderHandler,
+  "codebuddy-cn": codebuddyCn as unknown as OAuthProviderHandler,
+  "codebuddy-intl": codebuddyIntl as unknown as OAuthProviderHandler,
+  kimchi: kimchi as unknown as OAuthProviderHandler,
+  trae: trae as unknown as OAuthProviderHandler,
+  windsurf: windsurf as unknown as OAuthProviderHandler,
+  zed: zed as unknown as OAuthProviderHandler,
 };
 
 export { PROVIDERS };
@@ -64,7 +77,7 @@ export { extractCodexAccountInfo, fetchKiroProfileArn };
 /**
  * Get provider handler
  */
-export function getProvider(name) {
+export function getProvider(name: string): OAuthProviderHandler {
   // Legacy kimi-coding → kimi (dual-auth merge)
   const key = name === "kimi-coding" ? "kimi" : name;
   const provider = PROVIDERS[key];
@@ -77,7 +90,7 @@ export function getProvider(name) {
 /**
  * Get all provider names
  */
-export function getProviderNames() {
+export function getProviderNames(): string[] {
   return Object.keys(PROVIDERS);
 }
 
@@ -85,7 +98,7 @@ export function getProviderNames() {
  * Generate auth data for a provider
  * @param {object} [meta] - Provider-specific metadata (e.g. gitlab clientId/baseUrl)
  */
-export async function generateAuthData(providerName, redirectUri, meta) {
+export async function generateAuthData(providerName: string, redirectUri: string, meta?: Record<string, unknown>) {
   const provider = getProvider(providerName);
   const config = provider.prepareConfig
     ? await provider.prepareConfig(provider.config, meta || {})
@@ -96,11 +109,11 @@ export async function generateAuthData(providerName, redirectUri, meta) {
     state: pkceState,
   } = generatePKCE(provider.pkceVerifierBytes);
   // Trae uses loginTraceID (set by prepareConfig) as the callback matcher, not PKCE state.
-  const state = config.loginTraceID || pkceState;
+  const state = (config.loginTraceID as string) || pkceState;
   // Zed: codeVerifier carries the encoded RSA private key (from prepareConfig), not a PKCE verifier.
-  const codeVerifier = config.privateKeyVerifier || pkceVerifier;
+  const codeVerifier = (config.privateKeyVerifier as string) || pkceVerifier;
 
-  let authUrl;
+  let authUrl: string | null;
   if (provider.flowType === "device_code") {
     // Device code flow doesn't have auth URL upfront
     authUrl = null;
@@ -139,12 +152,12 @@ export async function generateAuthData(providerName, redirectUri, meta) {
  * @param {object} [meta] - Provider-specific metadata (e.g. gitlab clientId/baseUrl)
  */
 export async function exchangeTokens(
-  providerName,
-  code,
-  redirectUri,
-  codeVerifier,
-  state,
-  meta,
+  providerName: string,
+  code: string,
+  redirectUri: string,
+  codeVerifier: string,
+  state?: string,
+  meta?: Record<string, unknown>,
 ) {
   const provider = getProvider(providerName);
   const config = provider.prepareConfig
@@ -160,7 +173,7 @@ export async function exchangeTokens(
     meta || {},
   );
 
-  let extra = null;
+  let extra: Record<string, unknown> | null = null;
   if (provider.postExchange) {
     extra = await provider.postExchange(tokens);
   }
@@ -171,9 +184,9 @@ export async function exchangeTokens(
 /**
  * Request device code (for device_code flow)
  */
-export async function requestDeviceCode(providerName, codeChallenge, options) {
+export async function requestDeviceCode(providerName: string, codeChallenge?: string, options?: Record<string, unknown>) {
   const provider = getProvider(providerName);
-  if (provider.flowType !== "device_code") {
+  if (provider.flowType !== "device_code" || !provider.requestDeviceCode) {
     throw new Error(
       `Provider ${providerName} does not support device code flow`,
     );
@@ -193,13 +206,13 @@ export async function requestDeviceCode(providerName, codeChallenge, options) {
  * @param {object} extraData - Extra data from device code response (e.g. clientId/clientSecret for Kiro)
  */
 export async function pollForToken(
-  providerName,
-  deviceCode,
-  codeVerifier,
-  extraData,
+  providerName: string,
+  deviceCode: string,
+  codeVerifier?: string,
+  extraData?: Record<string, unknown>,
 ) {
   const provider = getProvider(providerName);
-  if (provider.flowType !== "device_code") {
+  if (provider.flowType !== "device_code" || !provider.pollToken) {
     throw new Error(
       `Provider ${providerName} does not support device code flow`,
     );
@@ -216,15 +229,19 @@ export async function pollForToken(
     // For device code flows, success is only when we have an access token
     if (result.data.access_token) {
       // Call postExchange to get additional data (copilotToken, userInfo, etc.)
-      let extra = null;
+      let extra: Record<string, unknown> | null = null;
       if (provider.postExchange) {
         extra = await provider.postExchange(result.data);
       }
       const tokens = provider.mapTokens(result.data, extra);
       // Kiro IDC/Builder-ID tokens lack profileArn; resolve it to avoid 403
-      if (providerName === "kiro" && !tokens.providerSpecificData?.profileArn) {
-        const profileArn = await fetchKiroProfileArn(tokens.accessToken);
-        if (profileArn) tokens.providerSpecificData.profileArn = profileArn;
+      const specific = (tokens.providerSpecificData as Record<string, unknown>) || {};
+      if (providerName === "kiro" && !specific.profileArn) {
+        const profileArn = await fetchKiroProfileArn(tokens.accessToken as string);
+        if (profileArn) {
+          specific.profileArn = profileArn;
+          tokens.providerSpecificData = specific;
+        }
       }
       return { success: true, tokens };
     } else {
@@ -257,8 +274,8 @@ export async function pollForToken(
 
   return {
     success: false,
-    error: result.data.error,
-    errorDescription: result.data.error_description,
+    error: result.data?.error,
+    errorDescription: result.data?.error_description,
   };
 }
 
@@ -266,7 +283,7 @@ export async function pollForToken(
 let codexBackfillDone = false;
 
 // Backfill email + chatgpt account info for existing codex OAuth connections missing them
-export async function backfillCodexEmails() {
+export async function backfillCodexEmails(): Promise<void> {
   if (codexBackfillDone) return;
   codexBackfillDone = true;
   try {
@@ -277,17 +294,17 @@ export async function backfillCodexEmails() {
       if (c.provider !== "codex" || c.authType !== "oauth" || !c.idToken)
         return false;
       const hasEmail = !!c.email;
-      const hasAccountInfo = !!c.providerSpecificData?.chatgptAccountId;
+      const hasAccountInfo = !!(c.providerSpecificData as Record<string, unknown> | undefined)?.chatgptAccountId;
       return !hasEmail || !hasAccountInfo;
     });
     for (const conn of targets) {
-      const info = extractCodexAccountInfo(conn.idToken);
+      const info = extractCodexAccountInfo(conn.idToken as string);
       if (!info.email && !info.chatgptAccountId) continue;
-      const patch = {};
+      const patch: Record<string, unknown> = {};
       if (!conn.email && info.email) patch.email = info.email;
       if (info.chatgptAccountId || info.chatgptPlanType) {
         patch.providerSpecificData = {
-          ...(conn.providerSpecificData || {}),
+          ...((conn.providerSpecificData as Record<string, unknown>) || {}),
           chatgptAccountId: info.chatgptAccountId,
           chatgptPlanType: info.chatgptPlanType,
         };
@@ -296,8 +313,9 @@ export async function backfillCodexEmails() {
         await updateProviderConnection(conn.id, patch);
       }
     }
-  } catch (err) {
+  } catch (err: unknown) {
     codexBackfillDone = false;
-    console.log("backfillCodexEmails failed:", err?.message || err);
+    const e = err as Error;
+    console.log("backfillCodexEmails failed:", e?.message || String(err));
   }
 }

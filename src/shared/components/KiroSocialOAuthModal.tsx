@@ -1,9 +1,20 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import PropTypes from "prop-types";
 import { Modal, Button, Input } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+
+interface KiroAuthData {
+  authUrl: string;
+  codeVerifier: string;
+}
+
+export interface KiroSocialOAuthModalProps {
+  isOpen: boolean;
+  provider: "google" | "github";
+  onSuccess?: () => void;
+  onClose: () => void;
+}
 
 /**
  * Kiro Social OAuth Modal (Google/GitHub)
@@ -14,12 +25,12 @@ export default function KiroSocialOAuthModal({
   provider,
   onSuccess,
   onClose,
-}) {
-  const [step, setStep] = useState("loading"); // loading | input | success | error
+}: KiroSocialOAuthModalProps) {
+  const [step, setStep] = useState<"loading" | "input" | "success" | "error">("loading");
   const [authUrl, setAuthUrl] = useState("");
-  const [authData, setAuthData] = useState(null);
+  const [authData, setAuthData] = useState<KiroAuthData | null>(null);
   const [callbackUrl, setCallbackUrl] = useState("");
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const { copied, copy } = useCopyToClipboard();
   const openedRef = useRef(false);
 
@@ -55,8 +66,9 @@ export default function KiroSocialOAuthModal({
           openedRef.current = true;
           window.open(data.authUrl, "_blank");
         }
-      } catch (err) {
-        setError(err.message);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to initialize auth";
+        setError(msg);
         setStep("error");
       }
     };
@@ -69,16 +81,15 @@ export default function KiroSocialOAuthModal({
       setError(null);
 
       // Parse callback URL - can be either kiro:// or http://localhost format
-      let url;
+      let url: URL;
       try {
         url = new URL(callbackUrl);
-      } catch (e) {
+      } catch {
         // If URL parsing fails, might be malformed
         throw new Error("Invalid callback URL format");
       }
 
       const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
       const errorParam = url.searchParams.get("error");
 
       if (errorParam) {
@@ -89,6 +100,10 @@ export default function KiroSocialOAuthModal({
 
       if (!code) {
         throw new Error("No authorization code found in URL");
+      }
+
+      if (!authData?.codeVerifier) {
+        throw new Error("Missing code verifier for authentication");
       }
 
       // Exchange code for tokens
@@ -107,8 +122,9 @@ export default function KiroSocialOAuthModal({
 
       setStep("success");
       onSuccess?.();
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Authentication failed";
+      setError(msg);
       setStep("error");
     }
   };
@@ -242,10 +258,3 @@ export default function KiroSocialOAuthModal({
     </Modal>
   );
 }
-
-KiroSocialOAuthModal.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  provider: PropTypes.oneOf(["google", "github"]).isRequired,
-  onSuccess: PropTypes.func,
-  onClose: PropTypes.func.isRequired,
-};

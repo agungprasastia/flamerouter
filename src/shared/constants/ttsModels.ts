@@ -1,7 +1,21 @@
 import { GOOGLE_TTS_LANGUAGES } from "./googleTtsLanguages";
 
+export interface TtsItem {
+  id: string;
+  name: string;
+  type?: string;
+  [key: string]: unknown;
+}
+
+export interface TtsProviderConfig {
+  models?: TtsItem[];
+  voices?: Record<string, TtsItem[]>;
+  allVoices?: TtsItem[];
+  defaults?: TtsItem[];
+}
+
 // ── Voice definitions (DRY — reused across providers) ──────────────────────
-const VOICES = {
+const VOICES: Record<string, { id: string; name: string }> = {
   alloy:   { id: "alloy",   name: "Alloy" },
   ash:     { id: "ash",     name: "Ash" },
   ballad:  { id: "ballad",  name: "Ballad" },
@@ -17,7 +31,8 @@ const VOICES = {
   verse:   { id: "verse",   name: "Verse" },
 };
 
-const v = (...keys) => keys.map((k) => ({ ...VOICES[k], type: "tts" }));
+const v = (...keys: string[]): TtsItem[] =>
+  keys.map((k) => ({ ...(VOICES[k] || { id: k, name: k }), type: "tts" }));
 
 // 9 voices for tts-1 / tts-1-hd
 const VOICES_STANDARD = v("alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer");
@@ -25,7 +40,7 @@ const VOICES_STANDARD = v("alloy", "ash", "coral", "echo", "fable", "nova", "ony
 const VOICES_FULL = v("alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse");
 
 // Gemini prebuilt voices (30 voices, multi-language auto-detect)
-const GEMINI_VOICES = [
+const GEMINI_VOICES: TtsItem[] = [
   "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede",
   "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
   "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
@@ -36,7 +51,7 @@ const GEMINI_VOICES = [
 // Xiaomi MiMo preset voices (from https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/speech-synthesis-v2.5).
 // Voice id is passed via `audio.voice`; `mimo_default` = default (冰糖 on CN cluster, Mia elsewhere).
 // Voices are language-independent — the spoken language is a separate hint, not bound to the voice.
-const MIMO_VOICES = [
+const MIMO_VOICES: TtsItem[] = [
   { id: "mimo_default", name: "mimo_default" },
   { id: "冰糖",           name: "冰糖" },
   { id: "茉莉",           name: "茉莉" },
@@ -46,10 +61,10 @@ const MIMO_VOICES = [
   { id: "Chloe",         name: "Chloe" },
   { id: "Milo",          name: "Milo" },
   { id: "Dean",          name: "Dean" },
-].map((v) => ({ type: "tts", ...v }));
+].map((item) => ({ type: "tts", ...item }));
 
 // ── TTS Config (config-driven, single source of truth) ─────────────────────
-export const TTS_MODELS_CONFIG = {
+export const TTS_MODELS_CONFIG: Record<string, TtsProviderConfig> = {
   openai: {
     models: [
       { id: "gpt-4o-mini-tts", name: "GPT-4o Mini TTS", type: "tts" },
@@ -133,22 +148,26 @@ export const TTS_MODELS_CONFIG = {
 };
 
 // ── Helper: get voices for a specific model ────────────────────────────────
-export function getTtsVoicesForModel(provider, modelId) {
+export function getTtsVoicesForModel(provider: string, modelId: string): TtsItem[] | null {
   const cfg = TTS_MODELS_CONFIG[provider];
   if (!cfg?.voices) return null;
   return cfg.voices[modelId] || cfg.allVoices || null;
 }
 
 // ── Build flat entries for PROVIDER_MODELS backward compat ─────────────────
-export function buildTtsProviderModels() {
-  const entries = {};
+export function buildTtsProviderModels(): Record<string, TtsItem[]> {
+  const entries: Record<string, TtsItem[]> = {};
   for (const [provider, cfg] of Object.entries(TTS_MODELS_CONFIG)) {
     if (cfg.models) entries[`${provider}-tts-models`] = cfg.models;
     if (cfg.allVoices) entries[`${provider}-tts-voices`] = cfg.allVoices;
     if (cfg.defaults) entries[provider] = cfg.defaults;
   }
   // Keep openai-tts-voices key pointing to full voice list for backward compat
-  entries["openai-tts-voices"] = TTS_MODELS_CONFIG.openai.allVoices;
-  entries["openrouter-tts-voices"] = TTS_MODELS_CONFIG.openrouter.allVoices;
+  if (TTS_MODELS_CONFIG.openai?.allVoices) {
+    entries["openai-tts-voices"] = TTS_MODELS_CONFIG.openai.allVoices;
+  }
+  if (TTS_MODELS_CONFIG.openrouter?.allVoices) {
+    entries["openrouter-tts-voices"] = TTS_MODELS_CONFIG.openrouter.allVoices;
+  }
   return entries;
 }

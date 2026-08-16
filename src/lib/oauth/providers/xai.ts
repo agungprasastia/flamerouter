@@ -5,17 +5,34 @@ import {
   decodeXaiIdTokenEmail,
 } from "../providerHelpers";
 
-// Inlined from services/xai.js to keep web route bundle free of `open` (CLI-only) package
-let cachedXaiDiscovery = null;
+interface XaiEndpoints {
+  authorizeUrl: string;
+  tokenUrl: string;
+}
 
-async function discoverXaiEndpoints() {
+interface XaiConfigLike {
+  discoveryUrl?: string;
+  authorizeUrl?: string;
+  tokenUrl?: string;
+  loopbackPort?: number;
+  callbackPath?: string;
+  clientId?: string;
+  scope?: string;
+  codeChallengeMethod?: string;
+  [key: string]: unknown;
+}
+
+// Inlined from services/xai.js to keep web route bundle free of `open` (CLI-only) package
+let cachedXaiDiscovery: XaiEndpoints | null = null;
+
+async function discoverXaiEndpoints(): Promise<XaiEndpoints> {
   if (cachedXaiDiscovery) return cachedXaiDiscovery;
   try {
-    const res = await fetch(XAI_CONFIG.discoveryUrl, {
+    const res = await fetch((XAI_CONFIG as unknown as XaiConfigLike).discoveryUrl || "", {
       headers: { Accept: "application/json" },
     });
     if (res.ok) {
-      const data = await res.json();
+      const data = (await res.json()) as { authorization_endpoint?: string; token_endpoint?: string };
       cachedXaiDiscovery = {
         authorizeUrl: validateXaiOAuthEndpoint(
           data.authorization_endpoint,
@@ -31,9 +48,10 @@ async function discoverXaiEndpoints() {
   } catch {
     /* fall through to static fallback */
   }
+  const cfg = XAI_CONFIG as unknown as XaiConfigLike;
   cachedXaiDiscovery = {
-    authorizeUrl: XAI_CONFIG.authorizeUrl,
-    tokenUrl: XAI_CONFIG.tokenUrl,
+    authorizeUrl: cfg.authorizeUrl || "",
+    tokenUrl: cfg.tokenUrl || "",
   };
   return cachedXaiDiscovery;
 }
@@ -41,10 +59,10 @@ async function discoverXaiEndpoints() {
 const xai = {
   config: XAI_CONFIG,
   flowType: "authorization_code_pkce",
-  fixedPort: XAI_CONFIG.loopbackPort,
-  callbackPath: XAI_CONFIG.callbackPath,
+  fixedPort: (XAI_CONFIG as unknown as XaiConfigLike).loopbackPort,
+  callbackPath: (XAI_CONFIG as unknown as XaiConfigLike).callbackPath,
   pkceVerifierBytes: XAI_PKCE_VERIFIER_BYTES,
-  prepareConfig: async (config) => {
+  prepareConfig: async (config: XaiConfigLike) => {
     const endpoints = await discoverXaiEndpoints();
     return {
       ...config,
@@ -52,16 +70,16 @@ const xai = {
       tokenUrl: endpoints.tokenUrl,
     };
   },
-  buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
+  buildAuthUrl: (config: XaiConfigLike, redirectUri: string, state: string, codeChallenge?: string) => {
     // Mirror CLIProxyAPI BuildAuthorizeURL: includes nonce, plan, referrer
     const nonce = crypto.randomBytes(16).toString("hex");
-    const params = {
+    const params: Record<string, string> = {
       response_type: "code",
-      client_id: config.clientId,
+      client_id: config.clientId || "",
       redirect_uri: redirectUri,
-      scope: config.scope,
-      code_challenge: codeChallenge,
-      code_challenge_method: config.codeChallengeMethod,
+      scope: config.scope || "",
+      code_challenge: codeChallenge || "",
+      code_challenge_method: config.codeChallengeMethod || "S256",
       state,
       nonce,
       plan: "generic",
@@ -72,8 +90,8 @@ const xai = {
       .join("&");
     return `${config.authorizeUrl}?${qs}`;
   },
-  exchangeToken: async (config, code, redirectUri, codeVerifier) => {
-    const response = await fetch(config.tokenUrl, {
+  exchangeToken: async (config: XaiConfigLike, code: string, redirectUri: string, codeVerifier: string) => {
+    const response = await fetch(config.tokenUrl || "", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -81,7 +99,7 @@ const xai = {
       },
       body: new URLSearchParams({
         grant_type: "authorization_code",
-        client_id: config.clientId,
+        client_id: config.clientId || "",
         code,
         redirect_uri: redirectUri,
         code_verifier: codeVerifier,
@@ -91,20 +109,19 @@ const xai = {
       const error = await response.text();
       throw new Error(`xAI token exchange failed: ${error}`);
     }
-    return await response.json();
+    return (await response.json()) as Record<string, unknown>;
   },
-  mapTokens: (tokens) => {
-    const mapped = {
+  mapTokens: (tokens: Record<string, unknown>) => {
+    const mapped: Record<string, unknown> = {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
       expiresIn: tokens.expires_in,
+      tokenType: tokens.token_type,
       scope: tokens.scope,
+      idToken: tokens.id_token,
     };
-    const email = decodeXaiIdTokenEmail(tokens.id_token);
+    const email = decodeXaiIdTokenEmail(tokens.id_token as string);
     if (email) mapped.email = email;
-    if (tokens.id_token) {
-      mapped.providerSpecificData = { idToken: tokens.id_token };
-    }
     return mapped;
   },
 };

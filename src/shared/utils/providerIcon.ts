@@ -1,22 +1,22 @@
 // Provider icon paths under /public/providers.
 // Alias related brands; session-cache 404s so one miss never spams again.
 
-const ICON_ALIASES = {
+const ICON_ALIASES: Record<string, string> = {
   "perplexity-agent": "perplexity",
   "gitlab-duo": "gitlab",
   "vercel-ai-gateway": "vercel",
 };
 
 // Runtime only — first 404 remembers id for the whole session
-const failedIds = new Set();
+const failedIds = new Set<string>();
 
-function normalizeId(providerId) {
+function normalizeId(providerId?: string | null): string {
   if (!providerId || typeof providerId !== "string") return "";
   return providerId.trim().toLowerCase();
 }
 
 /** Resolve icon file id (after alias). Empty if previously failed this session. */
-export function resolveProviderIconId(providerId) {
+export function resolveProviderIconId(providerId?: string | null): string {
   const id = normalizeId(providerId);
   if (!id) return "";
   if (failedIds.has(id)) return "";
@@ -26,13 +26,13 @@ export function resolveProviderIconId(providerId) {
 }
 
 /** `/providers/{id}.png` or null when previously failed. */
-export function getProviderIconSrc(providerId) {
+export function getProviderIconSrc(providerId?: string | null): string | null {
   const id = resolveProviderIconId(providerId);
   return id ? `/providers/${id}.png` : null;
 }
 
 /** Call from img onError so later mounts skip the request. */
-export function markProviderIconMissing(providerId) {
+export function markProviderIconMissing(providerId?: string | null): void {
   const id = normalizeId(providerId);
   if (id) failedIds.add(id);
   const aliased = ICON_ALIASES[id];

@@ -1,9 +1,21 @@
 import { getInstallInfo, isInstalling, findNpm } from "./install";
 import { getLoadedInfo, loadPxpipe, selfTest } from "./loader";
 
+export interface PxpipeStatus {
+  installed: boolean;
+  installing: boolean;
+  version: string | null;
+  path: string | null;
+  running: boolean;
+  loadedAt: number | null;
+  uptimeMs: number;
+  npmAvailable: boolean;
+  mode: string;
+}
+
 // Aggregate status for the Token Saver card and /api/pxpipe/status.
 // "running" in library mode = module loaded into this process.
-export function getPxpipeStatus() {
+export function getPxpipeStatus(): PxpipeStatus {
   const install = getInstallInfo();
   const loaded = getLoadedInfo();
   return {
@@ -13,17 +25,30 @@ export function getPxpipeStatus() {
     path: install.path,
     running: loaded.loaded,
     loadedAt: loaded.loadedAt || null,
-    uptimeMs: loaded.loaded ? Date.now() - loaded.loadedAt : 0,
+    uptimeMs: loaded.loaded && loaded.loadedAt ? Date.now() - loaded.loadedAt : 0,
     npmAvailable: !!findNpm(),
-    mode: "library", // in-process transform, not an external proxy
+    mode: "library",
   };
+}
+
+export interface HealthCheckItem {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail: string | null;
+}
+
+export interface HealthCheckResult {
+  healthy: boolean;
+  checks: HealthCheckItem[];
+  error: string | null;
 }
 
 // PRD health checklist, adapted to library mode: installed? → module loads
 // (the "executable found / port listening" equivalent) → test request transforms.
-export async function runHealthCheck() {
-  const checks = [];
-  const fail = (error) => ({ healthy: false, checks, error });
+export async function runHealthCheck(): Promise<HealthCheckResult> {
+  const checks: HealthCheckItem[] = [];
+  const fail = (error: string): HealthCheckResult => ({ healthy: false, checks, error });
 
   const install = getInstallInfo();
   checks.push({
@@ -42,14 +67,15 @@ export async function runHealthCheck() {
       ok: true,
       detail: `v${install.version}`,
     });
-  } catch (e) {
+  } catch (e: unknown) {
+    const err = e as Error;
     checks.push({
       id: "module",
       label: "Transform module loads",
       ok: false,
-      detail: e.message,
+      detail: err.message,
     });
-    return fail(`Cannot load module: ${e.message}`);
+    return fail(`Cannot load module: ${err.message}`);
   }
 
   try {
@@ -60,14 +86,15 @@ export async function runHealthCheck() {
       ok: true,
       detail: `${test.durationMs}ms (${test.reason})`,
     });
-  } catch (e) {
+  } catch (e: unknown) {
+    const err = e as Error;
     checks.push({
       id: "transform",
       label: "Test request transforms",
       ok: false,
-      detail: e.message,
+      detail: err.message,
     });
-    return fail(`Self-test failed: ${e.message}`);
+    return fail(`Self-test failed: ${err.message}`);
   }
 
   return { healthy: true, checks, error: null };

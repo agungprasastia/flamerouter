@@ -1,26 +1,39 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import PropTypes from "prop-types";
 import { Modal, Button, Input } from "@/shared/components";
+
+export interface IdcCredentials {
+  clientId: string;
+  clientSecret: string;
+  region?: string;
+  authMethod?: string;
+  profileArn?: string;
+}
+
+export interface KiroAuthModalProps {
+  isOpen: boolean;
+  onMethodSelect: (method: string, data?: Record<string, unknown>) => void;
+  onClose: () => void;
+}
 
 /**
  * Kiro Auth Method Selection Modal
  * Auto-detects token from AWS SSO cache or allows manual import
  */
-export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
-  const [selectedMethod, setSelectedMethod] = useState(null);
+export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }: KiroAuthModalProps) {
+  const [selectedMethod, setSelectedMethod] = useState<string | null>(null);
   const [idcStartUrl, setIdcStartUrl] = useState("");
   const [idcRegion, setIdcRegion] = useState("us-east-1");
   const [refreshToken, setRefreshToken] = useState("");
   const [cliProxyJson, setCliProxyJson] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiKeyRegion, setApiKeyRegion] = useState("us-east-1");
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [autoDetecting, setAutoDetecting] = useState(false);
   const [autoDetected, setAutoDetected] = useState(false);
-  const [idcCredentials, setIdcCredentials] = useState(null);
+  const [idcCredentials, setIdcCredentials] = useState<IdcCredentials | null>(null);
 
   // Auto-detect token when import method is selected
   useEffect(() => {
@@ -52,8 +65,9 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
         } else {
           setError(data.error || "Could not auto-detect token");
         }
-      } catch (err) {
-        setError("Failed to auto-detect token");
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to auto-detect token";
+        setError(msg);
       } finally {
         setAutoDetecting(false);
       }
@@ -62,7 +76,7 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
     autoDetect();
   }, [selectedMethod, isOpen]);
 
-  const handleMethodSelect = (method) => {
+  const handleMethodSelect = (method: string) => {
     setSelectedMethod(method);
     setError(null);
   };
@@ -99,8 +113,9 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
 
       // Success - notify parent to refresh connections
       onMethodSelect("import");
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Import failed";
+      setError(msg);
     } finally {
       setImporting(false);
     }
@@ -129,8 +144,9 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
       }
 
       onMethodSelect("import-cli-proxy");
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "CLIProxyAPI import failed";
+      setError(msg);
     } finally {
       setImporting(false);
     }
@@ -171,14 +187,15 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
 
       // Success - notify parent to refresh connections
       onMethodSelect("api-key");
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Import failed";
+      setError(msg);
     } finally {
       setImporting(false);
     }
   };
 
-  const handleSocialLogin = (provider) => {
+  const handleSocialLogin = (provider: string) => {
     onMethodSelect("social", { provider });
   };
 
@@ -644,9 +661,3 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
     </Modal>
   );
 }
-
-KiroAuthModal.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  onMethodSelect: PropTypes.func.isRequired,
-  onClose: PropTypes.func.isRequired,
-};

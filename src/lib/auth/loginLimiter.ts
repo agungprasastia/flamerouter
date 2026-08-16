@@ -4,13 +4,20 @@ const MAX_FAILS_BEFORE_LOCK = 5;
 const LOCK_STEPS_MS = [30_000, 120_000, 600_000, 1_800_000]; // 30s, 2m, 10m, 30m
 const FAIL_WINDOW_MS = 60 * 60 * 1000; // 1h since last fail → auto reset
 
-const attempts = new Map(); // ip → { fails, lockUntil, lockLevel, lastFailAt }
+interface AttemptEntry {
+  fails: number;
+  lockUntil: number;
+  lockLevel: number;
+  lastFailAt: number;
+}
 
-function now() {
+const attempts = new Map<string, AttemptEntry>(); // ip → { fails, lockUntil, lockLevel, lastFailAt }
+
+function now(): number {
   return Date.now();
 }
 
-function getEntry(ip) {
+function getEntry(ip: string): AttemptEntry | null {
   const e = attempts.get(ip);
   if (!e) return null;
   // Auto reset if window expired and not currently locked
@@ -25,7 +32,7 @@ function getEntry(ip) {
   return e;
 }
 
-export function checkLock(ip) {
+export function checkLock(ip: string): { locked: boolean; retryAfter?: number } {
   const e = getEntry(ip);
   if (!e || !e.lockUntil) return { locked: false };
   const remaining = e.lockUntil - now();
@@ -33,7 +40,7 @@ export function checkLock(ip) {
   return { locked: true, retryAfter: Math.ceil(remaining / 1000) };
 }
 
-export function recordFail(ip) {
+export function recordFail(ip: string): { remainingBeforeLock: number } {
   const e = getEntry(ip) || {
     fails: 0,
     lockUntil: 0,
@@ -43,7 +50,7 @@ export function recordFail(ip) {
   e.fails += 1;
   e.lastFailAt = now();
   if (e.fails >= MAX_FAILS_BEFORE_LOCK) {
-    const step = LOCK_STEPS_MS[Math.min(e.lockLevel, LOCK_STEPS_MS.length - 1)];
+    const step = LOCK_STEPS_MS[Math.min(e.lockLevel, LOCK_STEPS_MS.length - 1)] ?? 30_000;
     e.lockUntil = now() + step;
     e.lockLevel += 1;
     e.fails = 0;
@@ -52,18 +59,18 @@ export function recordFail(ip) {
   return { remainingBeforeLock: Math.max(0, MAX_FAILS_BEFORE_LOCK - e.fails) };
 }
 
-export function recordSuccess(ip) {
+export function recordSuccess(ip: string): void {
   attempts.delete(ip);
 }
 
-export function getClientIp(request) {
+export function getClientIp(request: { headers: { get(name: string): string | null } }): string {
   // Trusted: set from TCP socket by custom-server.js (client cannot spoof).
   const realIp = request.headers.get("x-9r-real-ip");
   if (realIp) return realIp;
   // Behind a trusted reverse proxy that overwrites XFF with the real client IP.
   if (process.env.TRUST_PROXY === "true") {
     const xff = request.headers.get("x-forwarded-for");
-    if (xff) return xff.split(",")[0].trim();
+    if (xff) return xff.split(",")[0]?.trim() || "unknown";
   }
   // Direct exposure without custom-server: single bucket so spoofed XFF
   // rotation cannot escape the limiter.

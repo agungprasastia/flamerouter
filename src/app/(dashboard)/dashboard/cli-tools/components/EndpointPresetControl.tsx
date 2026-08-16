@@ -4,20 +4,27 @@ import { useEffect, useMemo, useState } from "react";
 
 const STORAGE_KEY = "flamerouter.cliToolEndpointPresets";
 
-function maskApiKey(apiKey) {
+export interface EndpointPresetItem {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+}
+
+function maskApiKey(apiKey?: string | null): string {
   if (!apiKey) return "No API key";
   if (apiKey.length <= 12) return `${apiKey.slice(0, 4)}...`;
   return `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}`;
 }
 
-function normalizePresets(value) {
+function normalizePresets(value: unknown): EndpointPresetItem[] {
   if (!Array.isArray(value)) return [];
   return value.filter(
-    (preset) => preset?.name && preset?.baseUrl && preset?.apiKey,
+    (preset): preset is EndpointPresetItem =>
+      Boolean(preset?.name && preset?.baseUrl && preset?.apiKey),
   );
 }
 
-function readPresets() {
+function readPresets(): EndpointPresetItem[] {
   if (typeof window === "undefined") return [];
   try {
     return normalizePresets(
@@ -28,7 +35,7 @@ function readPresets() {
   }
 }
 
-function writePresets(presets) {
+function writePresets(presets: EndpointPresetItem[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(
     STORAGE_KEY,
@@ -36,14 +43,21 @@ function writePresets(presets) {
   );
 }
 
+export interface EndpointPresetControlProps {
+  baseUrl: string;
+  apiKey: string;
+  onBaseUrlChange: (url: string) => void;
+  onApiKeyChange: (key: string) => void;
+}
+
 export default function EndpointPresetControl({
   baseUrl,
   apiKey,
   onBaseUrlChange,
   onApiKeyChange,
-}) {
-  const [presets, setPresets] = useState([]);
-  const [selectedName, setSelectedName] = useState("");
+}: EndpointPresetControlProps) {
+  const [presets, setPresets] = useState<EndpointPresetItem[]>([]);
+  const [selectedName, setSelectedName] = useState<string>("");
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -56,7 +70,7 @@ export default function EndpointPresetControl({
     [presets, selectedName],
   );
 
-  const handleSelect = (name) => {
+  const handleSelect = (name: string) => {
     setSelectedName(name);
     const preset = presets.find((item) => item.name === name);
     if (!preset) return;
@@ -78,7 +92,7 @@ export default function EndpointPresetControl({
     const name = window.prompt("Preset name", defaultName);
     if (!name?.trim()) return;
 
-    const nextPreset = {
+    const nextPreset: EndpointPresetItem = {
       name: name.trim(),
       baseUrl: trimmedBaseUrl,
       apiKey: trimmedApiKey,

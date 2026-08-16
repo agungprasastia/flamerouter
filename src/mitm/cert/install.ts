@@ -1,9 +1,9 @@
-const fs = require("fs");
-const crypto = require("crypto");
-const { exec } = require("child_process");
-const { execWithPassword, isSudoAvailable } = require("../dns/dnsConfig");
-const { runElevatedPowerShell, quotePs } = require("../winElevated");
-const { log, err } = require("../logger");
+import * as fs from "fs";
+import * as crypto from "crypto";
+import { exec } from "child_process";
+import { execWithPassword, isSudoAvailable } from "../dns/dnsConfig";
+import { runElevatedPowerShell, quotePs } from "../winElevated";
+import { log, err } from "../logger";
 
 const IS_WIN = process.platform === "win32";
 const IS_MAC = process.platform === "darwin";
@@ -30,31 +30,31 @@ function getLinuxCertConfig() {
 const ROOT_CA_CN = "FlameRouter MITM Root CA";
 
 // Get SHA1 fingerprint from cert file using Node.js crypto
-function getCertFingerprint(certPath) {
+function getCertFingerprint(certPath: string) {
   const pem = fs.readFileSync(certPath, "utf-8");
   const der = Buffer.from(
     pem.replace(/-----[^-]+-----/g, "").replace(/\s/g, ""),
     "base64",
   );
-  return crypto
+  const parts = crypto
     .createHash("sha1")
     .update(der)
     .digest("hex")
     .toUpperCase()
-    .match(/.{2}/g)
-    .join(":");
+    .match(/.{2}/g);
+  return (parts || []).join(":");
 }
 
 /**
  * Check if certificate is already installed in system store
  */
-async function checkCertInstalled(certPath) {
+async function checkCertInstalled(certPath: string): Promise<boolean> {
   if (IS_WIN) return checkCertInstalledWindows(certPath);
   if (IS_MAC) return checkCertInstalledMac(certPath);
   return checkCertInstalledLinux();
 }
 
-function checkCertInstalledMac(certPath) {
+function checkCertInstalledMac(certPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     try {
       const fingerprint = getCertFingerprint(certPath).replace(/:/g, "");
@@ -84,10 +84,10 @@ function checkCertInstalledMac(certPath) {
   });
 }
 
-function checkCertInstalledWindows(certPath) {
+function checkCertInstalledWindows(certPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     // Check by SHA1 fingerprint — detects stale cert with same CN but different key
-    let fingerprint;
+    let fingerprint: string;
     try {
       fingerprint = getCertFingerprint(certPath).replace(/:/g, "");
     } catch {
@@ -106,7 +106,7 @@ function checkCertInstalledWindows(certPath) {
 /**
  * Install SSL certificate to system trust store
  */
-async function installCert(sudoPassword, certPath) {
+async function installCert(sudoPassword: string | undefined, certPath: string) {
   if (!fs.existsSync(certPath)) {
     throw new Error(`Certificate file not found: ${certPath}`);
   }
@@ -126,7 +126,7 @@ async function installCert(sudoPassword, certPath) {
   }
 }
 
-async function installCertMac(sudoPassword, certPath) {
+async function installCertMac(sudoPassword: string | undefined, certPath: string) {
   // Remove all old certs with same name first to avoid duplicate/stale cert conflict
   const deleteOld = `security delete-certificate -c "FlameRouter MITM Root CA" /Library/Keychains/System.keychain 2>/dev/null || true`;
   const install = `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${certPath}"`;
@@ -134,14 +134,14 @@ async function installCertMac(sudoPassword, certPath) {
     await execWithPassword(`${deleteOld} && ${install}`, sudoPassword);
     log("🔐 Cert: ✅ installed to system keychain");
   } catch (error) {
-    const msg = error.message?.includes("canceled")
+    const msg = (error as { message?: string }).message?.includes("canceled")
       ? "User canceled authorization"
       : "Certificate install failed";
     throw new Error(msg);
   }
 }
 
-async function installCertWindows(certPath) {
+async function installCertWindows(certPath: string) {
   // Auto-elevate via UAC popup if not admin (zero popup if already admin).
   // Delete any stale cert with same CN before adding to avoid duplicates.
   const script = `
@@ -153,14 +153,16 @@ async function installCertWindows(certPath) {
     await runElevatedPowerShell(script);
     log("🔐 Cert: ✅ installed to Windows Root store");
   } catch (e) {
-    throw new Error(`Failed to install certificate: ${e.message}`);
+    throw new Error(
+      `Failed to install certificate: ${(e as { message?: string }).message}`,
+    );
   }
 }
 
 /**
  * Uninstall SSL certificate from system store
  */
-async function uninstallCert(sudoPassword, certPath) {
+async function uninstallCert(sudoPassword: string | undefined, certPath: string) {
   const isInstalled = await checkCertInstalled(certPath);
   if (!isInstalled) {
     log("🔐 Cert: not found in system store");
@@ -176,13 +178,14 @@ async function uninstallCert(sudoPassword, certPath) {
   }
 }
 
-async function uninstallCertMac(sudoPassword, certPath) {
+async function uninstallCertMac(sudoPassword: string | undefined, certPath: string) {
   const fingerprint = getCertFingerprint(certPath).replace(/:/g, "");
   const command = `security delete-certificate -Z "${fingerprint}" /Library/Keychains/System.keychain`;
   try {
     await execWithPassword(command, sudoPassword);
     log("🔐 Cert: ✅ uninstalled from system keychain");
   } catch (err) {
+    void err;
     throw new Error("Failed to uninstall certificate");
   }
 }
@@ -194,17 +197,19 @@ async function uninstallCertWindows() {
     await runElevatedPowerShell(script);
     log("🔐 Cert: ✅ uninstalled from Windows Root store");
   } catch (e) {
-    throw new Error(`Failed to uninstall certificate: ${e.message}`);
+    throw new Error(
+      `Failed to uninstall certificate: ${(e as { message?: string }).message}`,
+    );
   }
 }
 
-function checkCertInstalledLinux() {
+function checkCertInstalledLinux(): Promise<boolean> {
   const config = getLinuxCertConfig();
   const certFile = `${config.dir}/flamerouter-root-ca.crt`;
   return Promise.resolve(fs.existsSync(certFile));
 }
 
-async function updateNssDatabases(certPath, action = "add") {
+async function updateNssDatabases(certPath: string | null, action = "add") {
   const certName = "FlameRouter MITM Root CA";
 
   const script = `
@@ -243,12 +248,12 @@ async function updateNssDatabases(certPath, action = "add") {
     done
   `;
 
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve) => {
     exec(script, { shell: "/bin/bash" }, () => resolve());
   });
 }
 
-async function installCertLinux(sudoPassword, certPath) {
+async function installCertLinux(sudoPassword: string | undefined, certPath: string) {
   if (!isSudoAvailable()) {
     log(
       `🔐 Cert: cannot install to system store without sudo — trust this file on clients: ${certPath}`,
@@ -271,11 +276,13 @@ async function installCertLinux(sudoPassword, certPath) {
       `🔐 Cert: ✅ installed to Linux trust store (${config.dir}) and user browser databases`,
     );
   } catch (error) {
-    throw new Error(`Certificate install failed: ${error.message}`);
+    throw new Error(
+      `Certificate install failed: ${(error as { message?: string }).message}`,
+    );
   }
 }
 
-async function uninstallCertLinux(sudoPassword) {
+async function uninstallCertLinux(sudoPassword: string | undefined) {
   // Always try to uninstall from user DBs even without sudo
   await updateNssDatabases(null, "delete");
 
@@ -297,4 +304,4 @@ async function uninstallCertLinux(sudoPassword) {
   }
 }
 
-module.exports = { installCert, uninstallCert, checkCertInstalled };
+export { installCert, uninstallCert, checkCertInstalled };

@@ -7,7 +7,7 @@
 import { PROVIDERS } from "@/shared/constants/providersRegistry";
 
 // xAI client_id for OAuth (PKCE public client) — single source: registry xai.transport
-export const XAI_CLIENT_ID = PROVIDERS["xai"]?.clientId;
+export const XAI_CLIENT_ID = (PROVIDERS["xai"] as unknown as Record<string, string>)?.clientId || "";
 
 // OAuth issuer + endpoints
 export const XAI_ISSUER = "https://auth.x.ai";

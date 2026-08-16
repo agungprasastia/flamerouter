@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { AlertCircle, Eye, EyeOff, KeyRound, ShieldAlert } from "lucide-react";
 import { Button, Input, Skeleton } from "@/shared/components";
 import AuthLayout from "@/shared/components/layouts/AuthLayout";
@@ -11,7 +11,7 @@ export default function LoginPage() {
   const [resetHint, setResetHint] = useState("");
   const [retryAfter, setRetryAfter] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [hasPassword, setHasPassword] = useState(null);
+  const [hasPassword, setHasPassword] = useState<boolean | null>(null);
   const [authMode, setAuthMode] = useState("password");
   const [oidcConfigured, setOidcConfigured] = useState(false);
   const [oidcLoginLabel, setOidcLoginLabel] = useState("Sign in with OIDC");
@@ -65,7 +65,7 @@ export default function LoginPage() {
     checkAuth();
   }, []);
 
-  const handleLogin = async (e) => {
+  const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
     setError("");
@@ -99,7 +99,7 @@ export default function LoginPage() {
   };
 
   // Force a new password before entering the dashboard (default + remote).
-  const handleSetNewPassword = async (e) => {
+  const handleSetNewPassword = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
     setError("");

@@ -2,10 +2,30 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useState, useEffect } from "react";
-import PropTypes from "prop-types";
 import { Modal, Input, Button, Badge } from "@/shared/components";
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
+
+export interface CustomEmbeddingNode {
+  id?: string;
+  name?: string;
+  prefix?: string;
+  baseUrl?: string;
+}
+
+export interface AddCustomEmbeddingModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onCreated?: (node: unknown) => void;
+  onSaved?: (node: unknown) => void;
+  node?: CustomEmbeddingNode | null;
+}
+
+interface ValidationResult {
+  valid: boolean;
+  error?: string;
+  dimensions?: number;
+}
 
 // Dual-mode modal: edit when `node` provided, add otherwise
 export default function AddCustomEmbeddingModal({
@@ -14,7 +34,7 @@ export default function AddCustomEmbeddingModal({
   onCreated,
   onSaved,
   node,
-}) {
+}: AddCustomEmbeddingModalProps) {
   const isEdit = !!node;
   const [formData, setFormData] = useState({
     name: "",
@@ -25,7 +45,7 @@ export default function AddCustomEmbeddingModal({
   const [checkKey, setCheckKey] = useState("");
   const [checkModelId, setCheckModelId] = useState("");
   const [validating, setValidating] = useState(false);
-  const [validationResult, setValidationResult] = useState(null);
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -56,7 +76,7 @@ export default function AddCustomEmbeddingModal({
         ? `/api/provider-nodes/${node.id}`
         : "/api/provider-nodes";
       const method = isEdit ? "PUT" : "POST";
-      const payload = {
+      const payload: Record<string, string> = {
         name: formData.name,
         prefix: formData.prefix,
         baseUrl: formData.baseUrl,
@@ -208,16 +228,3 @@ export default function AddCustomEmbeddingModal({
     </Modal>
   );
 }
-
-AddCustomEmbeddingModal.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  onClose: PropTypes.func.isRequired,
-  onCreated: PropTypes.func,
-  onSaved: PropTypes.func,
-  node: PropTypes.shape({
-    id: PropTypes.string,
-    name: PropTypes.string,
-    prefix: PropTypes.string,
-    baseUrl: PropTypes.string,
-  }),
-};

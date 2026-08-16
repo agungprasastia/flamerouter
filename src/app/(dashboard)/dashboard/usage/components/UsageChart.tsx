@@ -2,7 +2,6 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useState, useEffect, useCallback } from "react";
-import PropTypes from "prop-types";
 import {
   AreaChart,
   Area,
@@ -11,33 +10,46 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from "recharts";
 import Card from "@/shared/components/Card";
 
-const fmtTokens = (n) => {
-  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-  return String(n || 0);
+interface ChartDataPoint {
+  label: string;
+  tokens: number;
+  cost: number;
+}
+
+const fmtTokens = (n: number | string | undefined | null) => {
+  const num = typeof n === "number" ? n : Number(n) || 0;
+  if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+  if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+  return String(num);
 };
 
-const fmtCost = (n) => `$${(n || 0).toFixed(4)}`;
+const fmtCost = (n: number | string | undefined | null) => {
+  const num = typeof n === "number" ? n : Number(n) || 0;
+  return `$${num.toFixed(4)}`;
+};
 
-export default function UsageChart({ period = "7d" }) {
-  const [data, setData] = useState([]);
+interface UsageChartProps {
+  period?: string;
+}
+
+export default function UsageChart({ period = "7d" }: UsageChartProps) {
+  const [data, setData] = useState<ChartDataPoint[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState("tokens");
+  const [viewMode, setViewMode] = useState<"tokens" | "cost">("tokens");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`/api/usage/chart?period=${period}`);
       if (res.ok) {
-        const json = await res.json();
+        const json = (await res.json()) as unknown;
         const chartList = Array.isArray(json)
-          ? json
-          : Array.isArray(json?.data)
-            ? json.data
+          ? (json as ChartDataPoint[])
+          : Array.isArray((json as { data?: unknown })?.data)
+            ? ((json as { data: ChartDataPoint[] }).data)
             : [];
         setData(chartList);
       } else {
@@ -55,7 +67,7 @@ export default function UsageChart({ period = "7d" }) {
     fetchData();
   }, [fetchData]);
 
-  const hasData = Array.isArray(data) && data.some((d) => d.tokens > 0 || d.cost > 0);
+  const hasData = Array.isArray(data) && data.some((d) => (d.tokens ?? 0) > 0 || (d.cost ?? 0) > 0);
 
   return (
     <Card className="flex min-w-0 flex-col gap-5 p-4 sm:p-6">
@@ -136,8 +148,8 @@ export default function UsageChart({ period = "7d" }) {
               }}
               formatter={(value, name) =>
                 name === "tokens"
-                  ? [fmtTokens(value), "Tokens"]
-                  : [fmtCost(value), "Cost"]
+                  ? [fmtTokens(value as number), "Tokens"]
+                  : [fmtCost(value as number), "Cost"]
               }
             />
             {viewMode === "tokens" ? (
@@ -167,7 +179,3 @@ export default function UsageChart({ period = "7d" }) {
     </Card>
   );
 }
-
-UsageChart.propTypes = {
-  period: PropTypes.string,
-};

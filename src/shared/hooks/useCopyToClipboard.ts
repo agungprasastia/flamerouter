@@ -8,11 +8,11 @@ import { useState, useCallback, useRef } from "react";
  * @returns {{ copied: string|null, copy: (text: string, id?: string) => void }}
  */
 export function useCopyToClipboard(resetDelay = 2000) {
-  const [copied, setCopied] = useState(null);
-  const timeoutRef = useRef(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const copy = useCallback(
-    (text, id = "default") => {
+    (text: string, id: string = "default") => {
       const write = async () => {
         if (navigator?.clipboard?.writeText) {
           await navigator.clipboard.writeText(text);

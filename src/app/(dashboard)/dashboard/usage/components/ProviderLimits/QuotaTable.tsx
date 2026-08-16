@@ -2,14 +2,19 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useEffect, useMemo, useState } from "react";
-import { formatResetTime, getRemainingPercentage } from "./utils";
+import { formatResetTime, getRemainingPercentage, type QuotaEntry } from "./utils";
 
 const PAGE_SIZE = 10;
+
+export interface QuotaTableRow extends QuotaEntry {
+  index: number;
+  remaining: number;
+}
 
 /**
  * Format reset time display (Today, 12:00 PM)
  */
-function formatResetTimeDisplay(resetTime) {
+function formatResetTimeDisplay(resetTime?: string | number | null) {
   if (!resetTime) return null;
 
   try {
@@ -49,7 +54,7 @@ function formatResetTimeDisplay(resetTime) {
 /**
  * Get color classes based on remaining percentage
  */
-function getColorClasses(remainingPercentage) {
+function getColorClasses(remainingPercentage: number) {
   if (remainingPercentage > 70) {
     return {
       text: "text-green-600 dark:text-green-400",
@@ -76,20 +81,28 @@ function getColorClasses(remainingPercentage) {
   };
 }
 
-function sortQuotas(quotas, sortMode) {
+function sortQuotas(quotas: QuotaTableRow[], sortMode: string): QuotaTableRow[] {
   if (sortMode === "remaining-asc") {
     return [...quotas].sort(
-      (a, b) => a.remaining - b.remaining || a.name.localeCompare(b.name),
+      (a, b) => a.remaining - b.remaining || (a.name || "").localeCompare(b.name || ""),
     );
   }
 
   if (sortMode === "remaining-desc") {
     return [...quotas].sort(
-      (a, b) => b.remaining - a.remaining || a.name.localeCompare(b.name),
+      (a, b) => b.remaining - a.remaining || (a.name || "").localeCompare(b.name || ""),
     );
   }
 
   return quotas;
+}
+
+export interface QuotaTableProps {
+  quotas?: QuotaEntry[];
+  compact?: boolean;
+  sortMode?: string;
+  showSortLabel?: boolean;
+  onHideQuota?: ((quota: QuotaTableRow) => void) | null;
 }
 
 /**
@@ -101,7 +114,7 @@ export default function QuotaTable({
   sortMode = "default",
   showSortLabel = false,
   onHideQuota = null,
-}) {
+}: QuotaTableProps) {
   const [page, setPage] = useState(1);
 
   const normalizedQuotas = useMemo(
@@ -210,10 +223,10 @@ export default function QuotaTable({
                 >
                   <span
                     className="text-text-muted truncate"
-                    title={`${quota.used.toLocaleString()} / ${quota.total > 0 ? quota.total.toLocaleString() : "∞"}`}
+                    title={`${(quota.used ?? 0).toLocaleString()} / ${(quota.total ?? 0) > 0 ? (quota.total ?? 0).toLocaleString() : "∞"}`}
                   >
-                    {quota.used.toLocaleString()} /{" "}
-                    {quota.total > 0 ? quota.total.toLocaleString() : "∞"}
+                    {(quota.used ?? 0).toLocaleString()} /{" "}
+                    {(quota.total ?? 0) > 0 ? (quota.total ?? 0).toLocaleString() : "∞"}
                   </span>
                   <span className={`font-medium ${colors.text} shrink-0`}>
                     {quota.remaining}%

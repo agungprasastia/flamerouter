@@ -4,11 +4,16 @@ import { useTheme } from "@/shared/hooks/useTheme";
 import { cn } from "@/shared/utils/cn";
 import { Moon, Sun } from "lucide-react";
 
-export default function ThemeToggle({ className, variant = "default" }) {
+export interface ThemeToggleProps {
+  className?: string;
+  variant?: "default" | "card" | string;
+}
+
+export default function ThemeToggle({ className, variant = "default" }: ThemeToggleProps) {
   const { isDark, toggleTheme } = useTheme();
   const Icon = isDark ? Sun : Moon;
 
-  const variants = {
+  const variants: Record<string, string> = {
     default: cn(
       "flex items-center justify-center size-9 rounded-[6px]",
       "text-text-muted hover:text-text-main",
@@ -28,7 +33,7 @@ export default function ThemeToggle({ className, variant = "default" }) {
     <button
       onClick={toggleTheme}
       className={cn(
-        variants[variant],
+        variants[variant] || variants.default,
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35",
         className,
       )}

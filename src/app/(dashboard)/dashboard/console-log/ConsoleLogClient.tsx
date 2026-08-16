@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, Button } from "@/shared/components";
 import { CONSOLE_LOG_CONFIG } from "@/shared/constants/config";
 
-const LOG_LEVEL_COLORS = {
+const LOG_LEVEL_COLORS: Record<string, string> = {
   LOG: "text-green-400",
   INFO: "text-blue-400",
   WARN: "text-yellow-400",
@@ -12,17 +12,17 @@ const LOG_LEVEL_COLORS = {
   DEBUG: "text-purple-400",
 };
 
-function colorLine(line) {
+function colorLine(line: string) {
   const match = line.match(/\[(\w+)\]/g);
   const levelTag = match ? match[1]?.replace(/\[|\]/g, "") : null;
-  const color = LOG_LEVEL_COLORS[levelTag] || "text-green-400";
+  const color = (levelTag && LOG_LEVEL_COLORS[levelTag]) || "text-green-400";
   return <span className={color}>{line}</span>;
 }
 
 export default function ConsoleLogClient() {
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
-  const logRef = useRef(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
 
   const handleClear = async () => {
     try {

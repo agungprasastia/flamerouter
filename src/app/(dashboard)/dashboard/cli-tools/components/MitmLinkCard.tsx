@@ -4,10 +4,20 @@ import Link from "next/link";
 import { Card } from "@/shared/components";
 import Image from "next/image";
 
+export interface MitmToolInfo {
+  image: string;
+  name: string;
+  description: string;
+}
+
+export interface MitmLinkCardProps {
+  tool: MitmToolInfo;
+}
+
 /**
  * Clickable card for MITM tools — navigates to /dashboard/mitm on click.
  */
-export default function MitmLinkCard({ tool }) {
+export default function MitmLinkCard({ tool }: MitmLinkCardProps) {
   return (
     <Link href="/dashboard/mitm" className="block">
       <Card
@@ -25,7 +35,7 @@ export default function MitmLinkCard({ tool }) {
                 className="size-8 object-contain rounded-lg"
                 sizes="32px"
                 onError={(e) => {
-                  e.target.style.display = "none";
+                  (e.target as HTMLElement).style.display = "none";
                 }}
                 loading="lazy"
                 decoding="async"

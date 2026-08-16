@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ChangeEvent } from "react";
 import {
   Card,
   Button,
@@ -8,10 +8,12 @@ import {
   ManualConfigModal,
   Tooltip,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
-import ApiKeySelect from "./ApiKeySelect";
+import ApiKeySelect, { type ApiKeyItem } from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import type { ToolCardDef } from "./DefaultToolCard";
 
 const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
 
@@ -25,33 +27,77 @@ const CONTEXT_OPTIONS = [
   { label: "1M", value: "998000" },
 ];
 
+export interface ClaudeDefaultModel {
+  id?: string;
+  name: string;
+  alias: string;
+  envKey?: string;
+  defaultValue?: string;
+  [key: string]: unknown;
+}
+
+export interface ClaudeToolDef extends ToolCardDef {
+  defaultModels?: ClaudeDefaultModel[];
+}
+
+export interface ClaudeStatus {
+  installed?: boolean;
+  hasFlameRouter?: boolean;
+  hasBackup?: boolean;
+  exaMcpEnabled?: boolean;
+  settings?: {
+    env?: Record<string, string>;
+    [key: string]: unknown;
+  };
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface ClaudeToolCardProps {
+  tool: ClaudeToolDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  activeProviders?: ActiveProviderItem[];
+  modelMappings?: Record<string, string>;
+  onModelMappingChange?: (alias: string, value: string) => void;
+  baseUrl?: string;
+  hasActiveProviders?: boolean;
+  apiKeys?: ApiKeyItem[];
+  cloudEnabled?: boolean;
+  initialStatus?: ClaudeStatus | null;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+}
+
 export default function ClaudeToolCard({
   tool,
   isExpanded,
   onToggle,
-  activeProviders,
-  modelMappings,
-  onModelMappingChange,
+  activeProviders = [],
+  modelMappings = {},
+  onModelMappingChange = () => {},
   baseUrl,
-  hasActiveProviders,
-  apiKeys,
-  cloudEnabled,
+  hasActiveProviders = false,
+  apiKeys = [],
+  cloudEnabled = false,
   initialStatus,
-  tunnelEnabled,
-  tunnelPublicUrl,
-  tailscaleEnabled,
-  tailscaleUrl,
-}) {
-  const [claudeStatus, setClaudeStatus] = useState(initialStatus || null);
+  tunnelEnabled = false,
+  tunnelPublicUrl = "",
+  tailscaleEnabled = false,
+  tailscaleUrl = "",
+}: ClaudeToolCardProps) {
+  const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(initialStatus || null);
   const [checkingClaude, setCheckingClaude] = useState(false);
   const [applying, setApplying] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [currentEditingAlias, setCurrentEditingAlias] = useState(null);
+  const [currentEditingAlias, setCurrentEditingAlias] = useState<string | null>(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
-  const [modelAliases, setModelAliases] = useState({});
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [ccFilterNaming, setCcFilterNaming] = useState(false);
@@ -111,7 +157,7 @@ export default function ClaudeToolCard({
       .catch(() => {});
   }, []);
 
-  const handleCcFilterNamingToggle = async (e) => {
+  const handleCcFilterNamingToggle = async (e: ChangeEvent<HTMLInputElement>) => {
     const value = e.target.checked;
     setCcFilterNaming(value);
     await fetch("/api/settings", {
@@ -136,7 +182,7 @@ export default function ClaudeToolCard({
       hasInitializedModels.current = true;
       const env = claudeStatus.settings?.env || {};
 
-      tool.defaultModels.forEach((model) => {
+      (tool.defaultModels || []).forEach((model) => {
         if (model.envKey) {
           const value = env[model.envKey] || model.defaultValue || "";
           // Only sync initial values from file once
@@ -158,23 +204,24 @@ export default function ClaudeToolCard({
     setCheckingClaude(true);
     try {
       const res = await fetch("/api/cli-tools/claude-settings");
-      const data = await res.json();
+      const data: ClaudeStatus = await res.json();
       setClaudeStatus(data);
       setExaMcpEnabled(!!data.exaMcpEnabled);
-    } catch (error) {
-      setClaudeStatus({ installed: false, error: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setClaudeStatus({ installed: false, error: err.message });
     } finally {
       setCheckingClaude(false);
     }
   };
 
   const getEffectiveBaseUrl = () => {
-    const url = customBaseUrl || baseUrl;
+    const url = customBaseUrl || baseUrl || "http://127.0.0.1:20129";
     return url.endsWith("/v1") ? url : `${url}/v1`;
   };
 
   const getDisplayUrl = () => {
-    const url = customBaseUrl || baseUrl;
+    const url = customBaseUrl || baseUrl || "http://127.0.0.1:20129";
     return url.endsWith("/v1") ? url : `${url}/v1`;
   };
 
@@ -182,7 +229,7 @@ export default function ClaudeToolCard({
     setApplying(true);
     setMessage(null);
     try {
-      const env = { ANTHROPIC_BASE_URL: getEffectiveBaseUrl() };
+      const env: Record<string, string> = { ANTHROPIC_BASE_URL: getEffectiveBaseUrl() };
 
       // Get key from dropdown, fallback to first key or sk_flamerouter for localhost
       const keyToUse =
@@ -194,7 +241,7 @@ export default function ClaudeToolCard({
         env.ANTHROPIC_AUTH_TOKEN = keyToUse;
       }
 
-      tool.defaultModels.forEach((model) => {
+      (tool.defaultModels || []).forEach((model) => {
         const targetModel = modelMappings[model.alias];
         if (targetModel && model.envKey) env[model.envKey] = targetModel;
       });
@@ -221,8 +268,9 @@ export default function ClaudeToolCard({
           text: data.error || "Failed to apply settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to apply settings" });
     } finally {
       setApplying(false);
     }
@@ -238,7 +286,7 @@ export default function ClaudeToolCard({
       const data = await res.json();
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
-        tool.defaultModels.forEach((model) =>
+        (tool.defaultModels || []).forEach((model) =>
           onModelMappingChange(model.alias, model.defaultValue || ""),
         );
         setSelectedApiKey("");
@@ -250,19 +298,20 @@ export default function ClaudeToolCard({
           text: data.error || "Failed to reset settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to reset settings" });
     } finally {
       setRestoring(false);
     }
   };
 
-  const openModelSelector = (alias) => {
+  const openModelSelector = (alias: string) => {
     setCurrentEditingAlias(alias);
     setModalOpen(true);
   };
 
-  const handleModelSelect = (model) => {
+  const handleModelSelect = (model: ModelSelectItem) => {
     if (currentEditingAlias)
       onModelMappingChange(currentEditingAlias, model.value);
   };
@@ -275,11 +324,11 @@ export default function ClaudeToolCard({
         : !cloudEnabled
           ? "sk_flamerouter"
           : "<API_KEY_FROM_DASHBOARD>";
-    const env = {
+    const env: Record<string, string> = {
       ANTHROPIC_BASE_URL: getEffectiveBaseUrl(),
       ANTHROPIC_AUTH_TOKEN: keyToUse,
     };
-    tool.defaultModels.forEach((model) => {
+    (tool.defaultModels || []).forEach((model) => {
       const targetModel = modelMappings[model.alias];
       if (targetModel && model.envKey) env[model.envKey] = targetModel;
     });
@@ -311,7 +360,7 @@ export default function ClaudeToolCard({
               className="size-8 object-contain rounded-lg"
               sizes="32px"
               onError={(e) => {
-                e.target.style.display = "none";
+                (e.target as HTMLElement).style.display = "none";
               }}
               loading="lazy"
               decoding="async"
@@ -479,7 +528,7 @@ export default function ClaudeToolCard({
                 </div>
 
                 {/* Model Mappings */}
-                {tool.defaultModels.map((model) => (
+                {(tool.defaultModels || []).map((model) => (
                   <div
                     key={model.alias}
                     className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2"

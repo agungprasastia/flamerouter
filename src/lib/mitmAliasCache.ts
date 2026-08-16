@@ -16,7 +16,7 @@ const DATA_DIR =
 
 const CACHE_FILE = path.join(DATA_DIR, "mitm", "aliases.json");
 
-function writeAtomic(data) {
+function writeAtomic(data: unknown): void {
   const dir = path.dirname(CACHE_FILE);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = `${CACHE_FILE}.tmp`;
@@ -25,30 +25,32 @@ function writeAtomic(data) {
 }
 
 // Sync entire mitmAlias map from DB → JSON file
-export async function syncToJson() {
+export async function syncToJson(): Promise<void> {
   try {
     const { getMitmAlias } = await import("@/lib/db/repos/aliasRepo");
     const all = await getMitmAlias();
     writeAtomic(all || {});
-  } catch (e) {
-    console.log("[mitmAliasCache] sync failed:", e.message);
+  } catch (e: unknown) {
+    const err = e as Error;
+    console.log("[mitmAliasCache] sync failed:", err.message);
   }
 }
 
 // Update cache for a single tool after UI saves to DB
-export function writeAliasForTool(tool, mappings) {
+export function writeAliasForTool(tool: string, mappings: unknown): void {
   try {
-    let current = {};
+    let current: Record<string, unknown> = {};
     if (fs.existsSync(CACHE_FILE)) {
       try {
-        current = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8"));
+        current = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")) as Record<string, unknown>;
       } catch {
         /* corrupted → reset */
       }
     }
     current[tool] = mappings || {};
     writeAtomic(current);
-  } catch (e) {
-    console.log("[mitmAliasCache] write failed:", e.message);
+  } catch (e: unknown) {
+    const err = e as Error;
+    console.log("[mitmAliasCache] write failed:", err.message);
   }
 }

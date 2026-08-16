@@ -2,7 +2,6 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import PropTypes from "prop-types";
 import { Modal, Button, Input } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
@@ -12,7 +11,16 @@ const PROXY_OAUTH_PROVIDERS = new Set(["trae", "windsurf", "zed"]);
 
 // Providers offering a paste-token fallback (import-token flow).
 // UX warns if the IDE (which issues the token) is not installed.
-const PASTE_TOKEN_PROVIDERS = {
+const PASTE_TOKEN_PROVIDERS: Record<
+  string,
+  {
+    label: string;
+    instructions: string;
+    placeholder: string;
+    ideName: string;
+    ideOptional: boolean;
+  }
+> = {
   trae: {
     label: "Cloud-IDE-JWT",
     instructions:
@@ -31,6 +39,55 @@ const PASTE_TOKEN_PROVIDERS = {
   },
 };
 
+export interface IdcConfig {
+  startUrl: string;
+  region?: string;
+}
+
+export interface OAuthModalProps {
+  isOpen: boolean;
+  provider: string;
+  providerInfo?: { name?: string };
+  onSuccess?: () => void;
+  onClose: () => void;
+  oauthMeta?: Record<string, string> | null;
+  idcConfig?: IdcConfig | null;
+}
+
+interface AuthData {
+  authUrl?: string;
+  redirectUri?: string;
+  codeVerifier?: string;
+  state?: string;
+  flowType?: string;
+  codexServerSide?: boolean;
+  xaiServerSide?: boolean;
+  proxyProvider?: string;
+}
+
+interface DeviceData {
+  verification_uri_complete?: string;
+  verification_uri?: string;
+  user_code?: string;
+  device_code?: string;
+  codeVerifier?: string;
+  interval?: number;
+  expires_in?: number;
+  _clientId?: string;
+  _clientSecret?: string;
+  _region?: string;
+  _authMethod?: string;
+  _startUrl?: string;
+  _qoderNonce?: string;
+  _qoderMachineId?: string;
+  _kimiDeviceId?: string;
+}
+
+interface IdeStatus {
+  installed: boolean;
+  path?: string | null;
+}
+
 /**
  * OAuth Modal Component
  * - Localhost: Auto callback via popup message
@@ -44,19 +101,19 @@ export default function OAuthModal({
   onClose,
   oauthMeta,
   idcConfig,
-}) {
-  const [step, setStep] = useState("waiting"); // waiting | input | success | error
-  const [authData, setAuthData] = useState(null);
+}: OAuthModalProps) {
+  const [step, setStep] = useState<"waiting" | "input" | "success" | "error">("waiting");
+  const [authData, setAuthData] = useState<AuthData | null>(null);
   const [callbackUrl, setCallbackUrl] = useState("");
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [isDeviceCode, setIsDeviceCode] = useState(false);
-  const [deviceData, setDeviceData] = useState(null);
+  const [deviceData, setDeviceData] = useState<DeviceData | null>(null);
   const [polling, setPolling] = useState(false);
   // trae/windsurf: choose between browser OAuth (proxy) and paste-token (import)
-  const [authMode, setAuthMode] = useState("browser"); // "browser" | "paste-token"
+  const [authMode, setAuthMode] = useState<"browser" | "paste-token">("browser");
   const [pasteToken, setPasteToken] = useState("");
-  const [ideStatus, setIdeStatus] = useState(null);
-  const popupRef = useRef(null);
+  const [ideStatus, setIdeStatus] = useState<IdeStatus | null>(null);
+  const popupRef = useRef<Window | null>(null);
   const pollingAbortRef = useRef(false);
   const openedRef = useRef(false);
   const { copied, copy } = useCopyToClipboard();
@@ -81,7 +138,7 @@ export default function OAuthModal({
 
   // Exchange tokens
   const exchangeTokens = useCallback(
-    async (code, state) => {
+    async (code: string, state: string | null) => {
       if (!authData) return;
       try {
         const res = await fetch(`/api/oauth/${provider}/exchange`, {
@@ -101,8 +158,9 @@ export default function OAuthModal({
 
         setStep("success");
         onSuccess?.();
-      } catch (err) {
-        setError(err.message);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Exchange failed";
+        setError(msg);
         setStep("error");
       }
     },
@@ -110,7 +168,7 @@ export default function OAuthModal({
   );
 
   const completeXaiManualCode = useCallback(
-    async (code) => {
+    async (code: string) => {
       if (!authData?.state) return;
       try {
         const res = await fetch("/api/oauth/xai/manual-code", {
@@ -123,8 +181,9 @@ export default function OAuthModal({
 
         setStep("success");
         onSuccess?.();
-      } catch (err) {
-        setError(err.message);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Manual code submission failed";
+        setError(msg);
         setStep("error");
       }
     },
@@ -133,7 +192,13 @@ export default function OAuthModal({
 
   // Poll for device code token
   const startPolling = useCallback(
-    async (deviceCode, codeVerifier, interval, extraData, deadlineMs) => {
+    async (
+      deviceCode: string,
+      codeVerifier?: string,
+      interval = 5,
+      extraData?: Record<string, unknown> | null,
+      deadlineMs?: number,
+    ) => {
       pollingAbortRef.current = false;
       setPolling(true);
       // Honor the upstream's expires_in when supplied (qoder sets 300s) so we
@@ -142,7 +207,7 @@ export default function OAuthModal({
       const startedAt = Date.now();
       const deadline =
         startedAt +
-        (Number.isFinite(deadlineMs) && deadlineMs > 0 ? deadlineMs : 120_000);
+        (Number.isFinite(deadlineMs) && (deadlineMs ?? 0) > 0 ? (deadlineMs as number) : 120_000);
 
       while (Date.now() < deadline) {
         // Check if polling should be aborted
@@ -188,8 +253,9 @@ export default function OAuthModal({
           if (data.error === "slow_down") {
             interval = Math.min(interval + 5, 30);
           }
-        } catch (err) {
-          setError(err.message);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : "Polling failed";
+          setError(msg);
           setStep("error");
           setPolling(false);
           return;
@@ -204,7 +270,7 @@ export default function OAuthModal({
   );
 
   // Trae/Windsurf proxy OAuth flow: dynamic-port local callback → auto exchange.
-  const startProxyFlow = useCallback(async (providerId) => {
+  const startProxyFlow = useCallback(async (providerId: string) => {
     // 1. Start the local callback server (returns a dynamic port + callback URL).
     const startRes = await fetch(`/api/oauth/${providerId}/start-proxy`);
     const startData = await startRes.json();
@@ -221,24 +287,24 @@ export default function OAuthModal({
       window.location.origin,
     );
     authorizeUrl.searchParams.set("redirect_uri", startData.callbackUrl);
-    const authRes = await fetch(authorizeUrl);
-    const authData = await authRes.json();
-    if (!authRes.ok) throw new Error(authData.error);
+    const authRes = await fetch(authorizeUrl.toString());
+    const data = await authRes.json();
+    if (!authRes.ok) throw new Error(data.error);
     // 3. Register the session so the proxy can match the incoming callback.
     //    Zed also passes code_verifier (encodes the RSA private key for decrypt);
     //    sent via POST body so the private key never lands in URL/query logs.
-    const regBody = { state: authData.state };
-    if (authData.codeVerifier) regBody.codeVerifier = authData.codeVerifier;
+    const regBody: Record<string, string> = { state: data.state };
+    if (data.codeVerifier) regBody.codeVerifier = data.codeVerifier;
     await fetch(`/api/oauth/${providerId}/register-session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(regBody),
     });
     // 4. Open popup; proxy auto-exchanges on callback, modal polls poll-status.
-    setAuthData({ ...authData, proxyProvider: providerId });
+    setAuthData({ ...data, proxyProvider: providerId });
     setStep("waiting");
     popupRef.current = window.open(
-      authData.authUrl,
+      data.authUrl,
       "oauth_popup",
       "width=600,height=700",
     );
@@ -335,7 +401,7 @@ export default function OAuthModal({
       const appPort =
         window.location.port ||
         (window.location.protocol === "https:" ? "443" : "80");
-      let redirectUri;
+      let redirectUri: string;
       if (provider === "codex") {
         redirectUri = "http://localhost:1455/auth/callback";
       } else if (provider === "xai") {
@@ -352,7 +418,7 @@ export default function OAuthModal({
       authorizeUrl.searchParams.set("redirect_uri", redirectUri);
       if (oauthMeta) {
         Object.entries(oauthMeta).forEach(([k, v]) => {
-          if (v) authorizeUrl.searchParams.set(k, v);
+          if (v) authorizeUrl.searchParams.set(k, String(v));
         });
       }
       const res = await fetch(authorizeUrl.toString());
@@ -403,8 +469,8 @@ export default function OAuthModal({
               "Port 56121 in use; close the conflicting process and retry",
             );
           }
-        } catch (e) {
-          if (e?.message) throw e;
+        } catch (e: unknown) {
+          if (e instanceof Error && e.message) throw e;
           xaiProxyActive = false;
         }
       }
@@ -459,8 +525,9 @@ export default function OAuthModal({
           setStep("input");
         }
       }
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "OAuth start failed";
+      setError(msg);
       setStep("error");
     }
   }, [
@@ -537,7 +604,7 @@ export default function OAuthModal({
       attempts += 1;
       try {
         const res = await fetch(
-          `/api/oauth/${pollProvider}/poll-status?state=${encodeURIComponent(authData.state)}`,
+          `/api/oauth/${pollProvider}/poll-status?state=${encodeURIComponent(authData.state || "")}`,
         );
         const data = await res.json();
         if (cancelled || callbackProcessedRef.current) return;
@@ -576,7 +643,7 @@ export default function OAuthModal({
     callbackProcessedRef.current = false; // Reset when authData changes
 
     // Handler for callback data - only process once
-    const handleCallback = async (data) => {
+    const handleCallback = async (data: { code?: string; token?: string; state?: string; error?: string; errorDescription?: string }) => {
       if (callbackProcessedRef.current) return; // Already processed
 
       const {
@@ -596,18 +663,18 @@ export default function OAuthModal({
 
       if (token || code) {
         callbackProcessedRef.current = true;
-        await exchangeTokens(token || code, state);
+        await exchangeTokens(token || code || "", state || null);
       }
     };
 
     // Method 1: postMessage from popup
-    const handleMessage = (event) => {
+    const handleMessage = (event: MessageEvent) => {
       // Allow messages from same origin or localhost (any port)
-      const isLocalhost =
+      const isLocalhostEvent =
         event.origin.includes("localhost") ||
         event.origin.includes("127.0.0.1");
       const isSameOrigin = event.origin === window.location.origin;
-      if (!isLocalhost && !isSameOrigin) return;
+      if (!isLocalhostEvent && !isSameOrigin) return;
 
       if (event.data?.type === "oauth_callback") {
         handleCallback(event.data.data);
@@ -616,22 +683,22 @@ export default function OAuthModal({
     window.addEventListener("message", handleMessage);
 
     // Method 2: BroadcastChannel
-    let channel;
+    let channel: BroadcastChannel | undefined;
     try {
       channel = new BroadcastChannel("oauth_callback");
       channel.onmessage = (event) => handleCallback(event.data);
-    } catch (e) {
+    } catch {
       console.log("BroadcastChannel not supported");
     }
 
     // Method 3: localStorage event
-    const handleStorage = (event) => {
+    const handleStorage = (event: StorageEvent) => {
       if (event.key === "oauth_callback" && event.newValue) {
         try {
           const data = JSON.parse(event.newValue);
           handleCallback(data);
           localStorage.removeItem("oauth_callback");
-        } catch (e) {
+        } catch {
           console.log("Failed to parse localStorage data");
         }
       }
@@ -745,9 +812,10 @@ export default function OAuthModal({
         );
       }
 
-      await exchangeTokens(token || code, state);
-    } catch (err) {
-      setError(err.message);
+      await exchangeTokens(token || code || "", state);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Manual submit failed";
+      setError(msg);
       setStep("error");
     }
   };
@@ -781,6 +849,8 @@ export default function OAuthModal({
     : isKimchiProvider
       ? `${placeholderUrl.replace("code=...", "token=...")} or copied token`
       : placeholderUrl;
+
+  const pasteConfig = PASTE_TOKEN_PROVIDERS[provider];
 
   return (
     <Modal isOpen={isOpen} title={modalTitle} onClose={handleClose} size="lg">
@@ -856,26 +926,26 @@ export default function OAuthModal({
                 </>
               )}
 
-              {authMode === "paste-token" && (
+              {authMode === "paste-token" && pasteConfig && (
                 <div className="space-y-3">
                   {ideStatus && !ideStatus.installed && (
                     <div
-                      className={`px-3 py-2 rounded-lg text-sm ${PASTE_TOKEN_PROVIDERS[provider].ideOptional ? "bg-blue-500/10 text-blue-700 dark:text-blue-300" : "bg-yellow-500/10 text-yellow-700 dark:text-yellow-300"}`}
+                      className={`px-3 py-2 rounded-lg text-sm ${pasteConfig.ideOptional ? "bg-blue-500/10 text-blue-700 dark:text-blue-300" : "bg-yellow-500/10 text-yellow-700 dark:text-yellow-300"}`}
                     >
-                      {PASTE_TOKEN_PROVIDERS[provider].ideName} IDE not
+                      {pasteConfig.ideName} IDE not
                       detected.
-                      {PASTE_TOKEN_PROVIDERS[provider].ideOptional
+                      {pasteConfig.ideOptional
                         ? " You can still grab the token from DevTools."
-                        : ` Install ${PASTE_TOKEN_PROVIDERS[provider].ideName} IDE to get the token, or use "Sign in with browser".`}
+                        : ` Install ${pasteConfig.ideName} IDE to get the token, or use "Sign in with browser".`}
                     </div>
                   )}
                   <p className="text-sm text-text-muted">
-                    {PASTE_TOKEN_PROVIDERS[provider].instructions}
+                    {pasteConfig.instructions}
                   </p>
                   <Input
                     value={pasteToken}
                     onChange={(e) => setPasteToken(e.target.value)}
-                    placeholder={PASTE_TOKEN_PROVIDERS[provider].placeholder}
+                    placeholder={pasteConfig.placeholder}
                     className="font-mono text-xs"
                   />
                   <div className="flex gap-2">
@@ -938,7 +1008,7 @@ export default function OAuthModal({
                     <Button
                       variant="secondary"
                       icon={copied === "auth_url" ? "check" : "content_copy"}
-                      onClick={() => copy(authData?.authUrl, "auth_url")}
+                      onClick={() => authData?.authUrl && copy(authData.authUrl, "auth_url")}
                       disabled={!authData?.authUrl}
                     >
                       Copy
@@ -1034,7 +1104,7 @@ export default function OAuthModal({
                     size="sm"
                     variant="ghost"
                     icon={copied === "user_code" ? "check" : "content_copy"}
-                    onClick={() => copy(deviceData.user_code, "user_code")}
+                    onClick={() => deviceData.user_code && copy(deviceData.user_code, "user_code")}
                   />
                 </div>
               </div>
@@ -1094,18 +1164,3 @@ export default function OAuthModal({
     </Modal>
   );
 }
-
-OAuthModal.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  provider: PropTypes.string,
-  providerInfo: PropTypes.shape({ name: PropTypes.string }),
-  onSuccess: PropTypes.func,
-  onClose: PropTypes.func.isRequired,
-  /** Extra metadata passed to /authorize and /exchange (e.g. gitlab clientId/baseUrl) */
-  oauthMeta: PropTypes.object,
-  /** Optional Kiro IDC config for AWS IAM Identity Center device flow */
-  idcConfig: PropTypes.shape({
-    startUrl: PropTypes.string,
-    region: PropTypes.string,
-  }),
-};

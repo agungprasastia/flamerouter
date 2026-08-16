@@ -17,9 +17,9 @@ const getMountedServerSnapshot = () => false;
 const getPortalTarget = () =>
   typeof document === "undefined" ? null : document.body;
 const getPortalServerSnapshot = () => null;
-const localeListeners = new Set();
+const localeListeners = new Set<() => void>();
 
-const subscribeLocale = (listener) => {
+const subscribeLocale = (listener: () => void) => {
   localeListeners.add(listener);
   return () => localeListeners.delete(listener);
 };
@@ -37,10 +37,10 @@ const getLocaleSnapshot = () => getLocaleFromCookie();
 const getLocaleServerSnapshot = () => "en";
 
 function notifyLocaleListeners() {
-  for (const listener of localeListeners) listener();
+  localeListeners.forEach((listener) => listener());
 }
 
-const LOCALE_INFO = {
+const LOCALE_INFO: Record<string, { name: string; flag: string }> = {
   en: { name: "English", flag: "🇺🇸" },
   vi: { name: "Tiếng Việt", flag: "🇻🇳" },
   "zh-CN": { name: "简体中文", flag: "🇨🇳" },
@@ -78,15 +78,22 @@ const LOCALE_INFO = {
   fa: { name: "فارسی", flag: "🇮🇷" },
 };
 
-const getLocaleInfo = (locale) =>
+const getLocaleInfo = (locale: string) =>
   LOCALE_INFO[locale] || { name: locale, flag: "🌐" };
+
+export interface LanguageSwitcherProps {
+  className?: string;
+  isOpen?: boolean;
+  onClose?: (locale: string) => void;
+  hideTrigger?: boolean;
+}
 
 export default function LanguageSwitcher({
   className = "",
   isOpen: controlledOpen,
   onClose,
   hideTrigger = false,
-}) {
+}: LanguageSwitcherProps) {
   const locale = useSyncExternalStore(
     subscribeLocale,
     getLocaleSnapshot,
@@ -104,12 +111,12 @@ export default function LanguageSwitcher({
   );
   const [isPending, setIsPending] = useState(false);
   const [internalOpen, setInternalOpen] = useState(false);
-  const modalRef = useRef(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
 
   const isControlled = typeof controlledOpen === "boolean";
   const isOpen = isControlled ? controlledOpen : internalOpen;
   const setIsOpen = useCallback(
-    (value, nextLocale = locale) => {
+    (value: boolean, nextLocale = locale) => {
       if (isControlled) {
         if (!value && onClose) onClose(nextLocale);
       } else {
@@ -126,8 +133,8 @@ export default function LanguageSwitcher({
 
   useEffect(() => {
     if (!isOpen) return undefined;
-    const handleClickOutside = (event) => {
-      if (modalRef.current && !modalRef.current.contains(event.target)) {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
         setIsOpenRef.current(false);
       }
     };
@@ -136,7 +143,7 @@ export default function LanguageSwitcher({
   }, [isOpen]);
 
   const handleSetLocale = useCallback(
-    async (nextLocale) => {
+    async (nextLocale: string) => {
       if (nextLocale === locale || isPending) return;
 
       setIsPending(true);

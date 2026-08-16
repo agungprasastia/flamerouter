@@ -8,6 +8,9 @@ import {
   getModelsByProviderId,
   PROVIDER_ID_TO_ALIAS,
 } from "@/shared/constants/models";
+import type { ActiveProviderItem } from "@/shared/components/ModelSelectModal";
+import type { ApiKeyItem } from "../components/ApiKeySelect";
+import type { ToolCardDef } from "../components/DefaultToolCard";
 import {
   ClaudeToolCard,
   CodexToolCard,
@@ -27,17 +30,45 @@ import {
 
 const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
 
-export default function ToolDetailClient({ toolId, machineId }) {
-  const tool = CLI_TOOLS[toolId];
-  const [connections, setConnections] = useState([]);
+export interface ConnectionRecord {
+  id?: string;
+  name?: string;
+  provider: string;
+  isActive?: boolean;
+  testStatus?: string;
+  defaultModel?: string;
+  providerSpecificData?: {
+    prefix?: string;
+    customModels?: Array<{ id?: string; name?: string }>;
+  };
+  [key: string]: unknown;
+}
+
+export interface AvailableModelItem {
+  value: string;
+  label: string;
+  provider: string;
+  alias: string;
+  connectionName?: string;
+  modelId: string;
+}
+
+export interface ToolDetailClientProps {
+  toolId: string;
+  machineId?: string;
+}
+
+export default function ToolDetailClient({ toolId, machineId: _machineId }: ToolDetailClientProps) {
+  const tool = (CLI_TOOLS as Record<string, ToolCardDef>)[toolId];
+  const [connections, setConnections] = useState<ConnectionRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modelMappings, setModelMappings] = useState({});
+  const [modelMappings, setModelMappings] = useState<Record<string, Record<string, string>>>({});
   const [cloudEnabled, setCloudEnabled] = useState(false);
   const [tunnelEnabled, setTunnelEnabled] = useState(false);
   const [tunnelPublicUrl, setTunnelPublicUrl] = useState("");
   const [tailscaleEnabled, setTailscaleEnabled] = useState(false);
   const [tailscaleUrl, setTailscaleUrl] = useState("");
-  const [apiKeys, setApiKeys] = useState([]);
+  const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -84,13 +115,13 @@ export default function ToolDetailClient({ toolId, machineId }) {
     };
   }, []);
 
-  const getActiveProviders = () =>
-    connections.filter((c) => c.isActive !== false);
+  const getActiveProviders = (): ActiveProviderItem[] =>
+    connections.filter((c) => c.isActive !== false) as ActiveProviderItem[];
 
-  const getAllAvailableModels = () => {
-    const activeProviders = getActiveProviders();
-    const models = [];
-    const seenModels = new Set();
+  const getAllAvailableModels = (): AvailableModelItem[] => {
+    const activeProviders = connections.filter((c) => c.isActive !== false);
+    const models: AvailableModelItem[] = [];
+    const seenModels = new Set<string>();
     activeProviders.forEach((conn) => {
       const alias = PROVIDER_ID_TO_ALIAS[conn.provider] || conn.provider;
       const providerModels = getModelsByProviderId(conn.provider);
@@ -117,7 +148,7 @@ export default function ToolDetailClient({ toolId, machineId }) {
       // connection's own models so these providers are usable from CLI tool pages.
       if (providerModels.length === 0) {
         const prefix = conn.providerSpecificData?.prefix || alias;
-        const fallbackModels = [];
+        const fallbackModels: Array<{ id: string; name?: string }> = [];
         if (conn.defaultModel)
           fallbackModels.push({
             id: conn.defaultModel,
@@ -151,10 +182,10 @@ export default function ToolDetailClient({ toolId, machineId }) {
     return models;
   };
 
-  const handleModelMappingChange = useCallback((tId, alias, target) => {
+  const handleModelMappingChange = useCallback((tId: string, alias: string, target: string) => {
     setModelMappings((prev) => {
       if (prev[tId]?.[alias] === target) return prev;
-      return { ...prev, [tId]: { ...prev[tId], [alias]: target } };
+      return { ...prev, [tId]: { ...(prev[tId] || {}), [alias]: target } };
     });
   }, []);
 

@@ -25,17 +25,45 @@ import { spinner as createSpinner } from "../utils/ui";
 
 const BASE64_BLOCK_SIZE = 4;
 
-let cachedDiscovery = null;
+export interface XaiDiscoveryEndpoints {
+  authorizeUrl: string;
+  tokenUrl: string;
+}
 
-export function validateOAuthEndpoint(rawUrl, field) {
+export interface XaiTokenResponse {
+  access_token: string;
+  token_type: string;
+  refresh_token?: string;
+  expires_in?: number;
+  id_token?: string;
+  scope?: string;
+  [key: string]: unknown;
+}
+
+export interface XaiExchangeParams {
+  tokenUrl: string;
+  code: string;
+  redirectUri: string;
+  codeVerifier: string;
+}
+
+export interface XaiConnectResult {
+  tokens: XaiTokenResponse;
+  email?: string;
+}
+
+let cachedDiscovery: XaiDiscoveryEndpoints | null = null;
+
+export function validateOAuthEndpoint(rawUrl: unknown, field: string): string {
   const value = String(rawUrl || "").trim();
   if (!value) throw new Error(`xai discovery ${field} is empty`);
 
-  let parsed;
+  let parsed: URL;
   try {
     parsed = new URL(value);
-  } catch (err) {
-    throw new Error(`xai discovery ${field} is invalid: ${err.message}`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`xai discovery ${field} is invalid: ${message}`);
   }
 
   if (parsed.protocol !== "https:") {
@@ -53,7 +81,7 @@ export function validateOAuthEndpoint(rawUrl, field) {
 /**
  * Discover authorization + token endpoints. Cached process-wide.
  */
-export async function discoverEndpoints() {
+export async function discoverEndpoints(): Promise<XaiDiscoveryEndpoints> {
   if (cachedDiscovery) return cachedDiscovery;
 
   try {
@@ -61,7 +89,10 @@ export async function discoverEndpoints() {
       headers: { Accept: "application/json" },
     });
     if (res.ok) {
-      const data = await res.json();
+      const data = (await res.json()) as {
+        authorization_endpoint?: string;
+        token_endpoint?: string;
+      };
       cachedDiscovery = {
         authorizeUrl: validateOAuthEndpoint(
           data.authorization_endpoint,
@@ -86,10 +117,10 @@ export async function discoverEndpoints() {
  * Decode the `email` claim from an id_token JWT. No signature verification —
  * mirrors CLIProxyAPI Go behavior. Returns undefined if not parseable.
  */
-export function decodeIdTokenEmail(idToken) {
+export function decodeIdTokenEmail(idToken: unknown): string | undefined {
   if (!idToken || typeof idToken !== "string") return undefined;
   const parts = idToken.split(".");
-  if (parts.length !== 3) return undefined;
+  if (parts.length !== 3 || !parts[1]) return undefined;
   try {
     const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
     const padding =
@@ -98,7 +129,11 @@ export function decodeIdTokenEmail(idToken) {
     const json = Buffer.from(base64 + "=".repeat(padding), "base64").toString(
       "utf8",
     );
-    const payload = JSON.parse(json);
+    const payload = JSON.parse(json) as {
+      email?: string;
+      preferred_username?: string;
+      sub?: string;
+    };
     return (
       payload.email || payload.preferred_username || payload.sub || undefined
     );
@@ -115,9 +150,14 @@ export class XaiService extends OAuthService {
   /**
    * Build xAI authorization URL. Spaces in scope are encoded as %20.
    */
-  buildXaiAuthUrl(redirectUri, state, codeChallenge, authorizeUrl) {
+  buildXaiAuthUrl(
+    redirectUri: string,
+    state: string,
+    codeChallenge: string,
+    authorizeUrl: string,
+  ): string {
     const nonce = crypto.randomBytes(16).toString("hex");
-    const params = {
+    const params: Record<string, string> = {
       response_type: "code",
       client_id: XAI_CONFIG.clientId,
       redirect_uri: redirectUri,
@@ -139,7 +179,12 @@ export class XaiService extends OAuthService {
    * Exchange authorization code for tokens.
    * xAI is a public PKCE client — no client_secret.
    */
-  async exchangeXaiCode({ tokenUrl, code, redirectUri, codeVerifier }) {
+  async exchangeXaiCode({
+    tokenUrl,
+    code,
+    redirectUri,
+    codeVerifier,
+  }: XaiExchangeParams): Promise<XaiTokenResponse> {
     const res = await fetch(tokenUrl, {
       method: "POST",
       headers: {
@@ -159,13 +204,13 @@ export class XaiService extends OAuthService {
       const err = await res.text();
       throw new Error(`xAI token exchange failed: ${err}`);
     }
-    return await res.json();
+    return (await res.json()) as XaiTokenResponse;
   }
 
   /**
    * Refresh an access token using a refresh_token.
    */
-  async refreshAccessToken(refreshToken) {
+  async refreshAccessToken(refreshToken: string): Promise<XaiTokenResponse> {
     const { tokenUrl } = await discoverEndpoints();
     const res = await fetch(tokenUrl, {
       method: "POST",
@@ -183,22 +228,22 @@ export class XaiService extends OAuthService {
       const err = await res.text();
       throw new Error(`xAI token refresh failed: ${err}`);
     }
-    return await res.json();
+    return (await res.json()) as XaiTokenResponse;
   }
 
   /**
    * Complete xAI OAuth flow end-to-end (CLI entrypoint).
    * Returns the raw token response plus extracted email.
    */
-  async connect() {
+  async connect(): Promise<XaiConnectResult> {
     const spinner = createSpinner("Starting xAI OAuth...").start();
     try {
       spinner.text = "Discovering xAI endpoints...";
       const { authorizeUrl, tokenUrl } = await discoverEndpoints();
 
       spinner.text = `Starting local server on port ${XAI_CONFIG.loopbackPort}...`;
-      let callbackParams = null;
-      const { port, close } = await startLocalServer((params) => {
+      let callbackParams: Record<string, string> | null = null;
+      const { port, close } = await startLocalServer((params: Record<string, string>) => {
         callbackParams = params;
       }, XAI_CONFIG.loopbackPort);
       const redirectUri = `http://127.0.0.1:${port}${XAI_CONFIG.callbackPath}`;
@@ -219,7 +264,7 @@ export class XaiService extends OAuthService {
       await open(authUrl);
 
       spinner.start("Waiting for xAI authorization...");
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(
           () => reject(new Error("Authentication timeout (5 minutes)")),
           300000,
@@ -234,20 +279,24 @@ export class XaiService extends OAuthService {
       });
       close();
 
-      if (callbackParams.error) {
+      const callbackResult = callbackParams as Record<string, string> | null;
+      if (!callbackResult) {
+        throw new Error("No callback received");
+      }
+      if (callbackResult.error) {
         throw new Error(
-          callbackParams.error_description || callbackParams.error,
+          callbackResult.error_description || callbackResult.error,
         );
       }
-      if (!callbackParams.code)
+      if (!callbackResult.code)
         throw new Error("No authorization code received");
-      if (callbackParams.state !== state)
+      if (callbackResult.state !== state)
         throw new Error("Invalid state parameter");
 
       spinner.start("Exchanging code for tokens...");
       const tokens = await this.exchangeXaiCode({
         tokenUrl,
-        code: callbackParams.code,
+        code: callbackResult.code,
         redirectUri,
         codeVerifier,
       });
@@ -255,8 +304,9 @@ export class XaiService extends OAuthService {
       const email = decodeIdTokenEmail(tokens.id_token);
       spinner.succeed("xAI connected successfully!");
       return { tokens, email };
-    } catch (error) {
-      spinner.fail(`Failed: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      spinner.fail(`Failed: ${message}`);
       throw error;
     }
   }

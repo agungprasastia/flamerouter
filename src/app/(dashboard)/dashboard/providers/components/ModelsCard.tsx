@@ -9,6 +9,27 @@ import { getProviderAlias } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
 // ── ModelRow ───────────────────────────────────────────────────
+interface ModelRowModel {
+  id: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
+interface ModelRowProps {
+  model: ModelRowModel;
+  fullModel: string;
+  alias?: string;
+  copied?: string | null;
+  onCopy: (text: string, id?: string) => void;
+  onSetAlias?: (alias: string) => void | Promise<void>;
+  onDeleteAlias?: () => void | Promise<void>;
+  testStatus?: "ok" | "error" | "testing" | string | null;
+  isCustom?: boolean;
+  isFree?: boolean;
+  onTest?: () => void | Promise<void>;
+  isTesting?: boolean;
+}
+
 export function ModelRow({
   model,
   fullModel,
@@ -20,7 +41,7 @@ export function ModelRow({
   onDeleteAlias,
   onTest,
   isTesting,
-}) {
+}: ModelRowProps) {
   const borderColor =
     testStatus === "ok"
       ? "border-green-500/40"
@@ -128,7 +149,13 @@ ModelRow.propTypes = {
 };
 
 // ── AddCustomModelModal ────────────────────────────────────────
-function AddCustomModelModal({ isOpen, onSave, onClose }) {
+interface AddCustomModelModalProps {
+  isOpen: boolean;
+  onSave: (modelId: string) => void | Promise<void>;
+  onClose: () => void;
+}
+
+function AddCustomModelModal({ isOpen, onSave, onClose }: AddCustomModelModalProps) {
   const [modelId, setModelId] = useState("");
 
   const handleSave = () => {
@@ -170,6 +197,21 @@ AddCustomModelModal.propTypes = {
   onClose: PropTypes.func.isRequired,
 };
 
+interface ModelsCardCustomModel {
+  id: string;
+  name?: string;
+  type?: string;
+  kinds?: string[];
+  providerAlias?: string;
+  [key: string]: unknown;
+}
+
+interface ModelsCardProps {
+  providerId: string;
+  kindFilter?: string;
+  providerAliasOverride?: string;
+}
+
 // ── ModelsCard ─────────────────────────────────────────────────
 // Self-contained card: shows models for a provider, filtered by optional `kindFilter`.
 // kindFilter: if provided, only shows models with matching type/kinds field.
@@ -177,12 +219,12 @@ export default function ModelsCard({
   providerId,
   kindFilter,
   providerAliasOverride,
-}) {
+}: ModelsCardProps) {
   const { copied, copy } = useCopyToClipboard();
-  const [modelAliases, setModelAliases] = useState({});
-  const [customModels, setCustomModels] = useState([]);
-  const [modelTestResults, setModelTestResults] = useState({});
-  const [testingModelId, setTestingModelId] = useState(null);
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
+  const [customModels, setCustomModels] = useState<ModelsCardCustomModel[]>([]);
+  const [modelTestResults, setModelTestResults] = useState<Record<string, "ok" | "error">>({});
+  const [testingModelId, setTestingModelId] = useState<string | null>(null);
   const [testError, setTestError] = useState("");
   const [showAddCustomModel, setShowAddCustomModel] = useState(false);
 
@@ -208,7 +250,7 @@ export default function ModelsCard({
     fetchData();
   }, [fetchData]);
 
-  const handleSetAlias = async (modelId, alias) => {
+  const handleSetAlias = async (modelId: string, alias: string) => {
     const fullModel = `${providerAlias}/${modelId}`;
     try {
       const res = await fetch("/api/models/alias", {
@@ -222,7 +264,7 @@ export default function ModelsCard({
     }
   };
 
-  const handleDeleteAlias = async (alias) => {
+  const handleDeleteAlias = async (alias: string) => {
     try {
       const res = await fetch(
         `/api/models/alias?alias=${encodeURIComponent(alias)}`,
@@ -234,7 +276,7 @@ export default function ModelsCard({
     }
   };
 
-  const handleAddCustomModel = async (modelId) => {
+  const handleAddCustomModel = async (modelId: string) => {
     try {
       const res = await fetch("/api/models/custom", {
         method: "POST",
@@ -254,7 +296,7 @@ export default function ModelsCard({
     }
   };
 
-  const handleDeleteCustomModel = async (modelId) => {
+  const handleDeleteCustomModel = async (modelId: string) => {
     try {
       const params = new URLSearchParams({
         providerAlias,
@@ -273,7 +315,7 @@ export default function ModelsCard({
     }
   };
 
-  const handleTestModel = async (modelId) => {
+  const handleTestModel = async (modelId: string) => {
     if (testingModelId) return;
     setTestingModelId(modelId);
     try {
@@ -303,7 +345,7 @@ export default function ModelsCard({
   const allBuiltIn = getModelsByProviderId(providerId);
   const builtInModels = kindFilter
     ? allBuiltIn.filter((m) => {
-        if (m.kinds) return m.kinds.includes(kindFilter);
+        if (Array.isArray(m.kinds)) return m.kinds.includes(kindFilter);
         return getModelKind(m, "llm") === kindFilter;
       })
     : allBuiltIn;
@@ -345,11 +387,11 @@ export default function ModelsCard({
                 copied={copied}
                 onCopy={copy}
                 onSetAlias={(alias) => handleSetAlias(model.id, alias)}
-                onDeleteAlias={() => handleDeleteAlias(existingAlias)}
+                onDeleteAlias={existingAlias ? () => handleDeleteAlias(existingAlias) : undefined}
                 testStatus={modelTestResults[model.id]}
                 onTest={() => handleTestModel(model.id)}
                 isTesting={testingModelId === model.id}
-                isFree={model.isFree}
+                isFree={Boolean(model.isFree)}
               />
             );
           })}

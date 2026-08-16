@@ -17,8 +17,29 @@ import {
   MEDIA_PROVIDER_KINDS,
 } from "@/shared/constants/providers";
 
-// Parse "providerId/model" or just "providerId" → { providerId, model }
-function parseModelEntry(entry) {
+interface ComboDetail {
+  id: string;
+  name: string;
+  models: string[];
+  kind: string;
+  [key: string]: unknown;
+}
+
+interface TestResultState {
+  json?: string;
+  imageUrl?: string;
+  audioUrl?: string;
+  latencyMs?: number;
+}
+
+interface ActiveConnItem {
+  id?: string;
+  name?: string;
+  provider: string;
+  providerSpecificData?: { prefix?: string };
+}
+
+function parseModelEntry(entry: string): { providerId: string; model: string } {
   if (typeof entry !== "string") return { providerId: "", model: "" };
   const idx = entry.indexOf("/");
   if (idx < 0) return { providerId: entry, model: "" };
@@ -27,65 +48,66 @@ function parseModelEntry(entry) {
 
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 
-const KIND_LABELS = {
+const KIND_LABELS: Record<string, string> = {
   webSearch: "Web Search",
   webFetch: "Web Fetch",
   image: "Text to Image",
   tts: "Text To Speech",
 };
 
-const EXAMPLE_PATHS = {
+const EXAMPLE_PATHS: Record<string, string> = {
   webSearch: "/v1/search",
   webFetch: "/v1/web/fetch",
   image: "/v1/images/generations",
   tts: "/v1/audio/speech",
 };
 
-const EXAMPLE_BODIES = {
-  webSearch: (n) => ({
+const EXAMPLE_BODIES: Record<string, (n: string) => Record<string, unknown>> = {
+  webSearch: (n: string) => ({
     model: n,
     query: "What is the latest news about AI?",
     search_type: "web",
     max_results: 5,
   }),
-  webFetch: (n) => ({
+  webFetch: (n: string) => ({
     model: n,
     url: "https://example.com",
     format: "markdown",
   }),
-  image: (n) => ({
+  image: (n: string) => ({
     model: n,
     prompt: "A cute cat playing piano",
     n: 1,
     size: "1024x1024",
   }),
-  tts: (n) => ({ model: n, input: "Hello, this is a test.", voice: "alloy" }),
+  tts: (n: string) => ({ model: n, input: "Hello, this is a test.", voice: "alloy" }),
 };
 
-// Map combo.kind → listing route to go back to
-function getListingHref(kind) {
+function getListingHref(kind: string): string {
   if (kind === "webSearch" || kind === "webFetch")
     return "/dashboard/media-providers/web";
   return `/dashboard/media-providers/${kind}`;
 }
 
 export default function ComboDetailPage() {
-  const { id } = useParams();
+  const params = useParams();
+  const idParam = Array.isArray(params?.id) ? params.id[0] : params?.id;
+  const id = idParam || "";
   const router = useRouter();
-  const [combo, setCombo] = useState(null);
+  const [combo, setCombo] = useState<ComboDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [nameError, setNameError] = useState("");
-  const [providers, setProviders] = useState([]);
+  const [providers, setProviders] = useState<string[]>([]);
   const [roundRobin, setRoundRobin] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+  const [testResult, setTestResult] = useState<TestResultState | null>(null);
   const [testError, setTestError] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [connections, setConnections] = useState([]);
-  const [modelAliases, setModelAliases] = useState({});
+  const [connections, setConnections] = useState<ActiveConnItem[]>([]);
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
 
   const fetchAll = async () => {
     try {
@@ -99,30 +121,41 @@ export default function ComboDetailPage() {
           fetch("/api/models/alias", { cache: "no-store" }),
         ]);
       if (aliasesRes.ok)
-        setModelAliases((await aliasesRes.json()).aliases || {});
+        setModelAliases(((await aliasesRes.json()) as { aliases?: Record<string, string> }).aliases || {});
       if (keysRes.ok) {
-        const k = await keysRes.json();
+        const k = (await keysRes.json()) as { keys?: Array<{ isActive?: boolean; key: string }> };
         setApiKey((k.keys || []).find((x) => x.isActive !== false)?.key || "");
       }
-      if (connsRes.ok)
-        setConnections((await connsRes.json()).connections || []);
+      if (connsRes.ok) {
+        const rawConns = ((await connsRes.json()) as { connections?: Array<{ id?: string; name?: string; provider?: string; providerSpecificData?: { prefix?: string } }> }).connections || [];
+        setConnections(
+          rawConns
+            .filter((c): c is ActiveConnItem => typeof c.provider === "string" && c.provider.length > 0)
+            .map((c) => ({
+              id: c.id,
+              name: c.name,
+              provider: c.provider,
+              providerSpecificData: c.providerSpecificData,
+            })),
+        );
+      }
       if (!comboRes.ok) {
         setCombo(null);
         setLoading(false);
         return;
       }
-      const c = await comboRes.json();
+      const c = (await comboRes.json()) as ComboDetail;
       setCombo(c);
       setName(c.name);
       setProviders(c.models || []);
-      const s = settingsRes.ok ? await settingsRes.json() : {};
+      const s = settingsRes.ok ? ((await settingsRes.json()) as { comboStrategies?: Record<string, { fallbackStrategy?: string }> }) : {};
       setRoundRobin(
         s.comboStrategies?.[c.name]?.fallbackStrategy === "round-robin",
       );
-      const allLogs = logsRes.ok ? await logsRes.json() : [];
+      const allLogs = logsRes.ok ? ((await logsRes.json()) as unknown[]) : [];
       setLogs(
         allLogs
-          .filter((l) => typeof l === "string" && l.includes(c.name))
+          .filter((l): l is string => typeof l === "string" && l.includes(c.name))
           .slice(0, 50),
       );
     } catch {
@@ -132,10 +165,10 @@ export default function ComboDetailPage() {
   };
 
   useEffect(() => {
-    fetchAll();
+    if (id) fetchAll();
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const validateName = (v) => {
+  const validateName = (v: string): boolean => {
     if (!v.trim()) {
       setNameError("Name is required");
       return false;
@@ -148,14 +181,14 @@ export default function ComboDetailPage() {
     return true;
   };
 
-  const saveCombo = async (patch) => {
+  const saveCombo = async (patch: Partial<ComboDetail>): Promise<boolean> => {
     const res = await fetch(`/api/combos/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = (await res.json()) as { error?: string };
       alert(err.error || "Failed to save");
       return false;
     }
@@ -164,46 +197,52 @@ export default function ComboDetailPage() {
 
   const handleSaveName = async () => {
     if (!validateName(name)) return;
-    if (name === combo.name) return;
+    if (!combo || name === combo.name) return;
     const ok = await saveCombo({ name });
     if (ok) await fetchAll();
   };
 
-  const handleAddModel = async (model) => {
-    const value = model?.value || model;
+  const handleAddModel = async (model: { value?: string; id?: string } | string) => {
+    const value = typeof model === "string" ? model : model?.value || model?.id;
     if (!value || providers.includes(value)) return;
     const next = [...providers, value];
     setProviders(next);
     await saveCombo({ models: next });
   };
 
-  const handleDeselectModel = async (model) => {
-    const value = model?.value || model;
+  const handleDeselectModel = async (model: { value?: string; id?: string } | string) => {
+    const value = typeof model === "string" ? model : model?.value || model?.id;
     if (!value || !providers.includes(value)) return;
     const next = providers.filter((p) => p !== value);
     setProviders(next);
     await saveCombo({ models: next });
   };
 
-  const handleRemoveProvider = async (idx) => {
+  const handleRemoveProvider = async (idx: number) => {
     const next = providers.filter((_, i) => i !== idx);
     setProviders(next);
     await saveCombo({ models: next });
   };
 
-  const handleMove = async (idx, dir) => {
+  const handleMove = async (idx: number, dir: number) => {
     const next = [...providers];
     const swap = idx + dir;
     if (swap < 0 || swap >= next.length) return;
-    [next[idx], next[swap]] = [next[swap], next[idx]];
-    setProviders(next);
-    await saveCombo({ models: next });
+    const current = next[idx];
+    const target = next[swap];
+    if (current !== undefined && target !== undefined) {
+      next[idx] = target;
+      next[swap] = current;
+      setProviders(next);
+      await saveCombo({ models: next });
+    }
   };
 
-  const handleToggleRoundRobin = async (enabled) => {
+  const handleToggleRoundRobin = async (enabled: boolean) => {
     setRoundRobin(enabled);
+    if (!combo) return;
     const settingsRes = await fetch("/api/settings", { cache: "no-store" });
-    const s = settingsRes.ok ? await settingsRes.json() : {};
+    const s = settingsRes.ok ? ((await settingsRes.json()) as { comboStrategies?: Record<string, { fallbackStrategy?: string }> }) : {};
     const updated = { ...(s.comboStrategies || {}) };
     if (enabled) updated[combo.name] = { fallbackStrategy: "round-robin" };
     else delete updated[combo.name];
@@ -215,12 +254,27 @@ export default function ComboDetailPage() {
   };
 
   const handleDelete = async () => {
+    if (!combo) return;
     if (!confirm(`Delete combo "${combo.name}"?`)) return;
     const res = await fetch(`/api/combos/${id}`, { method: "DELETE" });
     if (res.ok) router.push(getListingHref(combo.kind));
   };
 
+  function maskB64(obj: unknown): unknown {
+    if (!obj || typeof obj !== "object") return obj;
+    if (Array.isArray(obj)) return obj.map(maskB64);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      out[k] =
+        k === "b64_json" && typeof v === "string" && v.length > 100
+          ? `<${v.length} chars base64>`
+          : maskB64(v);
+    }
+    return out;
+  }
+
   const handleTest = async () => {
+    if (!combo) return;
     setTesting(true);
     setTestResult(null);
     setTestError("");
@@ -237,8 +291,9 @@ export default function ComboDetailPage() {
     const start = Date.now();
     try {
       const path = EXAMPLE_PATHS[combo.kind];
-      const body = EXAMPLE_BODIES[combo.kind](combo.name);
-      const headers = { "Content-Type": "application/json" };
+      const bodyFn = EXAMPLE_BODIES[combo.kind];
+      const body = bodyFn ? bodyFn(combo.name) : { model: combo.name };
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       const res = await fetch(`/api${path}`, {
         method: "POST",
@@ -247,26 +302,31 @@ export default function ComboDetailPage() {
       });
       const latencyMs = Date.now() - start;
       if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        setTestError(d?.error?.message || d?.error || `HTTP ${res.status}`);
+        const d = (await res.json().catch(() => ({}))) as {
+          error?: { message?: string } | string;
+        };
+        const errorMsg =
+          typeof d?.error === "object" && d?.error?.message
+            ? d.error.message
+            : typeof d?.error === "string"
+              ? d.error
+              : `HTTP ${res.status}`;
+        setTestError(errorMsg);
         setTestResult({ json: JSON.stringify(d, null, 2), latencyMs });
         return;
       }
       const ctype = res.headers.get("content-type") || "";
-      // Binary image
       if (ctype.startsWith("image/")) {
         const blob = await res.blob();
         setTestResult({ imageUrl: URL.createObjectURL(blob), latencyMs });
         return;
       }
-      // Binary audio
       if (ctype.startsWith("audio/") || ctype === "application/octet-stream") {
         const blob = await res.blob();
         setTestResult({ audioUrl: URL.createObjectURL(blob), latencyMs });
         return;
       }
-      // JSON — could be image (data[0].b64_json/url) or generic
-      const data = await res.json();
+      const data = (await res.json()) as { data?: Array<{ b64_json?: string; url?: string }> };
       const first = data?.data?.[0];
       const imageUrl = first?.b64_json
         ? `data:image/png;base64,${first.b64_json}`
@@ -277,24 +337,11 @@ export default function ComboDetailPage() {
         latencyMs,
       });
     } catch (e) {
-      setTestError(e.message || "Network error");
+      const err = e as { message?: string };
+      setTestError(err.message || "Network error");
     }
     setTesting(false);
   };
-
-  // Mask large b64_json strings to keep JSON view readable
-  function maskB64(obj) {
-    if (!obj || typeof obj !== "object") return obj;
-    if (Array.isArray(obj)) return obj.map(maskB64);
-    const out = {};
-    for (const [k, v] of Object.entries(obj)) {
-      out[k] =
-        k === "b64_json" && typeof v === "string" && v.length > 100
-          ? `<${v.length} chars base64>`
-          : maskB64(v);
-    }
-    return out;
-  }
 
   if (loading) return <div className="text-text-muted text-sm">Loading...</div>;
   if (!combo) return notFound();
@@ -315,7 +362,6 @@ export default function ComboDetailPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3 min-w-0">
           <Link href={backHref} className="text-text-muted hover:text-primary">
@@ -343,7 +389,6 @@ export default function ComboDetailPage() {
         </Button>
       </div>
 
-      {/* Settings Card */}
       <Card>
         <h2 className="text-lg font-semibold mb-3">Settings</h2>
         <div className="flex flex-col gap-4">
@@ -375,7 +420,6 @@ export default function ComboDetailPage() {
         </div>
       </Card>
 
-      {/* Providers Card */}
       <Card>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
           <div>
@@ -411,9 +455,9 @@ export default function ComboDetailPage() {
                     size={24}
                     className="object-contain rounded shrink-0"
                     fallbackText={
-                      p?.textIcon || providerId.slice(0, 2).toUpperCase()
+                      (p?.textIcon as string | undefined) || providerId.slice(0, 2).toUpperCase()
                     }
-                    fallbackColor={p?.color}
+                    fallbackColor={p?.color as string | undefined}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate">
@@ -463,7 +507,6 @@ export default function ComboDetailPage() {
         )}
       </Card>
 
-      {/* Test Example Card */}
       {combo.kind && examplePath && (
         <Card>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
@@ -544,7 +587,6 @@ export default function ComboDetailPage() {
         </Card>
       )}
 
-      {/* Usage Logs Card */}
       <Card>
         <h2 className="text-lg font-semibold mb-3">Usage Logs</h2>
         {logs.length === 0 ? (

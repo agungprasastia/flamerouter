@@ -6,10 +6,12 @@ import { useRouter } from "next/navigation";
 import Card from "@/shared/components/Card";
 import PricingModal from "@/shared/components/PricingModal";
 
+type PricingMap = Record<string, Record<string, unknown>>;
+
 export default function PricingSettingsPage() {
   const router = useRouter();
   const [showModal, setShowModal] = useState(false);
-  const [currentPricing, setCurrentPricing] = useState(null);
+  const [currentPricing, setCurrentPricing] = useState<PricingMap | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -21,7 +23,7 @@ export default function PricingSettingsPage() {
     try {
       const response = await fetch("/api/pricing");
       if (response.ok) {
-        const data = await response.json();
+        const data = (await response.json()) as PricingMap;
         setCurrentPricing(data);
       }
     } catch (error) {
@@ -40,7 +42,10 @@ export default function PricingSettingsPage() {
     if (!currentPricing) return 0;
     let count = 0;
     for (const provider in currentPricing) {
-      count += Object.keys(currentPricing[provider]).length;
+      const providerModels = currentPricing[provider];
+      if (providerModels) {
+        count += Object.keys(providerModels).length;
+      }
     }
     return count;
   };
@@ -169,7 +174,7 @@ export default function PricingSettingsPage() {
                     {provider.toUpperCase()}:
                   </span>{" "}
                   <span className="text-text-muted">
-                    {Object.keys(currentPricing[provider]).length} models
+                    {Object.keys(currentPricing[provider] ?? {}).length} models
                   </span>
                 </div>
               ))}

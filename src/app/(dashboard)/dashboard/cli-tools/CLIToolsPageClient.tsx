@@ -4,13 +4,17 @@ import { useState, useEffect } from "react";
 import { CardSkeleton } from "@/shared/components";
 import { CLI_TOOLS, MITM_TOOLS } from "@/shared/constants/cliTools";
 import { MitmLinkCard } from "./components";
-import ToolSummaryCard from "./components/ToolSummaryCard";
+import ToolSummaryCard, { type ToolStatusData } from "./components/ToolSummaryCard";
 
 const ALL_STATUSES_URL = "/api/cli-tools/all-statuses";
 
-export default function CLIToolsPageClient({ machineId }) {
+export interface CLIToolsPageClientProps {
+  machineId?: string;
+}
+
+export default function CLIToolsPageClient({ machineId }: CLIToolsPageClientProps) {
   const [loading, setLoading] = useState(true);
-  const [toolStatuses, setToolStatuses] = useState({});
+  const [toolStatuses, setToolStatuses] = useState<Record<string, ToolStatusData>>({});
 
   useEffect(() => {
     let mounted = true;

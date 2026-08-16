@@ -1,7 +1,16 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, ReactNode } from "react";
 import { cn } from "@/shared/utils/cn";
+
+export interface DrawerProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title?: string;
+  children?: ReactNode;
+  width?: "sm" | "md" | "lg" | "xl" | "full";
+  className?: string;
+}
 
 export default function Drawer({
   isOpen,
@@ -10,8 +19,8 @@ export default function Drawer({
   children,
   width = "md",
   className,
-}) {
-  const widths = {
+}: DrawerProps) {
+  const widths: Record<"sm" | "md" | "lg" | "xl" | "full", string> = {
     sm: "w-[400px]",
     md: "w-[500px]",
     lg: "w-[600px]",
@@ -31,7 +40,7 @@ export default function Drawer({
   }, [isOpen]);
 
   useEffect(() => {
-    const handleEscape = (e) => {
+    const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isOpen) onClose();
     };
     document.addEventListener("keydown", handleEscape);

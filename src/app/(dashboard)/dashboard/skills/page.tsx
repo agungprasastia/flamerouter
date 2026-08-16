@@ -7,9 +7,15 @@ import {
   SKILLS_REPO_URL,
   getSkillRawUrl,
   getSkillBlobUrl,
+  type SkillItem,
 } from "@/shared/constants/skills";
 
-function CopyButton({ value, label = "Copy link" }) {
+interface CopyButtonProps {
+  value: string;
+  label?: string;
+}
+
+function CopyButton({ value, label = "Copy link" }: CopyButtonProps) {
   const { copied, copy } = useCopyToClipboard(2000);
   return (
     <button
@@ -25,7 +31,7 @@ function CopyButton({ value, label = "Copy link" }) {
   );
 }
 
-function SkillRow({ skill }) {
+function SkillRow({ skill }: { skill: SkillItem }) {
   const url = getSkillRawUrl(skill.id);
   return (
     <div

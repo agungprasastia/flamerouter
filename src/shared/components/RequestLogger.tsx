@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import Card from "./Card";
 
 export default function RequestLogger() {
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
@@ -14,13 +14,15 @@ export default function RequestLogger() {
   }, []);
 
   useEffect(() => {
-    let interval;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (autoRefresh) {
       interval = setInterval(() => {
         fetchLogs(false);
       }, 3000);
     }
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [autoRefresh]);
 
   const fetchLogs = async (showLoading = true) => {
@@ -29,7 +31,7 @@ export default function RequestLogger() {
       const res = await fetch("/api/usage/request-logs");
       if (res.ok) {
         const data = await res.json();
-        setLogs(data);
+        setLogs(Array.isArray(data) ? (data as string[]) : []);
       }
     } catch (error) {
       console.error("Failed to fetch logs:", error);

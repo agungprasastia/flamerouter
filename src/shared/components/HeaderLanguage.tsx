@@ -11,7 +11,8 @@ function getLocaleFromCookie() {
   const cookie = document.cookie
     .split(";")
     .find((c) => c.trim().startsWith(`${LOCALE_COOKIE}=`));
-  const value = cookie ? decodeURIComponent(cookie.split("=")[1]) : "en";
+  const parts = cookie ? cookie.split("=") : [];
+  const value = parts[1] ? decodeURIComponent(parts[1]) : "en";
   return normalizeLocale(value);
 }
 

@@ -52,7 +52,7 @@ export const IFLOW_CONFIG = { ...PROVIDER_OAUTH["iflow"] };
 // loadCodeAssistClientMetadata is dynamic (runtime platform detection)
 export const ANTIGRAVITY_CONFIG = {
   ...ANTIGRAVITY_OAUTH_CLIENT,
-  ...PROVIDER_OAUTH["antigravity"],
+  ...(PROVIDER_OAUTH["antigravity"] as unknown as Record<string, unknown>),
   loadCodeAssistClientMetadata: JSON.stringify({
     ideType: 9,
     platform: getOAuthPlatformEnum(),
@@ -64,7 +64,7 @@ export const ANTIGRAVITY_CONFIG = {
  * Get client metadata using numeric enum values for API calls.
  * @returns {{ ideType: number, platform: number, pluginType: number }}
  */
-export function getOAuthClientMetadata() {
+export function getOAuthClientMetadata(): { ideType: number; platform: number; pluginType: number } {
   return { ideType: 9, platform: getOAuthPlatformEnum(), pluginType: 2 };
 }
 
@@ -81,7 +81,7 @@ export const KIRO_CONFIG = { ...PROVIDER_OAUTH["kiro"] };
 export const AWS_REGION_PATTERN = /^[a-z]{2}-[a-z]+-\d{1,2}$/;
 
 // Reject any region that is not a valid AWS region before interpolating it into a URL
-export function assertValidAwsRegion(region) {
+export function assertValidAwsRegion(region: string): string {
   if (typeof region !== "string" || !AWS_REGION_PATTERN.test(region)) {
     throw new Error("Invalid region");
   }
@@ -107,8 +107,8 @@ export const KIMI_CONFIG = {
   clientId:
     process.env.KIMI_CODING_OAUTH_CLIENT_ID ||
     process.env.KIMI_OAUTH_CLIENT_ID ||
-    REGISTRY_PROVIDERS["kimi"]?.clientId ||
-    PROVIDER_OAUTH["kimi"]?.clientId,
+    (REGISTRY_PROVIDERS["kimi"] as unknown as Record<string, string>)?.clientId ||
+    (PROVIDER_OAUTH["kimi"] as unknown as Record<string, string>)?.clientId,
 };
 // Back-compat alias for any remaining KIMI_CODING_CONFIG imports
 export const KIMI_CODING_CONFIG = KIMI_CONFIG;

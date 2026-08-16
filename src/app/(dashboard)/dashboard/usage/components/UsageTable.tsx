@@ -1,24 +1,29 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
-import PropTypes from "prop-types";
+import { useState, useEffect, useCallback, useMemo, Fragment, type ReactNode } from "react";
 import Badge from "@/shared/components/Badge";
 import { ArrowDown, ArrowUp, ChevronRight, ChevronsUpDown } from "lucide-react";
 
-const fmt = (n) => new Intl.NumberFormat().format(n || 0);
-const fmtCost = (n) => `$${(n || 0).toFixed(2)}`;
+const fmt = (n: number | string | undefined | null) => new Intl.NumberFormat().format(Number(n) || 0);
+const fmtCost = (n: number | string | undefined | null) => `$${(Number(n) || 0).toFixed(2)}`;
 
-function fmtTime(iso) {
+function fmtTime(iso: string | number | null | undefined): string {
   if (!iso) return "Never";
-  const diffMins = Math.floor((Date.now() - new Date(iso)) / 60000);
+  const diffMins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
   if (diffMins < 1) return "Just now";
   if (diffMins < 60) return `${diffMins}m ago`;
   if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
   return new Date(iso).toLocaleDateString();
 }
 
-function SortIcon({ field, currentSort, currentOrder }) {
+interface SortIconProps {
+  field: string;
+  currentSort: string;
+  currentOrder: string;
+}
+
+function SortIcon({ field, currentSort, currentOrder }: SortIconProps) {
   if (currentSort !== field)
     return <ChevronsUpDown className="size-3.5 opacity-30" />;
   return currentOrder === "asc" ? (
@@ -28,16 +33,31 @@ function SortIcon({ field, currentSort, currentOrder }) {
   );
 }
 
-SortIcon.propTypes = {
-  field: PropTypes.string.isRequired,
-  currentSort: PropTypes.string.isRequired,
-  currentOrder: PropTypes.string.isRequired,
-};
+export interface UsageItemData {
+  key?: string;
+  promptTokens?: number;
+  cachedTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  inputCost?: number;
+  cachedCost?: number;
+  outputCost?: number;
+  totalCost?: number;
+  cost?: number;
+  pending?: number;
+  [key: string]: unknown;
+}
+
+interface ValueCellsProps {
+  item: UsageItemData;
+  viewMode: string;
+  isSummary?: boolean;
+}
 
 /**
  * Render 3 token or cost cells based on viewMode
  */
-function ValueCells({ item, viewMode, isSummary = false }) {
+function ValueCells({ item, viewMode, isSummary = false }: ValueCellsProps) {
   if (viewMode === "tokens") {
     return (
       <>
@@ -82,31 +102,34 @@ function ValueCells({ item, viewMode, isSummary = false }) {
   );
 }
 
-ValueCells.propTypes = {
-  item: PropTypes.object.isRequired,
-  viewMode: PropTypes.string.isRequired,
-  isSummary: PropTypes.bool,
-};
+export interface UsageTableColumn {
+  field: string;
+  label: string;
+  align?: "left" | "right";
+}
 
-/**
- * Reusable sortable usage table with expandable group rows.
- *
- * @param {object} props
- * @param {string} props.title - Table title
- * @param {Array} props.columns - Column definitions [{field, label}]
- * @param {Array} props.groupedData - Grouped data from groupDataByKey
- * @param {string} props.tableType - Table type key for sort URL params
- * @param {string} props.sortBy - Current sort field
- * @param {string} props.sortOrder - Current sort order
- * @param {function} props.onToggleSort - Sort toggle handler
- * @param {string} props.viewMode - "tokens" or "costs"
- * @param {string} props.storageKey - localStorage key for expanded state
- * @param {function} props.renderGroupLabel - Render group summary first cell content
- * @param {function} props.renderDetailCells - Render detail row custom cells (before value cells)
- * @param {function} props.renderSummaryCells - Render summary row cells after group label (placeholder cols)
- * @param {string} props.emptyMessage - Empty state message
- */
-export default function UsageTable({
+export interface UsageGroupedData<T = UsageItemData> {
+  groupKey: string;
+  summary: UsageItemData;
+  items: T[];
+}
+
+export interface UsageTableProps<T = UsageItemData> {
+  title?: string;
+  columns: UsageTableColumn[];
+  groupedData: UsageGroupedData<T>[];
+  tableType: string;
+  sortBy: string;
+  sortOrder: string;
+  onToggleSort: (tableType: string, field: string) => void;
+  viewMode: string;
+  storageKey: string;
+  renderDetailCells: (item: T) => ReactNode;
+  renderSummaryCells: (group: UsageGroupedData<T>) => ReactNode;
+  emptyMessage: string;
+}
+
+export default function UsageTable<T extends UsageItemData = UsageItemData>({
   title,
   columns,
   groupedData,
@@ -119,8 +142,8 @@ export default function UsageTable({
   renderDetailCells,
   renderSummaryCells,
   emptyMessage,
-}) {
-  const [expanded, setExpanded] = useState(new Set());
+}: UsageTableProps<T>) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // Load expanded state from localStorage
   useEffect(() => {
@@ -141,10 +164,14 @@ export default function UsageTable({
     }
   }, [expanded, storageKey]);
 
-  const toggleGroup = useCallback((groupKey) => {
+  const toggleGroup = useCallback((groupKey: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      next.has(groupKey) ? next.delete(groupKey) : next.add(groupKey);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
       return next;
     });
   }, []);
@@ -252,7 +279,7 @@ export default function UsageTable({
                         className={`size-4 shrink-0 text-text-muted transition-transform ${expanded.has(group.groupKey) ? "rotate-90" : ""}`}
                       />
                       <span
-                        className={`font-medium transition-colors ${group.summary.pending > 0 ? "text-primary" : ""}`}
+                        className={`font-medium transition-colors ${(group.summary.pending ?? 0) > 0 ? "text-primary" : ""}`}
                       >
                         {group.groupKey}
                       </span>
@@ -294,27 +321,6 @@ export default function UsageTable({
     </section>
   );
 }
-
-UsageTable.propTypes = {
-  title: PropTypes.string.isRequired,
-  columns: PropTypes.arrayOf(
-    PropTypes.shape({
-      field: PropTypes.string.isRequired,
-      label: PropTypes.string.isRequired,
-      align: PropTypes.string,
-    }),
-  ).isRequired,
-  groupedData: PropTypes.array.isRequired,
-  tableType: PropTypes.string.isRequired,
-  sortBy: PropTypes.string.isRequired,
-  sortOrder: PropTypes.string.isRequired,
-  onToggleSort: PropTypes.func.isRequired,
-  viewMode: PropTypes.string.isRequired,
-  storageKey: PropTypes.string.isRequired,
-  renderDetailCells: PropTypes.func.isRequired,
-  renderSummaryCells: PropTypes.func.isRequired,
-  emptyMessage: PropTypes.string.isRequired,
-};
 
 // Re-export utilities for use in UsageStats orchestrator
 export { fmt, fmtCost, fmtTime };

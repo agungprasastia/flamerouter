@@ -21,20 +21,38 @@ import {
 import { Button } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
 
-const STATUS_CONFIG = {
+const STATUS_CONFIG: Record<
+  string,
+  {
+    Icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string; style?: React.CSSProperties }>;
+    color: string;
+    label: string;
+  }
+> = {
   available: { Icon: CircleCheck, color: "#22c55e", label: "Available" },
   cooldown: { Icon: Clock, color: "#f59e0b", label: "Cooldown" },
   unavailable: { Icon: CircleAlert, color: "#ef4444", label: "Unavailable" },
   unknown: { Icon: CircleHelp, color: "#6b7280", label: "Unknown" },
 };
 
+interface ModelStatusItem {
+  provider?: string;
+  model: string;
+  status: "available" | "cooldown" | "unavailable" | "unknown" | string;
+}
+
+interface ModelAvailabilityData {
+  models?: ModelStatusItem[];
+  unavailableCount?: number;
+}
+
 export default function ModelAvailabilityBadge() {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState<ModelAvailabilityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [clearing, setClearing] = useState(null);
-  const ref = useRef(null);
+  const [clearing, setClearing] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement | null>(null);
   const notify = useNotificationStore();
 
   const fetchStatus = useCallback(async () => {
@@ -43,7 +61,7 @@ export default function ModelAvailabilityBadge() {
     try {
       const res = await fetch("/api/models/availability");
       if (!res.ok) throw new Error("Fetch failed");
-      setData(await res.json());
+      setData((await res.json()) as ModelAvailabilityData);
     } catch {
       setData(null);
       setLoadError(true);
@@ -60,14 +78,15 @@ export default function ModelAvailabilityBadge() {
 
   // Close popover on outside click
   useEffect(() => {
-    const handleClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setExpanded(false);
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setExpanded(false);
     };
     if (expanded) document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [expanded]);
 
-  const handleClearCooldown = async (provider, model) => {
+  const handleClearCooldown = async (provider?: string, model?: string) => {
+    if (!provider || !model) return;
     setClearing(`${provider}:${model}`);
     try {
       const res = await fetch("/api/models/availability", {
@@ -127,7 +146,7 @@ export default function ModelAvailabilityBadge() {
   const isHealthy = unavailableCount === 0;
 
   // Group unhealthy models by provider
-  const byProvider = {};
+  const byProvider: Record<string, ModelStatusItem[]> = {};
   models.forEach((m) => {
     if (m.status === "available") return;
     const key = m.provider || "unknown";

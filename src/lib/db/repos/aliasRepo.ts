@@ -7,24 +7,31 @@ const customKv = makeKv("customModels");
 const mitmKv = makeKv("mitmAlias");
 
 // modelAliases: key=alias, value=modelString
-export async function getModelAliases() {
+export async function getModelAliases(): Promise<Record<string, unknown>> {
   return await aliasKv.getAll();
 }
 
-export async function setModelAlias(alias, model) {
+export async function setModelAlias(alias: string, model: unknown): Promise<void> {
   await aliasKv.set(alias, model);
 }
 
-export async function deleteModelAlias(alias) {
+export async function deleteModelAlias(alias: string): Promise<void> {
   await aliasKv.remove(alias);
 }
 
 // customModels: key=`${providerAlias}|${id}|${type}`, value=full model object
-function customKey(providerAlias, id, type) {
+function customKey(providerAlias: string, id: string, type: string): string {
   return `${providerAlias}|${id}|${type}`;
 }
 
-export async function getCustomModels() {
+export interface CustomModelParam {
+  providerAlias: string;
+  id: string;
+  type?: string;
+  name?: string;
+}
+
+export async function getCustomModels(): Promise<unknown[]> {
   const all = await customKv.getAll();
   return Object.values(all);
 }
@@ -35,7 +42,7 @@ export async function addCustomModel({
   id,
   type = "llm",
   name,
-}) {
+}: CustomModelParam): Promise<boolean> {
   const k = customKey(providerAlias, id, type);
   const db = await getAdapter();
   let added = false;
@@ -55,19 +62,19 @@ export async function addCustomModel({
   return added;
 }
 
-export async function deleteCustomModel({ providerAlias, id, type = "llm" }) {
+export async function deleteCustomModel({ providerAlias, id, type = "llm" }: { providerAlias: string; id: string; type?: string }): Promise<void> {
   await customKv.remove(customKey(providerAlias, id, type));
 }
 
 // mitmAlias: key=toolName, value=mappings object
-export async function getMitmAlias(toolName) {
+export async function getMitmAlias(toolName?: string): Promise<Record<string, unknown>> {
   if (toolName) {
-    const v = await mitmKv.get(toolName);
+    const v = await mitmKv.get<Record<string, unknown>>(toolName);
     return v || {};
   }
-  return await mitmKv.getAll();
+  return (await mitmKv.getAll()) as Record<string, unknown>;
 }
 
-export async function setMitmAliasAll(toolName, mappings) {
+export async function setMitmAliasAll(toolName: string, mappings: unknown): Promise<void> {
   await mitmKv.set(toolName, mappings || {});
 }

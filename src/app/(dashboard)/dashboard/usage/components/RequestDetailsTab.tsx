@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { useState, useEffect, useCallback, useId } from "react";
+import { useState, useEffect, useCallback, useId, type ReactNode } from "react";
 import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
@@ -17,16 +17,77 @@ import {
   LogOut,
 } from "lucide-react";
 
-let providerNameCache = null;
-let providerNodesCache = null;
+interface ProviderItem {
+  id: string;
+  name: string;
+}
 
-async function fetchProviderNames() {
+interface ProviderCacheItem {
+  name?: string;
+  [key: string]: unknown;
+}
+
+type ProviderCache = Record<string, string | ProviderCacheItem>;
+
+interface TokenStats {
+  prompt_tokens?: number;
+  input_tokens?: number;
+  cached_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  completion_tokens?: number;
+  [key: string]: unknown;
+}
+
+interface LatencyStats {
+  ttft?: number;
+  total?: number;
+}
+
+interface PxpipeStats {
+  applied?: boolean;
+  tokensBeforeEst?: number;
+  tokensAfterEst?: number;
+  savedPct?: number;
+  imageCount?: number;
+  durationMs?: number;
+  reason?: string;
+  detail?: string;
+}
+
+interface ResponseDetail {
+  thinking?: string;
+  content?: string;
+}
+
+interface RequestDetailItem {
+  id: string;
+  timestamp: string | number;
+  provider: string;
+  model: string;
+  status: string;
+  latency?: LatencyStats;
+  tokens?: TokenStats;
+  pxpipe?: PxpipeStats;
+  request?: unknown;
+  providerRequest?: unknown;
+  providerResponse?: unknown;
+  response?: ResponseDetail;
+}
+
+let providerNameCache: ProviderCache | null = null;
+let providerNodesCache: Record<string, string> | null = null;
+
+async function fetchProviderNames(): Promise<{
+  providerNameCache: ProviderCache;
+  providerNodesCache: Record<string, string>;
+}> {
   if (providerNameCache && providerNodesCache) {
     return { providerNameCache, providerNodesCache };
   }
 
   const nodesRes = await fetch("/api/provider-nodes");
-  const nodesData = await nodesRes.json();
+  const nodesData = (await nodesRes.json()) as { nodes?: ProviderItem[] };
   const nodes = nodesData.nodes || [];
   providerNodesCache = {};
 
@@ -42,7 +103,7 @@ async function fetchProviderNames() {
   return { providerNameCache, providerNodesCache };
 }
 
-function getProviderName(providerId, cache) {
+function getProviderName(providerId: string, cache: ProviderCache | null): string {
   if (!providerId) return providerId;
   if (!cache) return providerId;
 
@@ -52,13 +113,20 @@ function getProviderName(providerId, cache) {
     return cached;
   }
 
-  if (cached?.name) {
+  if (cached && typeof cached === "object" && cached.name) {
     return cached.name;
   }
 
   const providerConfig =
-    getProviderByAlias(providerId) || AI_PROVIDERS[providerId];
+    getProviderByAlias(providerId) || (AI_PROVIDERS as Record<string, { name?: string }>)[providerId];
   return providerConfig?.name || providerId;
+}
+
+interface CollapsibleSectionProps {
+  title: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  icon?: ReactNode;
 }
 
 function CollapsibleSection({
@@ -66,7 +134,7 @@ function CollapsibleSection({
   children,
   defaultOpen = false,
   icon = null,
-}) {
+}: CollapsibleSectionProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const contentId = useId();
 
@@ -103,16 +171,16 @@ function CollapsibleSection({
   );
 }
 
-function getCachedTokens(tokens) {
-  return tokens?.cached_tokens || tokens?.cache_read_input_tokens || 0;
+function getCachedTokens(tokens?: TokenStats): number {
+  return Number(tokens?.cached_tokens ?? tokens?.cache_read_input_tokens ?? 0);
 }
 
-function getCacheCreationTokens(tokens) {
-  return tokens?.cache_creation_input_tokens || 0;
+function getCacheCreationTokens(tokens?: TokenStats): number {
+  return Number(tokens?.cache_creation_input_tokens ?? 0);
 }
 
-function getInputTokens(tokens) {
-  const prompt = tokens?.prompt_tokens || tokens?.input_tokens || 0;
+function getInputTokens(tokens?: TokenStats): number {
+  const prompt = Number(tokens?.prompt_tokens ?? tokens?.input_tokens ?? 0);
   // Canonical storage keeps prompt cache-inclusive. Legacy Claude rows may have
   // stored prompt cache-exclusive; fall back to cache when it's larger so old
   // rows don't under-report input.
@@ -121,7 +189,7 @@ function getInputTokens(tokens) {
 }
 
 export default function RequestDetailsTab() {
-  const [details, setDetails] = useState([]);
+  const [details, setDetails] = useState<RequestDetailItem[]>([]);
   const [pagination, setPagination] = useState({
     page: 1,
     pageSize: 20,
@@ -130,10 +198,10 @@ export default function RequestDetailsTab() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [selectedDetail, setSelectedDetail] = useState(null);
+  const [selectedDetail, setSelectedDetail] = useState<RequestDetailItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [providers, setProviders] = useState([]);
-  const [providerNameCache, setProviderNameCache] = useState(null);
+  const [providers, setProviders] = useState<ProviderItem[]>([]);
+  const [providerNameCache, setProviderNameCache] = useState<ProviderCache | null>(null);
   const [filters, setFilters] = useState({
     provider: "",
     startDate: "",
@@ -143,7 +211,7 @@ export default function RequestDetailsTab() {
   const fetchProviders = useCallback(async () => {
     try {
       const res = await fetch("/api/usage/providers");
-      const data = await res.json();
+      const data = (await res.json()) as { providers?: ProviderItem[] };
       setProviders(data.providers || []);
 
       const cache = await fetchProviderNames();
@@ -167,10 +235,12 @@ export default function RequestDetailsTab() {
 
       const res = await fetch(`/api/usage/request-details?${params}`);
       if (!res.ok) throw new Error(`Request details failed: ${res.status}`);
-      const data = await res.json();
+      const data = (await res.json()) as { details?: RequestDetailItem[]; pagination?: Partial<typeof pagination> };
 
       setDetails(data.details || []);
-      setPagination((prev) => ({ ...prev, ...data.pagination }));
+      if (data.pagination) {
+        setPagination((prev) => ({ ...prev, ...data.pagination }));
+      }
     } catch (error) {
       console.error("Failed to fetch request details:", error);
       setError("Request details could not be loaded.");
@@ -187,16 +257,16 @@ export default function RequestDetailsTab() {
     fetchDetails();
   }, [fetchDetails]);
 
-  const handleViewDetail = (detail) => {
+  const handleViewDetail = (detail: RequestDetailItem) => {
     setSelectedDetail(detail);
     setIsDrawerOpen(true);
   };
 
-  const handlePageChange = (newPage) => {
+  const handlePageChange = (newPage: number) => {
     setPagination((prev) => ({ ...prev, page: newPage }));
   };
 
-  const handlePageSizeChange = (newPageSize) => {
+  const handlePageSizeChange = (newPageSize: number) => {
     setPagination((prev) => ({ ...prev, pageSize: newPageSize, page: 1 }));
   };
 
@@ -617,7 +687,7 @@ export default function RequestDetailsTab() {
                 </pre>
               </CollapsibleSection>
 
-              {selectedDetail.providerRequest && (
+              {selectedDetail.providerRequest !== undefined && (
                 <CollapsibleSection
                   title="2. Provider Request (Translated)"
                   icon={<Languages className="size-[18px] text-text-muted" />}
@@ -628,7 +698,7 @@ export default function RequestDetailsTab() {
                 </CollapsibleSection>
               )}
 
-              {selectedDetail.providerResponse && (
+              {selectedDetail.providerResponse !== undefined && (
                 <CollapsibleSection
                   title="3. Provider Response (Raw)"
                   icon={<Braces className="size-[18px] text-text-muted" />}
@@ -636,7 +706,7 @@ export default function RequestDetailsTab() {
                   <pre className="max-h-[300px] max-w-full overflow-auto rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5 sm:p-4">
                     {typeof selectedDetail.providerResponse === "object"
                       ? JSON.stringify(selectedDetail.providerResponse, null, 2)
-                      : selectedDetail.providerResponse}
+                      : String(selectedDetail.providerResponse)}
                   </pre>
                 </CollapsibleSection>
               )}

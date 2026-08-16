@@ -43,18 +43,18 @@ import {
 } from "./endpointConstants";
 import { clientPingUrl, clientPingAny } from "./endpointPing";
 import EndpointRow from "./components/EndpointRow";
-import StatusAlert from "./components/StatusAlert";
+import StatusAlert, { type StatusAlertData } from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
 
-const tunnelBenefitIcons = {
+const tunnelBenefitIcons: Record<string, React.ComponentType<{ size?: number | string; className?: string }>> = {
   public: Globe2,
   group: Users,
   code: Code2,
   lock: Lock,
 };
 
-function maskKey(key?: string, keyId?: string, machineId?: string) {
+function maskFullKey(key?: string, keyId?: string, machineId?: string) {
   if (key && typeof key === "string") {
     if (key.length <= 12) return "••••••••••••••••";
     return `${key.slice(0, 7)}...${key.slice(-4)}`;
@@ -68,13 +68,28 @@ function maskKey(key?: string, keyId?: string, machineId?: string) {
   return "••••••••••••••••";
 }
 
-export default function APIPageClient({ machineId }) {
-  const [keys, setKeys] = useState([]);
+export interface APIPageClientProps {
+  machineId?: string;
+}
+
+type ApiKeyItem = {
+  id?: string;
+  key?: string;
+  name?: string;
+  isActive?: boolean;
+  createdAt?: string;
+  keyId?: string;
+  machineId?: string;
+  [key: string]: unknown;
+};
+
+export default function APIPageClient({ machineId }: APIPageClientProps) {
+  const [keys, setKeys] = useState<ApiKeyItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
-  const [createdKey, setCreatedKey] = useState(null);
-  const [confirmState, setConfirmState] = useState(null);
+  const [createdKey, setCreatedKey] = useState<{ key?: string; name?: string } | null>(null);
+  const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -89,7 +104,7 @@ export default function APIPageClient({ machineId }) {
   const [tunnelPublicUrl, setTunnelPublicUrl] = useState("");
   const [tunnelLoading, setTunnelLoading] = useState(false);
   const [tunnelProgress, setTunnelProgress] = useState("");
-  const [tunnelStatus, setTunnelStatus] = useState(null);
+  const [tunnelStatus, setTunnelStatus] = useState<StatusAlertData | null>(null);
   const [showEnableTunnelModal, setShowEnableTunnelModal] = useState(false);
   const [showDisableTunnelModal, setShowDisableTunnelModal] = useState(false);
 
@@ -99,17 +114,17 @@ export default function APIPageClient({ machineId }) {
   const [tsUrl, setTsUrl] = useState("");
   const [tsLoading, setTsLoading] = useState(false);
   const [tsProgress, setTsProgress] = useState("");
-  const [tsStatus, setTsStatus] = useState(null);
+  const [tsStatus, setTsStatus] = useState<StatusAlertData | null>(null);
   const [tsAuthUrl, setTsAuthUrl] = useState("");
   const [tsAuthLabel, setTsAuthLabel] = useState("");
-  const [tsInstalled, setTsInstalled] = useState(null); // null=checking, true/false
+  const [tsInstalled, setTsInstalled] = useState<boolean | null>(null); // null=checking, true/false
   const [tsInstalling, setTsInstalling] = useState(false);
-  const [tsInstallLog, setTsInstallLog] = useState([]);
+  const [tsInstallLog, setTsInstallLog] = useState<string[]>([]);
   const [tsSudoPassword, setTsSudoPassword] = useState("");
   const [tsConnecting, setTsConnecting] = useState(false);
   const [showTsModal, setShowTsModal] = useState(false);
   const [showDisableTsModal, setShowDisableTsModal] = useState(false);
-  const tsLogRef = useRef(null);
+  const tsLogRef = useRef<HTMLDivElement | null>(null);
 
   // Debounce reachable=false: server may briefly return false during background refresh.
   // Only flip UI to "reconnecting" after N consecutive misses to avoid spinner flicker.
@@ -126,7 +141,7 @@ export default function APIPageClient({ machineId }) {
   const [tsEverReachable, setTsEverReachable] = useState(false);
 
   // API key visibility toggle state
-  const [visibleKeys, setVisibleKeys] = useState(new Set());
+const [visibleKeys, setVisibleKeys] = useState(new Set<string>());
   const defaultKeyProvisionedRef = useRef(false);
 
   // Client-side local/remote detection (UI hint only, not a security gate)
@@ -245,7 +260,14 @@ export default function APIPageClient({ machineId }) {
   // Client-side reachable only (server no longer probes; watchdog handles backend health).
   // Miss-debounce: only flip to false after N consecutive misses.
   const updateReachable = useCallback(
-    (_unused, clientRef, missRef, setter, everRef, everSetter) => {
+    (
+      _unused: unknown,
+      clientRef: React.MutableRefObject<boolean>,
+      missRef: React.MutableRefObject<number>,
+      setter: (v: boolean) => void,
+      everRef: React.MutableRefObject<boolean>,
+      everSetter: (v: boolean) => void,
+    ) => {
       const reachable = clientRef.current;
       if (reachable) {
         missRef.current = 0;
@@ -355,7 +377,7 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const handleTunnelDashboardAccess = async (value) => {
+  const handleTunnelDashboardAccess = async (value: boolean) => {
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -368,7 +390,7 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const handleRequireApiKey = async (value) => {
+  const handleRequireApiKey = async (value: boolean) => {
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -415,7 +437,7 @@ export default function APIPageClient({ machineId }) {
 
   // u2500u2500u2500 Cloudflare Tunnel handlers
   // Ping tunnel health until reachable. Race multiple URLs (shortlink + direct) — 1 OK is enough.
-  const pingTunnelHealth = async (...urls) => {
+  const pingTunnelHealth = async (...urls: (string | undefined | null)[]) => {
     setTunnelLoading(true);
     setTunnelProgress("Waiting for tunnel ready...");
     const targets = urls.filter(Boolean).map((u) => `${u}/api/health`);
@@ -517,7 +539,7 @@ export default function APIPageClient({ machineId }) {
       setTunnelPublicUrl(data.publicUrl || "");
       await pingTunnelHealth(data.publicUrl, url);
     } catch (error) {
-      setTunnelStatus({ type: "error", message: error.message });
+      setTunnelStatus({ type: "error", message: (error as { message?: string }).message || "Unknown error" });
     } finally {
       polling = false;
       setTunnelLoading(false);
@@ -543,7 +565,7 @@ export default function APIPageClient({ machineId }) {
         });
       }
     } catch (error) {
-      setTunnelStatus({ type: "error", message: error.message });
+      setTunnelStatus({ type: "error", message: (error as { message?: string }).message || "Unknown error" });
     } finally {
       setTunnelLoading(false);
     }
@@ -578,11 +600,11 @@ export default function APIPageClient({ machineId }) {
       });
       setTsSudoPassword("");
 
-      const reader = res.body.getReader();
+      const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
 
-      while (true) {
+      while (reader) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -620,14 +642,14 @@ export default function APIPageClient({ machineId }) {
         }
       }
     } catch (e) {
-      setTsStatus({ type: "error", message: e.message });
+      setTsStatus({ type: "error", message: (e as { message?: string }).message || "Unknown error" });
     } finally {
       setTsInstalling(false);
     }
   };
 
   // Ping Tailscale health until reachable
-  const pingTsHealth = async (url) => {
+  const pingTsHealth = async (url: string) => {
     setTsProgress("Waiting for Tailscale ready...");
     const healthUrl = `${url}/api/health`;
     const start = Date.now();
@@ -648,7 +670,7 @@ export default function APIPageClient({ machineId }) {
 
   // Show inline login button instead of auto-opening popup (browsers block popups
   // opened after async work because the user gesture is lost).
-  const requestUserAuth = (url, label) => {
+  const requestUserAuth = (url: string, label: string) => {
     setTsAuthUrl(url);
     setTsAuthLabel(label);
   };
@@ -744,7 +766,7 @@ export default function APIPageClient({ machineId }) {
         message: data.error || "Failed to connect",
       });
     } catch (error) {
-      setTsStatus({ type: "error", message: error.message });
+      setTsStatus({ type: "error", message: (error as { message?: string }).message || "Unknown error" });
     } finally {
       setTsLoading(false);
       setTsConnecting(false);
@@ -753,7 +775,7 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const pollFunnelEnable = async (enableUrl) => {
+  const pollFunnelEnable = async (enableUrl: string) => {
     requestUserAuth(enableUrl, "Open Funnel Settings");
     setTsProgress('Click "Open Funnel Settings" to enable Funnel...');
     for (let i = 0; i < 40; i++) {
@@ -815,7 +837,7 @@ export default function APIPageClient({ machineId }) {
         });
       }
     } catch (e) {
-      setTsStatus({ type: "error", message: e.message });
+      setTsStatus({ type: "error", message: (e as { message?: string }).message || "Unknown error" });
     } finally {
       setTsLoading(false);
     }
@@ -854,7 +876,7 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const handleDeleteKey = async (id) => {
+  const handleDeleteKey = async (id: string) => {
     setConfirmState({
       title: "Delete API Key",
       message: "Delete this API key?",
@@ -877,7 +899,7 @@ export default function APIPageClient({ machineId }) {
     });
   };
 
-  const handleToggleKey = async (id, isActive) => {
+  const handleToggleKey = async (id: string, isActive: boolean) => {
     try {
       const res = await fetch(`/api/keys/${id}`, {
         method: "PUT",
@@ -894,14 +916,14 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const maskKey = (fullKey) => {
+  const maskKey = (fullKey: string) => {
     if (!fullKey || fullKey.length <= 10) return fullKey || "";
     return (
       fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4)
     );
   };
 
-  const toggleKeyVisibility = (keyId) => {
+  const toggleKeyVisibility = (keyId: string) => {
     setVisibleKeys((prev) => {
       const next = new Set(prev);
       if (next.has(keyId)) next.delete(keyId);
@@ -1356,22 +1378,22 @@ export default function APIPageClient({ machineId }) {
                     <p className="text-sm font-medium">{key.name}</p>
                     <div className="flex items-center gap-2 mt-1">
                       <code className="min-w-0 break-all font-mono text-xs text-text-muted">
-                        {visibleKeys.has(key.id)
-                          ? (key.key || (key.keyId ? `sk-${key.machineId?.slice(0, 6)}...${key.keyId}` : "••••••••••••••••"))
-                          : maskKey(key.key, key.keyId, key.machineId)}
+                        {visibleKeys.has(key.id || "")
+                          ? (key.key || (key.keyId ? `sk-${(key.machineId || "").slice(0, 6)}...${key.keyId}` : "••••••••••••••••"))
+                          : maskFullKey(key.key, key.keyId, key.machineId)}
                       </code>
                       <button
-                        onClick={() => toggleKeyVisibility(key.id)}
-                        aria-label={visibleKeys.has(key.id) ? `Hide ${key.name}` : `Show ${key.name}`}
+                        onClick={() => toggleKeyVisibility(key.id || "")}
+                        aria-label={visibleKeys.has(key.id || "") ? `Hide ${key.name}` : `Show ${key.name}`}
                         className="rounded p-1 text-text-muted transition-all hover:bg-black/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:hover:bg-white/5"
                         title={
-                          visibleKeys.has(key.id) ? "Hide key" : "Show key"
+                          visibleKeys.has(key.id || "") ? "Hide key" : "Show key"
                         }
                       >
-                        {visibleKeys.has(key.id) ? <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" /> : <Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        {visibleKeys.has(key.id || "") ? <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" /> : <Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
                       </button>
                       <button
-                        onClick={() => copy(key.key || key.keyId || key.id, key.id)}
+                        onClick={() => copy(key.key || key.keyId || key.id || "", key.id || "")}
                         aria-label={`Copy ${key.name}`}
                         className="inline-flex items-center gap-1 rounded p-1 text-text-muted transition-all hover:bg-black/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:hover:bg-white/5"
                       >
@@ -1380,7 +1402,7 @@ export default function APIPageClient({ machineId }) {
                       </button>
                     </div>
                     <p className="text-xs text-text-muted mt-1">
-                      Created {new Date(key.createdAt).toLocaleDateString()}
+                      Created {new Date(key.createdAt || "").toLocaleDateString()}
                     </p>
                     {key.isActive === false && (
                       <p className="text-xs text-orange-500 mt-1">Paused</p>
@@ -1398,17 +1420,17 @@ export default function APIPageClient({ machineId }) {
                             message: `Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`,
                             onConfirm: async () => {
                               setConfirmState(null);
-                              handleToggleKey(key.id, checked);
+                              handleToggleKey(key.id || "", checked);
                             },
                           });
                         } else {
-                          handleToggleKey(key.id, checked);
+                          handleToggleKey(key.id || "", checked);
                         }
                       }}
                       title={key.isActive ? "Pause key" : "Resume key"}
                     />
                     <button
-                      onClick={() => handleDeleteKey(key.id)}
+                      onClick={() => handleDeleteKey(key.id || "")}
                       aria-label={`Delete ${key.name}`}
                       className="rounded p-2 text-red-500 opacity-100 transition-all hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
                     >
@@ -1477,14 +1499,14 @@ export default function APIPageClient({ machineId }) {
           </div>
           <div className="flex gap-2">
             <Input
-              value={createdKey || ""}
+              value={createdKey?.key || ""}
               readOnly
               className="flex-1 font-mono text-sm"
             />
             <Button
               variant="secondary"
               icon={copied === "created_key" ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
-              onClick={() => copy(createdKey, "created_key")}
+              onClick={() => copy(createdKey?.key || "", "created_key")}
             >
               {copied === "created_key" ? "Copied!" : "Copy"}
             </Button>
@@ -1718,7 +1740,3 @@ export default function APIPageClient({ machineId }) {
     </div>
   );
 }
-
-APIPageClient.propTypes = {
-  machineId: PropTypes.string.isRequired,
-};

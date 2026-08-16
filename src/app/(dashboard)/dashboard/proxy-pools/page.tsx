@@ -2,6 +2,7 @@
 /* eslint-disable react-hooks/set-state-in-effect, react/no-unescaped-entities */
 
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import type { ReactNode } from "react";
 import {
   Badge,
   Button,
@@ -14,31 +15,54 @@ import {
 } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
 
-function getStatusVariant(status) {
+export interface ProxyPool {
+  id: string;
+  name: string;
+  proxyUrl: string;
+  noProxy?: string;
+  isActive?: boolean;
+  strictProxy?: boolean;
+  testStatus?: string;
+  type?: string;
+  boundConnectionCount?: number;
+  lastTestedAt?: string | number | Date;
+  lastError?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ProxyFormData {
+  name: string;
+  proxyUrl: string;
+  noProxy: string;
+  isActive: boolean;
+  strictProxy: boolean;
+}
+
+function getStatusVariant(status?: string) {
   if (status === "active") return "success";
   if (status === "error") return "error";
   return "default";
 }
 
-function formatDateTime(value) {
+function formatDateTime(value?: string | number | Date | null) {
   if (!value) return "Never";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Never";
   return date.toLocaleString();
 }
 
-function normalizeFormData(data = {}) {
+function normalizeFormData(data?: Partial<ProxyFormData> | null): ProxyFormData {
   return {
-    name: data.name || "",
-    proxyUrl: data.proxyUrl || "",
-    noProxy: data.noProxy || "",
-    isActive: data.isActive !== false,
-    strictProxy: data.strictProxy === true,
+    name: data?.name || "",
+    proxyUrl: data?.proxyUrl || "",
+    noProxy: data?.noProxy || "",
+    isActive: data?.isActive !== false,
+    strictProxy: data?.strictProxy === true,
   };
 }
 
 export default function ProxyPoolsPage() {
-  const [proxyPools, setProxyPools] = useState([]);
+  const [proxyPools, setProxyPools] = useState<ProxyPool[]>([]);
   const [loading, setLoading] = useState(true);
   const [showFormModal, setShowFormModal] = useState(false);
   const [showBatchImportModal, setShowBatchImportModal] = useState(false);
@@ -46,8 +70,8 @@ export default function ProxyPoolsPage() {
   const [showCloudflareModal, setShowCloudflareModal] = useState(false);
   const [showDenoModal, setShowDenoModal] = useState(false);
   const [showRelayMenu, setShowRelayMenu] = useState(false);
-  const [editingProxyPool, setEditingProxyPool] = useState(null);
-  const [formData, setFormData] = useState(normalizeFormData());
+  const [editingProxyPool, setEditingProxyPool] = useState<ProxyPool | null>(null);
+  const [formData, setFormData] = useState<ProxyFormData>(normalizeFormData());
   const [batchImportText, setBatchImportText] = useState("");
   const [vercelForm, setVercelForm] = useState({
     vercelToken: "",
@@ -66,21 +90,21 @@ export default function ProxyPoolsPage() {
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [deploying, setDeploying] = useState(false);
-  const [testingId, setTestingId] = useState(null);
-  const [selectedIds, setSelectedIds] = useState([]);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [healthChecking, setHealthChecking] = useState(false);
   const [healthProgress, setHealthProgress] = useState({
     current: 0,
     total: 0,
   });
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [confirmState, setConfirmState] = useState(null);
-  const relayMenuRef = useRef(null);
+  const [confirmState, setConfirmState] = useState<{ title: string; message: ReactNode; onConfirm: () => Promise<void> | void } | null>(null);
+  const relayMenuRef = useRef<HTMLDivElement | null>(null);
   const notify = useNotificationStore();
 
   useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (relayMenuRef.current && !relayMenuRef.current.contains(e.target)) {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (relayMenuRef.current && !relayMenuRef.current.contains(e.target as Node)) {
         setShowRelayMenu(false);
       }
     };
@@ -95,7 +119,7 @@ export default function ProxyPoolsPage() {
       const res = await fetch("/api/proxy-pools?includeUsage=true", {
         cache: "no-store",
       });
-      const data = await res.json();
+      const data = (await res.json()) as { proxyPools?: ProxyPool[] };
       if (res.ok) {
         setProxyPools(data.proxyPools || []);
       }
@@ -120,9 +144,9 @@ export default function ProxyPoolsPage() {
     setShowFormModal(true);
   };
 
-  const openEditModal = (proxyPool) => {
+  const openEditModal = (proxyPool: ProxyPool) => {
     setEditingProxyPool(proxyPool);
-    setFormData(normalizeFormData(proxyPool));
+    setFormData(normalizeFormData(proxyPool as unknown as Partial<ProxyFormData>));
     setShowFormModal(true);
   };
 
@@ -161,7 +185,7 @@ export default function ProxyPoolsPage() {
           editingProxyPool ? "Proxy pool updated" : "Proxy pool created",
         );
       } else {
-        const data = await res.json();
+        const data = (await res.json()) as { error?: string };
         notify.error(data.error || "Failed to save proxy pool");
       }
     } catch (error) {
@@ -171,7 +195,7 @@ export default function ProxyPoolsPage() {
     }
   };
 
-  const handleDelete = async (proxyPool) => {
+  const handleDelete = async (proxyPool: ProxyPool) => {
     setConfirmState({
       title: "Delete Proxy Pool",
       message: `Delete proxy pool "${proxyPool.name}"?`,
@@ -189,7 +213,7 @@ export default function ProxyPoolsPage() {
             return;
           }
 
-          const data = await res.json();
+          const data = (await res.json()) as { boundConnectionCount?: number; error?: string };
           if (res.status === 409) {
             notify.warning(
               `Cannot delete: ${data.boundConnectionCount || 0} connection(s) are still using this pool.`,
@@ -205,13 +229,13 @@ export default function ProxyPoolsPage() {
     });
   };
 
-  const handleTest = async (proxyPoolId) => {
+  const handleTest = async (proxyPoolId: string) => {
     setTestingId(proxyPoolId);
     try {
       const res = await fetch(`/api/proxy-pools/${proxyPoolId}/test`, {
         method: "POST",
       });
-      const data = await res.json();
+      const data = (await res.json()) as { ok?: boolean; error?: string };
 
       if (!res.ok) {
         notify.error(data.error || "Failed to test proxy");
@@ -228,7 +252,7 @@ export default function ProxyPoolsPage() {
     }
   };
 
-  const handleToggleActive = async (pool) => {
+  const handleToggleActive = async (pool: ProxyPool) => {
     const next = !pool.isActive;
     setProxyPools((prev) =>
       prev.map((p) => (p.id === pool.id ? { ...p, isActive: next } : p)),
@@ -259,7 +283,7 @@ export default function ProxyPoolsPage() {
 
   const allSelected =
     proxyPools.length > 0 && selectedIds.length === proxyPools.length;
-  const toggleSelect = (id) =>
+  const toggleSelect = (id: string) =>
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
@@ -267,7 +291,7 @@ export default function ProxyPoolsPage() {
     setSelectedIds(allSelected ? [] : proxyPools.map((p) => p.id));
   const clearSelection = () => setSelectedIds([]);
 
-  const bulkSetActive = async (isActive) => {
+  const bulkSetActive = async (isActive: boolean) => {
     const targets =
       selectedIds.length > 0 ? selectedIds : proxyPools.map((p) => p.id);
     if (targets.length === 0) return;
@@ -342,7 +366,7 @@ export default function ProxyPoolsPage() {
     setHealthChecking(true);
     setHealthProgress({ current: 0, total: targets.length });
     let alive = 0;
-    const deadIds = [];
+    const deadIds: string[] = [];
     let done = 0;
     const CONCURRENCY = 10;
     const queue = [...targets];
@@ -355,7 +379,7 @@ export default function ProxyPoolsPage() {
           const res = await fetch(`/api/proxy-pools/${pool.id}/test`, {
             method: "POST",
           });
-          const data = await res.json();
+          const data = (await res.json()) as { ok?: boolean };
           if (res.ok && data.ok) alive += 1;
           else deadIds.push(pool.id);
         } catch {
@@ -532,7 +556,7 @@ export default function ProxyPoolsPage() {
     }
   };
 
-  const parseProxyLine = (line) => {
+  const parseProxyLine = (line: string) => {
     const trimmed = line.trim();
     if (!trimmed) return null;
 
@@ -576,8 +600,8 @@ export default function ProxyPoolsPage() {
       return;
     }
 
-    const parsedEntries = [];
-    const invalidLines = [];
+    const parsedEntries: Array<{ name: string; proxyUrl: string; lineNumber: number }> = [];
+    const invalidLines: string[] = [];
 
     lines.forEach((line, index) => {
       try {
@@ -589,7 +613,7 @@ export default function ProxyPoolsPage() {
           });
         }
       } catch (error) {
-        invalidLines.push(`Line ${index + 1}: ${error.message}`);
+        invalidLines.push(`Line ${index + 1}: ${(error as { message?: string }).message || "Invalid line"}`);
       }
     });
 

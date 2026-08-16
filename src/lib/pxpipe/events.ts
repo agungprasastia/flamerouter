@@ -11,8 +11,19 @@ function ensureDir() {
   if (!fs.existsSync(PXPIPE_DIR)) fs.mkdirSync(PXPIPE_DIR, { recursive: true });
 }
 
-// Fire-and-forget: stats must never break the request path.
-export function appendPxpipeEvent(event) {
+export interface PxpipeEvent {
+  ts: number;
+  applied?: boolean;
+  reason?: string;
+  tokensBeforeEst?: number;
+  tokensAfterEst?: number;
+  tokensSavedEst?: number;
+  imageCount?: number;
+  durationMs?: number;
+  [key: string]: unknown;
+}
+
+export function appendPxpipeEvent(event: Record<string, unknown>): void {
   try {
     ensureDir();
     try {
@@ -31,15 +42,20 @@ export function appendPxpipeEvent(event) {
   }
 }
 
-export function readPxpipeEvents({ sinceMs = null, limit = null } = {}) {
-  const events = [];
+export interface ReadPxpipeEventsOptions {
+  sinceMs?: number | null;
+  limit?: number | null;
+}
+
+export function readPxpipeEvents({ sinceMs = null, limit = null }: ReadPxpipeEventsOptions = {}): PxpipeEvent[] {
+  const events: PxpipeEvent[] = [];
   for (const file of [ROTATED_FILE, EVENTS_FILE]) {
     try {
       if (!fs.existsSync(file)) continue;
       for (const line of fs.readFileSync(file, "utf8").split("\n")) {
         if (!line) continue;
         try {
-          const ev = JSON.parse(line);
+          const ev = JSON.parse(line) as PxpipeEvent;
           if (sinceMs && ev.ts < sinceMs) continue;
           events.push(ev);
         } catch {
@@ -54,7 +70,21 @@ export function readPxpipeEvents({ sinceMs = null, limit = null } = {}) {
   return limit ? events.slice(-limit) : events;
 }
 
-function emptyTotals() {
+export interface PxpipeTotals {
+  requests: number;
+  compressed: number;
+  bypassed: number;
+  errors: number;
+  tokensBeforeEst: number;
+  tokensAfterEst: number;
+  tokensSavedEst: number;
+  savedPct: number;
+  imagesGenerated: number;
+  compressionTimeMs: number;
+  avgCompressionMs: number;
+}
+
+function emptyTotals(): PxpipeTotals {
   return {
     requests: 0,
     compressed: 0,
@@ -70,7 +100,7 @@ function emptyTotals() {
   };
 }
 
-function accumulate(totals, ev) {
+function accumulate(totals: PxpipeTotals, ev: PxpipeEvent): void {
   totals.requests++;
   if (ev.applied) {
     totals.compressed++;
@@ -86,7 +116,7 @@ function accumulate(totals, ev) {
   }
 }
 
-function finalize(totals) {
+function finalize(totals: PxpipeTotals): PxpipeTotals {
   totals.savedPct =
     totals.tokensBeforeEst > 0
       ? +((totals.tokensSavedEst / totals.tokensBeforeEst) * 100).toFixed(2)
@@ -98,9 +128,12 @@ function finalize(totals) {
   return totals;
 }
 
-// Aggregated stats for the dashboard: all-time + windowed totals, a daily
-// tokens-saved timeline (last `timelineDays`), and the most recent events.
-export function getPxpipeStats({ timelineDays = 30, recentLimit = 100 } = {}) {
+export interface PxpipeStatsOptions {
+  timelineDays?: number;
+  recentLimit?: number;
+}
+
+export function getPxpipeStats({ timelineDays = 30, recentLimit = 100 }: PxpipeStatsOptions = {}) {
   const events = readPxpipeEvents();
   const now = Date.now();
   const startOfToday = new Date(new Date(now).setHours(0, 0, 0, 0)).getTime();
@@ -113,7 +146,7 @@ export function getPxpipeStats({ timelineDays = 30, recentLimit = 100 } = {}) {
     last30d: emptyTotals(),
   };
 
-  const timeline = new Map();
+  const timeline = new Map<string, { date: string; tokensSavedEst: number; compressed: number; requests: number }>();
   for (let i = timelineDays - 1; i >= 0; i--) {
     const day = new Date(startOfToday - i * DAY_MS);
     timeline.set(day.toISOString().slice(0, 10), {

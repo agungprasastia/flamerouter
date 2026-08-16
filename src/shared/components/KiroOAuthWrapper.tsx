@@ -1,10 +1,18 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import PropTypes from "prop-types";
-import OAuthModal from "./OAuthModal";
+import OAuthModal, { IdcConfig } from "./OAuthModal";
 import KiroAuthModal from "./KiroAuthModal";
 import KiroSocialOAuthModal from "./KiroSocialOAuthModal";
+
+export interface KiroOAuthWrapperProps {
+  isOpen: boolean;
+  providerInfo?: {
+    name?: string;
+  };
+  onSuccess?: () => void;
+  onClose: () => void;
+}
 
 /**
  * Kiro OAuth Wrapper
@@ -15,24 +23,24 @@ export default function KiroOAuthWrapper({
   providerInfo,
   onSuccess,
   onClose,
-}) {
-  const [authMethod, setAuthMethod] = useState(null); // null | "builder-id" | "idc" | "social" | "import"
-  const [socialProvider, setSocialProvider] = useState(null); // "google" | "github"
-  const [idcConfig, setIdcConfig] = useState(null);
+}: KiroOAuthWrapperProps) {
+  const [authMethod, setAuthMethod] = useState<null | "builder-id" | "idc" | "social" | "import">(null);
+  const [socialProvider, setSocialProvider] = useState<null | "google" | "github">(null);
+  const [idcConfig, setIdcConfig] = useState<IdcConfig | null>(null);
 
   const handleMethodSelect = useCallback(
-    (method, config) => {
+    (method: string, config?: Record<string, unknown>) => {
       if (method === "builder-id") {
         // Use device code flow (AWS Builder ID)
         setAuthMethod("builder-id");
       } else if (method === "idc") {
         // Use device code flow with IDC config
         setAuthMethod("idc");
-        setIdcConfig(config);
+        setIdcConfig((config as unknown as IdcConfig) || null);
       } else if (method === "social") {
         // Use social login with manual callback
         setAuthMethod("social");
-        setSocialProvider(config.provider);
+        setSocialProvider((config?.provider as "google" | "github") || null);
       } else if (method === "import" || method === "api-key") {
         // Import / API-key handled in KiroAuthModal, just close
         onSuccess?.();
@@ -79,6 +87,7 @@ export default function KiroOAuthWrapper({
         isOpen={isOpen}
         provider="kiro"
         providerInfo={providerInfo}
+        oauthMeta={null}
         onSuccess={handleDeviceSuccess}
         onClose={handleBack}
         idcConfig={idcConfig}
@@ -100,12 +109,3 @@ export default function KiroOAuthWrapper({
 
   return null;
 }
-
-KiroOAuthWrapper.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  providerInfo: PropTypes.shape({
-    name: PropTypes.string,
-  }),
-  onSuccess: PropTypes.func,
-  onClose: PropTypes.func.isRequired,
-};

@@ -6,8 +6,22 @@ import os from "os";
 
 const execAsync = promisify(exec);
 
+export type SupportedIdeProvider = "trae" | "windsurf";
+
+export interface IdeDetectionResult {
+  installed: boolean;
+  path: string | null;
+}
+
 // Install paths per provider per platform — Trae and standard Windsurf IDE locations.
-const IDE_PATHS = {
+const IDE_PATHS: Record<
+  SupportedIdeProvider,
+  {
+    darwin: string[];
+    win32: string[];
+    linux: string[];
+  }
+> = {
   trae: {
     darwin: ["/Applications/Trae.app"],
     win32: [
@@ -36,12 +50,12 @@ const IDE_PATHS = {
   },
 };
 
-const IDE_BINARIES = {
+const IDE_BINARIES: Record<SupportedIdeProvider, string> = {
   trae: "trae",
   windsurf: "windsurf",
 };
 
-async function pathExists(p) {
+async function pathExists(p: string): Promise<boolean> {
   try {
     await fs.access(p);
     return true;
@@ -50,7 +64,7 @@ async function pathExists(p) {
   }
 }
 
-async function checkBinary(bin) {
+async function checkBinary(bin: string): Promise<boolean> {
   try {
     const cmd = os.platform() === "win32" ? `where ${bin}` : `which ${bin}`;
     await execAsync(cmd, { windowsHide: true });
@@ -61,14 +75,24 @@ async function checkBinary(bin) {
 }
 
 // Returns { installed: boolean, path: string|null } for the given provider's IDE.
-export async function detectIdeInstalled(providerId) {
+export async function detectIdeInstalled(
+  providerId: string,
+): Promise<IdeDetectionResult> {
   const platform = os.platform();
-  const paths = IDE_PATHS[providerId];
-  if (!paths) return { installed: false, path: null };
-  for (const p of paths[platform] || []) {
+  if (providerId !== "trae" && providerId !== "windsurf") {
+    return { installed: false, path: null };
+  }
+  const provider = providerId as SupportedIdeProvider;
+  const paths = IDE_PATHS[provider];
+  const platformPaths =
+    platform === "darwin" || platform === "win32" || platform === "linux"
+      ? paths[platform]
+      : [];
+
+  for (const p of platformPaths) {
     if (p && (await pathExists(p))) return { installed: true, path: p };
   }
-  const bin = IDE_BINARIES[providerId];
+  const bin = IDE_BINARIES[provider];
   if (bin && (await checkBinary(bin))) return { installed: true, path: bin };
   return { installed: false, path: null };
 }

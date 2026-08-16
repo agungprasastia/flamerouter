@@ -4,8 +4,26 @@ import Link from "next/link";
 import Image from "next/image";
 import { Card } from "@/shared/components";
 
+export interface ToolStatusData {
+  installed?: boolean;
+  hasFlameRouter?: boolean;
+}
+
+export interface ToolDefData {
+  name: string;
+  image?: string;
+  icon?: string;
+  color?: string;
+}
+
+export interface ToolSummaryCardProps {
+  toolId: string;
+  tool: ToolDefData;
+  status?: ToolStatusData;
+}
+
 // Derive simple connected/configured/not-installed status from API payload
-function getStatus(status) {
+function getStatus(status?: ToolStatusData) {
   if (!status) return { label: "Unknown", cls: "bg-gray-500/10 text-gray-500" };
   if (!status.installed)
     return { label: "Not installed", cls: "bg-gray-500/10 text-gray-500" };
@@ -20,7 +38,7 @@ function getStatus(status) {
   };
 }
 
-export default function ToolSummaryCard({ toolId, tool, status }) {
+export default function ToolSummaryCard({ toolId, tool, status }: ToolSummaryCardProps) {
   const s = getStatus(status);
   return (
     <Link href={`/dashboard/cli-tools/${toolId}`} className="block">
@@ -40,7 +58,7 @@ export default function ToolSummaryCard({ toolId, tool, status }) {
                   className="size-8 object-contain rounded-lg"
                   sizes="32px"
                   onError={(e) => {
-                    e.target.style.display = "none";
+                    (e.target as HTMLElement).style.display = "none";
                   }}
                   loading="lazy"
                   decoding="async"

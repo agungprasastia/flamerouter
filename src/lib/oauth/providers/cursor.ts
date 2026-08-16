@@ -3,9 +3,7 @@ import { CURSOR_CONFIG } from "../constants/oauth";
 const cursor = {
   config: CURSOR_CONFIG,
   flowType: "import_token",
-  // Cursor uses import token flow - tokens are extracted from local SQLite database
-  // No OAuth flow needed, handled by /api/oauth/cursor/import route
-  mapTokens: (tokens) => ({
+  mapTokens: (tokens: Record<string, unknown>) => ({
     accessToken: tokens.accessToken,
     refreshToken: null, // Cursor doesn't have public refresh endpoint
     expiresIn: tokens.expiresIn || 86400,

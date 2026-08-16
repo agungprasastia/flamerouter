@@ -2,12 +2,12 @@
 // Spawns `npm i -g <pkg>@latest`, exposes progress via tiny HTTP server.
 // Survives after parent Next server exits (detached + unref by spawner).
 
-const { spawn } = require("child_process");
-const http = require("http");
-const net = require("net");
-const path = require("path");
-const fs = require("fs");
-const os = require("os");
+import { spawn as cpSpawn } from "child_process";
+import http from "http";
+import net from "net";
+import path from "path";
+import fs from "fs";
+import os from "os";
 
 const packageName = process.env.UPDATER_PKG_NAME || "flamerouter";
 const port = parseInt(process.env.UPDATER_PORT || "20129", 10);
@@ -21,7 +21,7 @@ const waitCheckMs = parseInt(process.env.UPDATER_WAIT_CHECK_MS || "500", 10);
 const appPort = parseInt(process.env.UPDATER_APP_PORT || "20129", 10);
 
 // Data directory (match mitm/paths.js logic)
-function getDataDir() {
+function getDataDir(): string {
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
   if (process.platform === "win32") {
     return path.join(
@@ -40,7 +40,21 @@ try {
 const statusFile = path.join(updateDir, "status.json");
 const logFile = path.join(updateDir, "install.log");
 
-const state = {
+interface UpdaterState {
+  phase: string;
+  packageName: string;
+  startedAt: number;
+  finishedAt: number | null;
+  attempt: number;
+  maxRetries: number;
+  done: boolean;
+  success: boolean;
+  exitCode: number | null;
+  error: string | null;
+  logTail: string[];
+}
+
+const state: UpdaterState = {
   phase: "starting",
   packageName,
   startedAt: Date.now(),
@@ -54,7 +68,7 @@ const state = {
   logTail: [],
 };
 
-function pushLog(line) {
+function pushLog(line: string): void {
   const trimmed = line.replace(/\r?\n$/, "");
   if (!trimmed) return;
   state.logTail.push(trimmed);
@@ -67,7 +81,7 @@ function pushLog(line) {
   }
 }
 
-function persistStatus() {
+function persistStatus(): void {
   try {
     fs.writeFileSync(statusFile, JSON.stringify(state, null, 2));
   } catch {
@@ -75,7 +89,7 @@ function persistStatus() {
   }
 }
 
-function setPhase(phase) {
+function setPhase(phase: string): void {
   state.phase = phase;
   persistStatus();
 }
@@ -93,7 +107,7 @@ const server = http.createServer((req, res) => {
   res.end("not found");
 });
 
-server.on("error", (e) => {
+server.on("error", (e: Error) => {
   state.error = `status server error: ${e.message}`;
   persistStatus();
 });
@@ -104,10 +118,10 @@ server.listen(port, "127.0.0.1", () => {
 });
 
 // Check if app port is still being listened on (= app server still alive)
-function isAppPortBusy() {
+function isAppPortBusy(): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
-    const done = (busy) => {
+    const done = (busy: boolean) => {
       socket.destroy();
       resolve(busy);
     };
@@ -120,7 +134,7 @@ function isAppPortBusy() {
 }
 
 // Wait for app process to fully exit before running npm (avoids Windows file-lock)
-async function waitForAppExit() {
+async function waitForAppExit(): Promise<void> {
   setPhase("waitingForExit");
   pushLog(
     `[updater] waiting for app to exit (min ${Math.round(waitMinMs / 1000)}s)...`,
@@ -142,11 +156,11 @@ async function waitForAppExit() {
   pushLog(`[updater] timeout waiting for app, proceeding anyway`);
 }
 
-function sleep(ms) {
+function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function runInstall() {
+function runInstall(): void {
   state.attempt += 1;
   setPhase("installing");
   pushLog(
@@ -157,27 +171,27 @@ function runInstall() {
   const cmd = isWin ? "npm.cmd" : "npm";
   const args = ["i", "-g", packageName, "--prefer-online"];
 
-  const child = spawn(cmd, args, {
+  const child = cpSpawn(cmd, args, {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     shell: isWin,
   });
 
-  child.stdout.on("data", (buf) => {
+  child.stdout?.on("data", (buf: Buffer) => {
     buf.toString().split(/\r?\n/).forEach(pushLog);
     persistStatus();
   });
-  child.stderr.on("data", (buf) => {
+  child.stderr?.on("data", (buf: Buffer) => {
     buf.toString().split(/\r?\n/).forEach(pushLog);
     persistStatus();
   });
 
-  child.on("error", (e) => {
+  child.on("error", (e: Error) => {
     pushLog(`[updater] spawn error: ${e.message}`);
     finalize(false, null, e.message);
   });
 
-  child.on("close", (code) => {
+  child.on("close", (code: number | null) => {
     pushLog(`[updater] npm exited with code ${code}`);
     if (code === 0) {
       finalize(true, code, null);
@@ -192,7 +206,7 @@ function runInstall() {
   });
 }
 
-function openBrowser(url) {
+function openBrowser(url: string): void {
   const platform = process.platform;
   const cmd =
     platform === "darwin"
@@ -201,14 +215,14 @@ function openBrowser(url) {
         ? `start "" "${url}"`
         : `xdg-open "${url}"`;
   try {
-    spawn(cmd, { shell: true, detached: true, stdio: "ignore" }).unref();
+    cpSpawn(cmd, { shell: true, detached: true, stdio: "ignore" }).unref();
   } catch {
     /* ignore */
   }
 }
 
 // Wait until app port is listening (server alive again), then open dashboard
-async function waitForAppAndOpenBrowser() {
+async function waitForAppAndOpenBrowser(): Promise<void> {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     const busy = await isAppPortBusy();
@@ -222,19 +236,19 @@ async function waitForAppAndOpenBrowser() {
   pushLog(`[updater] app not responding within 30s, skip browser open`);
 }
 
-function relaunchApp() {
+function relaunchApp(): void {
   if (process.env.UPDATER_RELAUNCH !== "1") return;
   const cmd = process.env.UPDATER_RELAUNCH_CMD;
   if (!cmd) return;
-  let args = [];
+  let args: string[] = [];
   try {
-    args = JSON.parse(process.env.UPDATER_RELAUNCH_ARGS || "[]");
+    args = JSON.parse(process.env.UPDATER_RELAUNCH_ARGS || "[]") as string[];
   } catch {
     /* noop */
   }
   const isWin = process.platform === "win32";
   try {
-    const child = spawn(cmd, args, {
+    const child = cpSpawn(cmd, args, {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
@@ -252,12 +266,13 @@ function relaunchApp() {
     );
     // Wait for new app to come up, then auto-open browser so user sees the result
     waitForAppAndOpenBrowser();
-  } catch (e) {
-    pushLog(`[updater] relaunch failed: ${e.message}`);
+  } catch (e: unknown) {
+    const err = e as Error;
+    pushLog(`[updater] relaunch failed: ${err.message}`);
   }
 }
 
-function finalize(success, exitCode, error) {
+function finalize(success: boolean, exitCode: number | null, error: string | null): void {
   state.done = true;
   state.success = success;
   state.exitCode = exitCode;

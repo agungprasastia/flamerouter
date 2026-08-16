@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { initRuntimeI18n, reloadTranslations } from "./runtime";
 
-export function RuntimeI18nProvider({ children }) {
+interface RuntimeI18nProviderProps {
+  children: ReactNode;
+}
+
+export function RuntimeI18nProvider({ children }: RuntimeI18nProviderProps) {
   const pathname = usePathname();
 
   useEffect(() => {

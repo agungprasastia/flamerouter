@@ -34,11 +34,14 @@ export const LOCALES = [
   "da",
   "no",
   "fa",
-];
-export const DEFAULT_LOCALE = "en";
+] as const;
+
+export type SupportedLocale = (typeof LOCALES)[number];
+
+export const DEFAULT_LOCALE: SupportedLocale = "en";
 export const LOCALE_COOKIE = "locale";
 
-export const LOCALE_NAMES = {
+export const LOCALE_NAMES: Record<SupportedLocale, string> = {
   en: "English",
   vi: "Tiếng Việt",
   "zh-CN": "简体中文",
@@ -76,7 +79,10 @@ export const LOCALE_NAMES = {
   fa: "فارسی",
 };
 
-export function normalizeLocale(locale) {
+export function normalizeLocale(locale: unknown): SupportedLocale {
+  if (typeof locale !== "string") {
+    return DEFAULT_LOCALE;
+  }
   if (locale === "zh" || locale === "zh-CN") {
     return "zh-CN";
   }
@@ -185,6 +191,6 @@ export function normalizeLocale(locale) {
   return DEFAULT_LOCALE;
 }
 
-export function isSupportedLocale(locale) {
-  return LOCALES.includes(locale);
+export function isSupportedLocale(locale: unknown): locale is SupportedLocale {
+  return typeof locale === "string" && (LOCALES as readonly string[]).includes(locale);
 }

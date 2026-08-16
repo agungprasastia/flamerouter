@@ -2,7 +2,6 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useState, useEffect } from "react";
-import PropTypes from "prop-types";
 import { Badge, Button, Input, Modal, Select } from "@/shared/components";
 
 const VARIANT_CONFIG = {
@@ -37,7 +36,14 @@ const API_TYPE_OPTIONS = [
   { value: "responses", label: "Responses API" },
 ];
 
-function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
+export interface AddCompatibleModalProps {
+  variant: "openai" | "anthropic";
+  isOpen: boolean;
+  onClose: () => void;
+  onCreated: (node: unknown) => void;
+}
+
+function AddCompatibleModal({ variant, isOpen, onClose, onCreated }: AddCompatibleModalProps) {
   const config = VARIANT_CONFIG[variant];
   const initialFormData = () => ({
     name: "",
@@ -51,7 +57,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
   const [checkKey, setCheckKey] = useState("");
   const [checkModelId, setCheckModelId] = useState("");
   const [validating, setValidating] = useState(false);
-  const [validationResult, setValidationResult] = useState(null);
+  const [validationResult, setValidationResult] = useState<{ valid?: boolean; error?: string; method?: string } | null>(null);
 
   // openai: reset baseUrl when apiType changes; anthropic: reset checks when opened
   useEffect(() => {
@@ -62,7 +68,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
       setCheckKey("");
       setCheckModelId("");
     }
-  }, [config.hasApiType ? formData.apiType : isOpen]);
+  }, [config.hasApiType, config.defaultBaseUrl, formData.apiType, isOpen]);
 
   const handleSubmit = async () => {
     if (
@@ -122,7 +128,11 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
 
   const renderValidationResult = () => {
     if (!validationResult) return null;
-    const { valid, error, method } = validationResult;
+    const { valid, error, method } = validationResult as {
+      valid?: boolean;
+      error?: string;
+      method?: string;
+    };
     if (valid) {
       return (
         <>
@@ -224,12 +234,5 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
     </Modal>
   );
 }
-
-AddCompatibleModal.propTypes = {
-  variant: PropTypes.oneOf(["openai", "anthropic"]).isRequired,
-  isOpen: PropTypes.bool.isRequired,
-  onClose: PropTypes.func.isRequired,
-  onCreated: PropTypes.func.isRequired,
-};
 
 export default AddCompatibleModal;

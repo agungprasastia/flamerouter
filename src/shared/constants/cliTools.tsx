@@ -805,9 +805,28 @@ gemini extensions install https://github.com/manalkaff/opendesign
   // },
 };
 
+export interface ProviderConnection {
+  id: string;
+  provider: string;
+  name: string;
+  isActive?: boolean;
+  testStatus?: string;
+  models?: Array<{ id: string; name?: string; [key: string]: unknown }> | string[];
+  [key: string]: unknown;
+}
+
+export interface ProviderModelMapping {
+  connectionId: string;
+  provider: string;
+  name: string;
+  models: Array<{ id: string; name?: string; [key: string]: unknown }> | string[];
+}
+
 // Get all provider models for mapping dropdown
-export const getProviderModelsForMapping = (providers) => {
-  const result = [];
+export const getProviderModelsForMapping = (
+  providers: ProviderConnection[]
+): ProviderModelMapping[] => {
+  const result: ProviderModelMapping[] = [];
   providers.forEach((conn) => {
     if (
       conn.isActive &&

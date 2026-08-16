@@ -4,7 +4,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 export default function GetStarted() {
   const { copied, copy } = useCopyToClipboard();
 
-  const handleCopy = (text) => {
+  const handleCopy = (text: string) => {
     copy(text, "landing");
   };
 

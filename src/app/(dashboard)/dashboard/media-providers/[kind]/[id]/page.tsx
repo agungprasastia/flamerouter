@@ -4,7 +4,6 @@ import { useParams, notFound, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import {
-  Card,
   Badge,
   Button,
   AddCustomEmbeddingModal,
@@ -17,6 +16,7 @@ import {
   AI_PROVIDERS,
   isCustomEmbeddingProvider,
 } from "@/shared/constants/providers";
+import type { ProviderEntry } from "@/shared/constants/providers";
 import ConnectionsCard from "@/app/(dashboard)/dashboard/providers/components/ConnectionsCard";
 import ModelsCard from "@/app/(dashboard)/dashboard/providers/components/ModelsCard";
 import { KIND_EXAMPLE_CONFIG } from "./components/exampleShared";
@@ -25,9 +25,19 @@ import { TtsExampleCard } from "./components/TtsExampleCard";
 import { GenericExampleCard } from "./components/GenericExampleCard";
 import { SttExampleCard } from "./components/SttExampleCard";
 
-// MediaProviderDetailPage
+interface CustomEmbeddingNode {
+  id: string;
+  name?: string;
+  prefix?: string;
+  [key: string]: unknown;
+}
+
 export default function MediaProviderDetailPage() {
-  const { kind, id } = useParams();
+  const params = useParams();
+  const kindParam = Array.isArray(params?.kind) ? params.kind[0] : params?.kind;
+  const idParam = Array.isArray(params?.id) ? params.id[0] : params?.id;
+  const kind = kindParam || "";
+  const id = idParam || "";
   const router = useRouter();
   const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kind);
   const isCustom = isCustomEmbeddingProvider(id) && kind === "embedding";
@@ -44,17 +54,16 @@ export default function MediaProviderDetailPage() {
     }
   };
 
-  const [customNode, setCustomNode] = useState(null);
+  const [customNode, setCustomNode] = useState<CustomEmbeddingNode | null>(null);
   const [customLoading, setCustomLoading] = useState(isCustom);
   const [showEditModal, setShowEditModal] = useState(false);
 
-  // Fetch custom node info from API for custom embedding nodes
   useEffect(() => {
     if (!isCustom) return;
     let cancelled = false;
     fetch("/api/provider-nodes", { cache: "no-store" })
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { nodes?: CustomEmbeddingNode[] }) => {
         if (cancelled) return;
         setCustomNode((d.nodes || []).find((n) => n.id === id) || null);
         setCustomLoading(false);
@@ -67,12 +76,11 @@ export default function MediaProviderDetailPage() {
     };
   }, [id, isCustom]);
 
-  if (!kindConfig) return notFound();
+  if (!kindConfig || !id) return notFound();
 
-  const builtInProvider = AI_PROVIDERS[id];
+  const builtInProvider = AI_PROVIDERS[id] as ProviderEntry | undefined;
 
-  // For custom embedding nodes, build a synthetic provider object
-  const provider = isCustom
+  const provider: ProviderEntry | null = isCustom
     ? customNode
       ? {
           id,
@@ -81,7 +89,7 @@ export default function MediaProviderDetailPage() {
           textIcon: "CE",
         }
       : null
-    : builtInProvider;
+    : builtInProvider ?? null;
 
   if (!isCustom && !builtInProvider) return notFound();
   if (isCustom && !customLoading && !customNode) return notFound();
@@ -92,13 +100,29 @@ export default function MediaProviderDetailPage() {
       </div>
     );
   }
+  if (!provider) return notFound();
 
   const kinds = isCustom ? ["embedding"] : (provider.serviceKinds ?? ["llm"]);
   if (!isCustom && !kinds.includes(kind)) return notFound();
 
+  const providerInfoConfig = ((): Record<string, unknown> | null | undefined => {
+    if (isCustom) return null;
+    if (kind === "webFetch") return provider.fetchConfig as Record<string, unknown> | undefined;
+    if (kind === "tts") return provider.ttsConfig as Record<string, unknown> | undefined;
+    if (kind === "stt") return provider.sttConfig as Record<string, unknown> | undefined;
+    if (kind === "embedding") return provider.embeddingConfig as Record<string, unknown> | undefined;
+    return (
+      (provider.searchConfig as Record<string, unknown> | undefined) || {
+        mode: "chat-completions",
+        defaultModel: (provider.searchViaChat as { defaultModel?: string } | undefined)?.defaultModel,
+        pricingUrl: (provider.searchViaChat as { pricingUrl?: string } | undefined)?.pricingUrl,
+        freeTier: (provider.searchViaChat as { freeTier?: string } | undefined)?.freeTier,
+      }
+    );
+  })();
+
   return (
     <div className="flex flex-col gap-8">
-      {/* Back */}
       <div>
         <Link
           href={`/dashboard/media-providers/${kind}`}
@@ -108,11 +132,10 @@ export default function MediaProviderDetailPage() {
           {kindConfig.label}
         </Link>
 
-        {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           <div
             className="size-12 rounded-lg flex items-center justify-center shrink-0"
-            style={{ backgroundColor: `${provider.color}15` }}
+            style={{ backgroundColor: `${provider.color || "#6366F1"}15` }}
           >
             <ProviderIcon
               src={`/providers/${provider.id}.png`}
@@ -120,9 +143,9 @@ export default function MediaProviderDetailPage() {
               size={48}
               className="object-contain rounded-lg max-w-[48px] max-h-[48px]"
               fallbackText={
-                provider.textIcon || provider.id.slice(0, 2).toUpperCase()
+                (provider.textIcon as string) || provider.id.slice(0, 2).toUpperCase()
               }
-              fallbackColor={provider.color}
+              fallbackColor={provider.color as string}
             />
           </div>
           <div className="flex-1">
@@ -130,9 +153,9 @@ export default function MediaProviderDetailPage() {
               <h1 className="text-3xl font-semibold tracking-tight">
                 {provider.name}
               </h1>
-              {!isCustom && provider.notice?.apiKeyUrl && (
+              {!isCustom && (provider.notice as { apiKeyUrl?: string } | undefined)?.apiKeyUrl && (
                 <a
-                  href={provider.notice.apiKeyUrl}
+                  href={(provider.notice as { apiKeyUrl: string }).apiKeyUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs text-primary hover:underline inline-flex items-center gap-1"
@@ -184,28 +207,26 @@ export default function MediaProviderDetailPage() {
         </div>
       </div>
 
-      {/* Kind-specific notice (e.g. codex/image requires Plus) */}
-      {!isCustom && provider.kindNotice?.[kind] && (
+      {!isCustom && (provider.kindNotice as Record<string, string> | undefined)?.[kind] && (
         <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
           <span className="material-symbols-outlined text-[20px] mt-0.5">
             warning
           </span>
-          <p className="text-sm">{provider.kindNotice[kind]}</p>
+          <p className="text-sm">{(provider.kindNotice as Record<string, string>)[kind]}</p>
         </div>
       )}
 
-      {/* Provider notice text (only when there's actual text content) */}
-      {!isCustom && provider.notice?.text && !provider.deprecated && (
+      {!isCustom && (provider.notice as { text?: string; apiKeyUrl?: string } | undefined)?.text && !provider.deprecated && (
         <div className="flex flex-col gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 sm:flex-row sm:items-center">
           <span className="material-symbols-outlined text-[16px] text-blue-500 shrink-0">
             info
           </span>
           <p className="min-w-0 flex-1 text-xs leading-relaxed text-blue-600 dark:text-blue-400">
-            {provider.notice.text}
+            {(provider.notice as { text: string }).text}
           </p>
-          {provider.notice.apiKeyUrl && (
+          {(provider.notice as { apiKeyUrl?: string }).apiKeyUrl && (
             <a
-              href={provider.notice.apiKeyUrl}
+              href={(provider.notice as { apiKeyUrl: string }).apiKeyUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex justify-center rounded bg-blue-500 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-blue-600 sm:py-0.5"
@@ -216,14 +237,12 @@ export default function MediaProviderDetailPage() {
         </div>
       )}
 
-      {/* Connections */}
       {!isCustom && provider.noAuth ? (
         <NoAuthProxyCard providerId={id} />
       ) : (
         <ConnectionsCard providerId={id} isOAuth={false} />
       )}
 
-      {/* Models - hidden for tts/webSearch/webFetch (provider IS the model); custom uses prefix as alias */}
       {kind !== "tts" && kind !== "webSearch" && kind !== "webFetch" && (
         <ModelsCard
           providerId={id}
@@ -232,37 +251,22 @@ export default function MediaProviderDetailPage() {
         />
       )}
 
-      {/* Provider Info — config-driven, supports searchConfig, fetchConfig, ttsConfig, embeddingConfig, searchViaChat */}
       {!isCustom &&
-        (provider.searchConfig ||
-          provider.fetchConfig ||
-          provider.ttsConfig ||
-          provider.sttConfig ||
-          provider.embeddingConfig ||
-          provider.searchViaChat) && (
+        Boolean(
+          provider.searchConfig ||
+            provider.fetchConfig ||
+            provider.ttsConfig ||
+            provider.sttConfig ||
+            provider.embeddingConfig ||
+            provider.searchViaChat,
+        ) && (
           <ProviderInfoCard
-            config={
-              kind === "webFetch"
-                ? provider.fetchConfig
-                : kind === "tts"
-                  ? provider.ttsConfig
-                  : kind === "stt"
-                    ? provider.sttConfig
-                    : kind === "embedding"
-                      ? provider.embeddingConfig
-                      : provider.searchConfig || {
-                          mode: "chat-completions",
-                          defaultModel: provider.searchViaChat?.defaultModel,
-                          pricingUrl: provider.searchViaChat?.pricingUrl,
-                          freeTier: provider.searchViaChat?.freeTier,
-                        }
-            }
-            provider={provider}
+            config={providerInfoConfig}
+            provider={provider as { notice?: { apiKeyUrl?: string; text?: string }; website?: string }}
             title={`${kindConfig.label} Config`}
           />
         )}
 
-      {/* Example — per kind */}
       {kind === "embedding" && (
         <EmbeddingExampleCard
           providerId={id}
@@ -281,7 +285,7 @@ export default function MediaProviderDetailPage() {
           node={customNode}
           onClose={() => setShowEditModal(false)}
           onSaved={(updated) => {
-            setCustomNode(updated);
+            setCustomNode(updated as CustomEmbeddingNode);
             setShowEditModal(false);
           }}
         />

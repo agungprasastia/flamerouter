@@ -9,7 +9,16 @@ export const SKILLS_REPO_URL = `https://github.com/${REPO}`;
 export const SKILLS_RAW_BASE = `https://raw.githubusercontent.com/${REPO}/refs/heads/${BRANCH}/${SKILL_PATH}`;
 export const SKILLS_BLOB_BASE = `https://github.com/${REPO}/blob/${BRANCH}/${SKILL_PATH}`;
 
-export const SKILLS = [
+export interface SkillItem {
+  id: string;
+  name: string;
+  description: string;
+  endpoint: string | null;
+  icon: string;
+  isEntry?: boolean;
+}
+
+export const SKILLS: SkillItem[] = [
   {
     id: "flamerouter",
     name: "FlameRouter (Entry)",
@@ -75,10 +84,10 @@ export const SKILLS = [
   },
 ];
 
-export function getSkillRawUrl(id) {
+export function getSkillRawUrl(id: string): string {
   return `${SKILLS_RAW_BASE}/${id}/SKILL.md`;
 }
 
-export function getSkillBlobUrl(id) {
+export function getSkillBlobUrl(id: string): string {
   return `${SKILLS_BLOB_BASE}/${id}/SKILL.md`;
 }

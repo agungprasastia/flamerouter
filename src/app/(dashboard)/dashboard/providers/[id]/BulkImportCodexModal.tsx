@@ -14,20 +14,46 @@ const PLACEHOLDER = `[
   }
 ]`;
 
-function normalizeToArray(parsed) {
+interface BulkImportCodexModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess?: () => void;
+}
+
+interface ImportResultItem {
+  index: number;
+  ok: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
+interface ImportResponse {
+  success: number;
+  failed: number;
+  results?: ImportResultItem[];
+  error?: string;
+  [key: string]: unknown;
+}
+
+function normalizeToArray(parsed: unknown): unknown[] | null {
   if (Array.isArray(parsed)) return parsed;
   if (parsed && typeof parsed === "object") {
-    if (Array.isArray(parsed.accounts)) return parsed.accounts;
+    const obj = parsed as Record<string, unknown>;
+    if (Array.isArray(obj.accounts)) return obj.accounts;
     return [parsed];
   }
   return null;
 }
 
-export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
+export default function BulkImportCodexModal({
+  isOpen,
+  onClose,
+  onSuccess,
+}: BulkImportCodexModalProps) {
   const [jsonText, setJsonText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [parseError, setParseError] = useState("");
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState<ImportResponse | null>(null);
 
   const handleClose = () => {
     if (submitting) return;
@@ -48,7 +74,8 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
     try {
       parsed = JSON.parse(trimmed);
     } catch (err) {
-      setParseError(`${translate("Invalid JSON")}: ${err.message}`);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setParseError(`${translate("Invalid JSON")}: ${errorMsg}`);
       return;
     }
 
@@ -75,7 +102,8 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
         onSuccess();
       }
     } catch (err) {
-      setParseError(err.message || translate("Request failed"));
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setParseError(errorMsg || translate("Request failed"));
     } finally {
       setSubmitting(false);
     }

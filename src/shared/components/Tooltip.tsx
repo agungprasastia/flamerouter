@@ -1,12 +1,21 @@
 "use client";
 
-export default function Tooltip({ text, children, position = "top", color }) {
-  const posClass = {
+import React, { ReactNode } from "react";
+
+export interface TooltipProps {
+  text: ReactNode | string;
+  children: ReactNode;
+  position?: "top" | "bottom" | "left" | "right" | string;
+  color?: string;
+}
+
+export default function Tooltip({ text, children, position = "top", color }: TooltipProps) {
+  const posClass = ({
     top: "bottom-full left-1/2 -translate-x-1/2 mb-1.5",
     bottom: "top-full left-1/2 -translate-x-1/2 mt-1.5",
     left: "right-full top-1/2 -translate-y-1/2 mr-1.5",
     right: "left-full top-1/2 -translate-y-1/2 ml-1.5",
-  }[position];
+  } as Record<string, string>)[position] || "bottom-full left-1/2 -translate-x-1/2 mb-1.5";
 
   const bgStyle = color ? { backgroundColor: color } : {};
   const bgClass = color ? "" : "bg-gray-900";

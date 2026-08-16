@@ -7,10 +7,10 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   type?: string;
   placeholder?: string;
-  value?: any;
+  value?: string | number | readonly string[];
   onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   error?: string | null;
-  hint?: string | null;
+  hint?: ReactNode;
   icon?: string | ReactNode;
   disabled?: boolean;
   required?: boolean;

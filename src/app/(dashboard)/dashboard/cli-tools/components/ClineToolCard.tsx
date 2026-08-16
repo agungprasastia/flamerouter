@@ -7,35 +7,64 @@ import {
   ModelSelectModal,
   ManualConfigModal,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
-import ApiKeySelect from "./ApiKeySelect";
+import ApiKeySelect, { type ApiKeyItem } from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import type { ToolCardDef } from "./DefaultToolCard";
+
+export interface ClineStatus {
+  installed?: boolean;
+  hasFlameRouter?: boolean;
+  settings?: {
+    openAiBaseUrl?: string;
+    openAiModelId?: string;
+    [key: string]: unknown;
+  };
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface ClineToolCardProps {
+  tool: ToolCardDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  baseUrl?: string;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  cloudEnabled?: boolean;
+  initialStatus?: ClineStatus | null;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+}
 
 export default function ClineToolCard({
   tool,
   isExpanded,
   onToggle,
   baseUrl,
-  apiKeys,
-  activeProviders,
-  cloudEnabled,
+  apiKeys = [],
+  activeProviders = [],
+  cloudEnabled = false,
   initialStatus,
-  tunnelEnabled,
-  tunnelPublicUrl,
-  tailscaleEnabled,
-  tailscaleUrl,
-}) {
-  const [status, setStatus] = useState(initialStatus || null);
+  tunnelEnabled = false,
+  tunnelPublicUrl = "",
+  tailscaleEnabled = false,
+  tailscaleUrl = "",
+}: ClineToolCardProps) {
+  const [status, setStatus] = useState<ClineStatus | null>(initialStatus || null);
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
-  const [modelAliases, setModelAliases] = useState({});
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
 
@@ -84,20 +113,21 @@ export default function ClineToolCard({
   const configStatus = getConfigStatus();
 
   const getEffectiveBaseUrl = () => {
-    const url = customBaseUrl || `${baseUrl}/v1`;
+    const url = customBaseUrl || `${baseUrl || "http://127.0.0.1:20129"}/v1`;
     return url.endsWith("/v1") ? url : `${url}/v1`;
   };
 
-  const getDisplayUrl = () => customBaseUrl || `${baseUrl}/v1`;
+  const getDisplayUrl = () => customBaseUrl || `${baseUrl || "http://127.0.0.1:20129"}/v1`;
 
   const checkStatus = async () => {
     setChecking(true);
     try {
       const res = await fetch("/api/cli-tools/cline-settings");
-      const data = await res.json();
+      const data: ClineStatus = await res.json();
       setStatus(data);
-    } catch (error) {
-      setStatus({ installed: false, error: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setStatus({ installed: false, error: err.message });
     } finally {
       setChecking(false);
     }
@@ -133,8 +163,9 @@ export default function ClineToolCard({
           text: data.error || "Failed to apply settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to apply settings" });
     } finally {
       setApplying(false);
     }
@@ -158,8 +189,9 @@ export default function ClineToolCard({
           text: data.error || "Failed to reset settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to reset settings" });
     } finally {
       setRestoring(false);
     }
@@ -207,19 +239,21 @@ export default function ClineToolCard({
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
-            <Image
-              src="/providers/cline.png"
-              alt={tool.name}
-              width={32}
-              height={32}
-              className="size-8 object-contain rounded-lg"
-              sizes="32px"
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-              loading="lazy"
-              decoding="async"
-            />
+            {tool.image ? (
+              <Image
+                src="/providers/cline.png"
+                alt={tool.name}
+                width={32}
+                height={32}
+                className="size-8 object-contain rounded-lg"
+                sizes="32px"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = "none";
+                }}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -472,7 +506,7 @@ export default function ClineToolCard({
         <ModelSelectModal
           isOpen={modalOpen}
           onClose={() => setModalOpen(false)}
-          onSelect={(model) => {
+          onSelect={(model: ModelSelectItem) => {
             setSelectedModel(model.value);
             setModalOpen(false);
           }}

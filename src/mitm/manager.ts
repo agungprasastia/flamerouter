@@ -1,11 +1,11 @@
-const { exec, spawn, execSync } = require("child_process");
-const path = require("path");
-const fs = require("fs");
-const os = require("os");
-const net = require("net");
-const https = require("https");
-const crypto = require("crypto");
-const {
+import { exec, spawn, execSync, type ChildProcess } from "child_process";
+import * as path from "path";
+import * as fs from "fs";
+import * as os from "os";
+import * as net from "net";
+import * as https from "https";
+import * as crypto from "crypto";
+import {
   addDNSEntry,
   removeDNSEntry,
   removeAllDNSEntries,
@@ -14,21 +14,22 @@ const {
   TOOL_HOSTS,
   isSudoAvailable,
   isSudoPasswordRequired,
-} = require("./dns/dnsConfig");
-const { isAdmin } = require("./winElevated");
+  execWithPassword,
+} from "./dns/dnsConfig";
+import { isAdmin, quotePs, runElevatedPowerShell } from "./winElevated";
+import { generateCert } from "./cert/generate";
+import { installCert, uninstallCert, checkCertInstalled } from "./cert/install";
+import { isCertExpired } from "./cert/rootCA";
+import { DATA_DIR, MITM_DIR } from "./paths";
+import { log, err } from "./logger";
+import { LSOF_BIN } from "./config";
 
 const IS_WIN = process.platform === "win32";
 const IS_MAC = process.platform === "darwin";
-const { generateCert } = require("./cert/generate");
-const { installCert, uninstallCert } = require("./cert/install");
-const { isCertExpired } = require("./cert/rootCA");
-const { DATA_DIR, MITM_DIR } = require("./paths");
-const { log, err } = require("./logger");
-const { LSOF_BIN } = require("./config");
 
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20129";
 
-function shellQuoteSingle(str) {
+function shellQuoteSingle(str: string | null | undefined) {
   if (str == null || str === "") return "''";
   return `'${String(str).replace(/'/g, "'\\''")}'`;
 }
@@ -77,7 +78,7 @@ function resolveBundledServerPath() {
 
 // Copy bundled server.js into DATA_DIR so MITM doesn't lock node_modules
 // (prevents EBUSY on `npm i -g flamerouter@latest` while MITM is running).
-function ensureRuntimeServer(bundledPath) {
+function ensureRuntimeServer(bundledPath: string) {
   try {
     if (!bundledPath || !fs.existsSync(bundledPath)) return bundledPath;
 
@@ -105,7 +106,7 @@ function ensureRuntimeServer(bundledPath) {
     return runtimeServer;
   } catch (e) {
     try {
-      log(`[MITM] runtime copy failed: ${e.message}`);
+      log(`[MITM] runtime copy failed: ${(e as Error).message}`);
     } catch {
       /* ignore */
     }
@@ -150,26 +151,28 @@ function getProcessUsingPort443() {
   return null;
 }
 
-let serverProcess = null;
-let serverPid = null;
+let serverProcess: ChildProcess | null = null;
+let serverPid: number | null = null;
+
+let cachedSudoPassword: string | null = null;
 
 function getCachedPassword() {
-  return globalThis.__mitmSudoPassword || null;
+  return cachedSudoPassword;
 }
-function setCachedPassword(pwd) {
-  globalThis.__mitmSudoPassword = pwd;
+function setCachedPassword(pwd: string | null) {
+  cachedSudoPassword = pwd;
 }
 
-function isProcessAlive(pid) {
+function isProcessAlive(pid: number) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (err) {
-    return err.code === "EACCES";
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EACCES";
   }
 }
 
-function killProcess(pid, force = false, sudoPassword = null) {
+function killProcess(pid: number, force = false, sudoPassword: string | null = null) {
   if (IS_WIN) {
     const flag = force ? "/F " : "";
     exec(`taskkill ${flag}/PID ${pid}`, { windowsHide: true }, () => {});
@@ -177,7 +180,6 @@ function killProcess(pid, force = false, sudoPassword = null) {
     const sig = force ? "SIGKILL" : "SIGTERM";
     const cmd = `pkill -${sig} -P ${pid} 2>/dev/null; kill -${sig} ${pid} 2>/dev/null`;
     if (sudoPassword || isSudoAvailable()) {
-      const { execWithPassword } = require("./dns/dnsConfig");
       execWithPassword(cmd, sudoPassword || "").catch(() =>
         exec(cmd, { windowsHide: true }, () => {}),
       );
@@ -200,7 +202,7 @@ function deriveKey() {
   }
 }
 
-function encryptPassword(plaintext) {
+function encryptPassword(plaintext: string) {
   const key = deriveKey();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ENCRYPT_ALGO, key, iv);
@@ -212,7 +214,7 @@ function encryptPassword(plaintext) {
   return `${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
 }
 
-function decryptPassword(stored) {
+function decryptPassword(stored: string) {
   try {
     const [ivHex, tagHex, dataHex] = stored.split(":");
     if (!ivHex || !tagHex || !dataHex) return null;
@@ -231,22 +233,33 @@ function decryptPassword(stored) {
   }
 }
 
-let _getSettings = null;
-let _updateSettings = null;
+type MitmSettings = {
+  mitmRouterBaseUrl?: unknown;
+  mitmSudoEncrypted?: string | null;
+  dnsToolEnabled?: Record<string, boolean>;
+  mitmEnabled?: boolean;
+  [key: string]: unknown;
+};
 
-function initDbHooks(getSettingsFn, updateSettingsFn) {
+let _getSettings: (() => Promise<MitmSettings | null>) | null = null;
+let _updateSettings: ((patch: Record<string, unknown>) => Promise<unknown>) | null = null;
+
+function initDbHooks(
+  getSettingsFn: () => Promise<MitmSettings | null>,
+  updateSettingsFn: (patch: Record<string, unknown>) => Promise<unknown>,
+) {
   _getSettings = getSettingsFn;
   _updateSettings = updateSettingsFn;
 }
 
-async function saveMitmSettings(enabled, password) {
+async function saveMitmSettings(enabled: boolean, password?: string | null) {
   if (!_updateSettings) return;
   try {
-    const updates = { mitmEnabled: enabled };
+    const updates: Record<string, unknown> = { mitmEnabled: enabled };
     if (password) updates.mitmSudoEncrypted = encryptPassword(password);
     await _updateSettings(updates);
   } catch (e) {
-    err(`Failed to save settings: ${e.message}`);
+    err(`Failed to save settings: ${(e as Error).message}`);
   }
 }
 
@@ -255,7 +268,7 @@ async function clearEncryptedPassword() {
   try {
     await _updateSettings({ mitmSudoEncrypted: null });
   } catch (e) {
-    err(`Failed to clear encrypted password: ${e.message}`);
+    err(`Failed to clear encrypted password: ${(e as Error).message}`);
   }
 }
 
@@ -263,21 +276,21 @@ async function loadEncryptedPassword() {
   if (!_getSettings) return null;
   try {
     const settings = await _getSettings();
-    if (!settings.mitmSudoEncrypted) return null;
+    if (!settings?.mitmSudoEncrypted) return null;
     return decryptPassword(settings.mitmSudoEncrypted);
   } catch {
     return null;
   }
 }
 
-async function saveDnsToolState(tool, enabled) {
+async function saveDnsToolState(tool: string, enabled: boolean) {
   if (!_updateSettings || !_getSettings) return;
   try {
     const s = await _getSettings();
-    const next = { ...(s.dnsToolEnabled || {}), [tool]: enabled };
+    const next = { ...(s?.dnsToolEnabled || {}), [tool]: enabled };
     await _updateSettings({ dnsToolEnabled: next });
   } catch (e) {
-    err(`Failed to save DNS state: ${e.message}`);
+    err(`Failed to save DNS state: ${(e as Error).message}`);
   }
 }
 
@@ -285,7 +298,7 @@ async function loadDnsToolState() {
   if (!_getSettings) return {};
   try {
     const s = await _getSettings();
-    return s.dnsToolEnabled || {};
+    return s?.dnsToolEnabled || {};
   } catch {
     return {};
   }
@@ -294,16 +307,16 @@ async function loadDnsToolState() {
 /**
  * Re-apply DNS for tools previously enabled — called on app startup after MITM running.
  */
-async function restoreToolDNS(sudoPassword) {
+async function restoreToolDNS(sudoPassword?: string) {
   const state = await loadDnsToolState();
   const password =
     sudoPassword || getCachedPassword() || (await loadEncryptedPassword());
   for (const [tool, enabled] of Object.entries(state)) {
     if (!enabled || !TOOL_HOSTS[tool]) continue;
     try {
-      await addDNSEntry(tool, password);
+      await addDNSEntry(tool, password || undefined);
     } catch (e) {
-      err(`DNS ${tool}: restore failed — ${e.message}`);
+      err(`DNS ${tool}: restore failed — ${(e as Error).message}`);
     }
   }
 }
@@ -323,7 +336,7 @@ async function hasDnsPrivilege() {
 function checkPort443Free() {
   return new Promise((resolve) => {
     const tester = net.createServer();
-    tester.once("error", (err) => {
+    tester.once("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") resolve("in-use");
       else resolve("no-permission");
     });
@@ -334,7 +347,9 @@ function checkPort443Free() {
   });
 }
 
-function getPort443Owner(sudoPassword) {
+function getPort443Owner(
+  sudoPassword?: string | null,
+): Promise<{ pid: number; name: string } | null> {
   return new Promise((resolve) => {
     if (IS_WIN) {
       const psCmd =
@@ -372,7 +387,7 @@ function getPort443Owner(sudoPassword) {
   });
 }
 
-async function killLeftoverMitm(sudoPassword) {
+async function killLeftoverMitm(sudoPassword?: string | null) {
   if (serverProcess && !serverProcess.killed) {
     try {
       serverProcess.kill("SIGKILL");
@@ -398,7 +413,6 @@ async function killLeftoverMitm(sudoPassword) {
     try {
       const escaped = SERVER_PATH.replace(/'/g, "'\\''");
       if (sudoPassword || isSudoAvailable()) {
-        const { execWithPassword } = require("./dns/dnsConfig");
         await execWithPassword(
           `pkill -SIGKILL -f "${escaped}" 2>/dev/null || true`,
           sudoPassword || "",
@@ -417,7 +431,10 @@ async function killLeftoverMitm(sudoPassword) {
   }
 }
 
-function pollMitmHealth(timeoutMs, port = MITM_PORT) {
+function pollMitmHealth(
+  timeoutMs: number,
+  port = MITM_PORT,
+): Promise<{ ok: boolean; pid: number | null } | null> {
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs;
     const check = () => {
@@ -485,7 +502,6 @@ async function getMitmStatus() {
   const dnsStatus = checkAllDNSStatus();
   const rootCACertPath = path.join(MITM_DIR, "rootCA.crt");
   const certExists = fs.existsSync(rootCACertPath);
-  const { checkCertInstalled } = require("./cert/install");
   const certTrusted = certExists
     ? await checkCertInstalled(rootCACertPath)
     : false;
@@ -493,7 +509,7 @@ async function getMitmStatus() {
   return { running, pid, certExists, certTrusted, dnsStatus };
 }
 
-async function scheduleMitmRestart(apiKey) {
+async function scheduleMitmRestart(apiKey: string) {
   if (mitmIsRestarting) return;
   // Set guard synchronously before any await to prevent concurrent calls
   // from passing the check above.
@@ -539,7 +555,7 @@ async function scheduleMitmRestart(apiKey) {
     mitmIsRestarting = false;
   } catch (e) {
     err(
-      `Restart attempt ${mitmRestartCount}/${MITM_MAX_RESTARTS} failed: ${e.message}`,
+      `Restart attempt ${mitmRestartCount}/${MITM_MAX_RESTARTS} failed: ${(e as Error).message}`,
     );
     mitmIsRestarting = false;
     // Schedule next retry
@@ -550,7 +566,7 @@ async function scheduleMitmRestart(apiKey) {
 /**
  * Start MITM server only (cert + server, no DNS)
  */
-async function killPort443Owner(owner, sudoPassword) {
+async function killPort443Owner(owner: { pid: number; name: string } | null | undefined, sudoPassword?: string | null) {
   if (!owner || !owner.pid) return;
   if (IS_WIN) {
     try {
@@ -563,7 +579,6 @@ async function killPort443Owner(owner, sudoPassword) {
     }
   } else {
     try {
-      const { execWithPassword } = require("./dns/dnsConfig");
       if (sudoPassword || isSudoAvailable()) {
         await execWithPassword(`kill -9 ${owner.pid}`, sudoPassword || "");
       } else {
@@ -576,7 +591,7 @@ async function killPort443Owner(owner, sudoPassword) {
   await new Promise((r) => setTimeout(r, 800));
 }
 
-async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
+async function startServer(apiKey: string, sudoPassword?: string | null, forceKillPort443 = false) {
   if (!serverProcess || serverProcess.killed) {
     try {
       if (fs.existsSync(PID_FILE)) {
@@ -608,7 +623,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
   try {
     fs.writeFileSync(LOCK_FILE, String(process.pid), { flag: "wx" });
   } catch (e) {
-    if (e.code === "EEXIST") {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
       let stale = false;
       try {
         const pid = parseInt(fs.readFileSync(LOCK_FILE, "utf-8").trim(), 10);
@@ -636,7 +651,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
         const owner = await getPort443Owner(sudoPassword);
         if (owner) {
           const shortName = owner.name.includes("/")
-            ? owner.name.split("/").filter(Boolean).pop()
+            ? (owner.name.split("/").filter(Boolean).pop() || "unknown")
             : owner.name;
           if (forceKillPort443) {
             log(
@@ -646,7 +661,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
           } else {
             const e = new Error(
               `Port 443 is already in use by "${shortName}" (PID ${owner.pid}).`,
-            );
+            ) as Error & { code: string; portOwner: { pid: number; name: string } };
             e.code = "PORT_443_BUSY";
             e.portOwner = { pid: owner.pid, name: shortName };
             throw e;
@@ -670,7 +685,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
           getCachedPassword() ||
           (await loadEncryptedPassword());
         try {
-          await uninstallCert(password, rootCACertPath);
+          await uninstallCert(password || undefined, rootCACertPath);
         } catch {
           /* best effort */
         }
@@ -680,7 +695,6 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
     }
 
     // Step 1.5: Auto-install Root CA if not trusted yet
-    const { checkCertInstalled } = require("./cert/install");
     const rootCATrusted = await checkCertInstalled(rootCACertPath);
     const linuxNoSystemTrust = !IS_WIN && !IS_MAC && !isSudoAvailable();
     if (!rootCATrusted) {
@@ -698,10 +712,10 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
           );
         }
         try {
-          await installCert(password, rootCACertPath);
+          await installCert(password || undefined, rootCACertPath);
           log("🔐 Cert: ✅ trusted");
         } catch (e) {
-          throw new Error(`Failed to trust certificate: ${e.message}`);
+          throw new Error(`Failed to trust certificate: ${(e as Error).message}`);
         }
       }
     } else {
@@ -734,7 +748,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
         } else {
           const e = new Error(
             `Port 443 is already in use by "${winOwner.name}" (PID ${winOwner.pid}).`,
-          );
+          ) as Error & { code: string; portOwner: { pid: number; name: string } };
           e.code = "PORT_443_BUSY";
           e.portOwner = { pid: winOwner.pid, name: winOwner.name };
           throw e;
@@ -774,8 +788,10 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
       });
-      serverProcess.stdin.write(`${sudoPassword}\n`);
-      serverProcess.stdin.end();
+      if (serverProcess.stdin) {
+        serverProcess.stdin.write(`${sudoPassword || ""}\n`);
+        serverProcess.stdin.end();
+      }
     } else {
       // Docker/minimal images: no sudo — same as Windows-style direct spawn
       serverProcess = spawn(process.execPath, [effectiveServerPath], {
@@ -793,7 +809,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
     }
 
     if (serverProcess) {
-      serverPid = serverProcess.pid;
+      serverPid = serverProcess.pid ?? null;
       fs.writeFileSync(PID_FILE, String(serverPid));
       mitmLastStartTime = Date.now();
     }
@@ -808,7 +824,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
           (e) => {
             if (e)
               log(
-                `[launchctl] Failed to set NODE_EXTRA_CA_CERTS: ${e.message}`,
+                `[launchctl] Failed to set NODE_EXTRA_CA_CERTS: ${(e as Error).message}`,
               );
             else log(`[launchctl] NODE_EXTRA_CA_CERTS set to ${rootCAPath}`);
           },
@@ -822,20 +838,20 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
           { windowsHide: true },
           (e) => {
             if (e)
-              log(`[setx] Failed to set NODE_EXTRA_CA_CERTS: ${e.message}`);
+              log(`[setx] Failed to set NODE_EXTRA_CA_CERTS: ${(e as Error).message}`);
             else log(`[setx] NODE_EXTRA_CA_CERTS set for current user`);
           },
         );
       }
     }
 
-    let startError = null;
+    let startError: string | null = null;
     if (serverProcess) {
-      serverProcess.stdout.on("data", (data) => {
+      serverProcess.stdout?.on("data", (data) => {
         // server.js already formats its own logs — print as-is
         process.stdout.write(data);
       });
-      serverProcess.stderr.on("data", (data) => {
+      serverProcess.stderr?.on("data", (data) => {
         const msg = data.toString().trim();
         // Mac/Linux: filter sudo password prompt noise
         if (
@@ -931,7 +947,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
 /**
  * Stop MITM server — removes ALL tool DNS entries first, then kills server
  */
-async function stopServer(sudoPassword) {
+async function stopServer(sudoPassword?: string | null) {
   // Prevent auto-restart from triggering on intentional stop
   mitmIsRestarting = true;
   mitmRestartCount = 0;
@@ -969,11 +985,6 @@ async function stopServer(sudoPassword) {
     );
     const allHosts = Object.values(TOOL_HOSTS).flat();
     try {
-      const {
-        isAdmin,
-        runElevatedPowerShell,
-        quotePs,
-      } = require("./winElevated");
       if (isAdmin()) {
         // Direct fs write — bypass PowerShell to avoid parser pitfalls
         const content = fs.readFileSync(hostsFile, "utf8");
@@ -1007,10 +1018,10 @@ async function stopServer(sudoPassword) {
         await runElevatedPowerShell(script);
       }
     } catch (e) {
-      err(`Failed to clean hosts: ${e.message}`);
+      err(`Failed to clean hosts: ${(e as Error).message}`);
     }
   } else {
-    await removeAllDNSEntries(sudoPassword);
+    await removeAllDNSEntries(sudoPassword ?? undefined);
   }
 
   // Unset NODE_EXTRA_CA_CERTS so apps don't keep trusting stale MITM cert
@@ -1054,14 +1065,14 @@ async function stopServer(sudoPassword) {
 /**
  * Enable DNS for a specific tool (requires server running)
  */
-async function enableToolDNS(tool, sudoPassword) {
+async function enableToolDNS(tool: string, sudoPassword?: string | null) {
   const status = await getMitmStatus();
   if (!status.running)
     throw new Error("MITM server is not running. Start the server first.");
 
   const password =
     sudoPassword || getCachedPassword() || (await loadEncryptedPassword());
-  await addDNSEntry(tool, password);
+  await addDNSEntry(tool, password || undefined);
   await saveDnsToolState(tool, true);
   return { success: true };
 }
@@ -1069,10 +1080,10 @@ async function enableToolDNS(tool, sudoPassword) {
 /**
  * Disable DNS for a specific tool
  */
-async function disableToolDNS(tool, sudoPassword) {
+async function disableToolDNS(tool: string, sudoPassword?: string | null) {
   const password =
     sudoPassword || getCachedPassword() || (await loadEncryptedPassword());
-  await removeDNSEntry(tool, password);
+  await removeDNSEntry(tool, password || undefined);
   await saveDnsToolState(tool, false);
   return { success: true };
 }
@@ -1080,7 +1091,7 @@ async function disableToolDNS(tool, sudoPassword) {
 /**
  * Install Root CA to system trust store (standalone, no server start)
  */
-async function trustCert(sudoPassword) {
+async function trustCert(sudoPassword?: string | null) {
   const rootCACertPath = path.join(MITM_DIR, "rootCA.crt");
   if (!fs.existsSync(rootCACertPath))
     throw new Error("Root CA not found. Start server first to generate it.");
@@ -1095,7 +1106,7 @@ async function trustCert(sudoPassword) {
     sudoPassword || getCachedPassword() || (await loadEncryptedPassword());
   if (!password && isSudoPasswordRequired())
     throw new Error("Sudo password required to trust certificate");
-  await installCert(password, rootCACertPath);
+  await installCert(password || undefined, rootCACertPath);
   if (password) setCachedPassword(password);
 }
 
@@ -1103,14 +1114,13 @@ async function trustCert(sudoPassword) {
 const startMitm = startServer;
 const stopMitm = stopServer;
 
-module.exports = {
+export {
   getMitmStatus,
   startServer,
   stopServer,
   enableToolDNS,
   disableToolDNS,
   trustCert,
-  // Legacy
   startMitm,
   stopMitm,
   getCachedPassword,
@@ -1123,4 +1133,3 @@ module.exports = {
   hasDnsPrivilege,
   removeAllDNSEntriesSync,
 };
-export {};

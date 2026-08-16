@@ -1,6 +1,6 @@
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 
 const APP_NAME = "flamerouter";
 
@@ -21,7 +21,8 @@ function getDataDir() {
     fs.mkdirSync(configured, { recursive: true });
     return configured;
   } catch (e) {
-    if (e?.code === "EACCES" || e?.code === "EPERM") {
+    const errObj = e as { code?: string };
+    if (errObj?.code === "EACCES" || errObj?.code === "EPERM") {
       console.warn(
         `[DATA_DIR] '${configured}' not writable → fallback ~/.${APP_NAME}`,
       );
@@ -34,4 +35,4 @@ function getDataDir() {
 const DATA_DIR = getDataDir();
 const MITM_DIR = path.join(DATA_DIR, "mitm");
 
-module.exports = { DATA_DIR, MITM_DIR };
+export { DATA_DIR, MITM_DIR };

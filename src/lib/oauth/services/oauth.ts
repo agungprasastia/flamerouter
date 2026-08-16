@@ -4,25 +4,43 @@ import { generatePKCE } from "../utils/pkce";
 import { spinner as createSpinner } from "../utils/ui";
 import { OAUTH_TIMEOUT } from "../constants/oauth";
 
+export interface OAuthServiceConfig {
+  clientId: string;
+  authorizeUrl: string;
+  tokenUrl: string;
+  codeChallengeMethod?: string;
+  [key: string]: unknown;
+}
+
+export interface CallbackParams {
+  code?: string;
+  state?: string;
+  error?: string;
+  error_description?: string;
+  [key: string]: unknown;
+}
+
 /**
  * Generic OAuth Authorization Code Flow with PKCE
  */
 export class OAuthService {
-  constructor(config) {
+  config: OAuthServiceConfig;
+
+  constructor(config: OAuthServiceConfig) {
     this.config = config;
   }
 
   /**
    * Build authorization URL
    */
-  buildAuthUrl(redirectUri, state, codeChallenge, extraParams = {}) {
+  buildAuthUrl(redirectUri: string, state: string, codeChallenge: string, extraParams: Record<string, string> = {}): string {
     const params = new URLSearchParams({
       client_id: this.config.clientId,
       response_type: "code",
       redirect_uri: redirectUri,
       state: state,
       code_challenge: codeChallenge,
-      code_challenge_method: this.config.codeChallengeMethod,
+      code_challenge_method: this.config.codeChallengeMethod || "S256",
       ...extraParams,
     });
 
@@ -32,13 +50,13 @@ export class OAuthService {
   /**
    * Start local server and wait for callback
    */
-  async startAuthFlow(authUrl, providerName) {
+  async startAuthFlow(_authUrl: string | null, providerName: string) {
     const spinner = createSpinner("Starting local server...").start();
 
     // Start local server for callback
-    let callbackParams = null;
+    let callbackParams: CallbackParams | null = null;
     const { port, close } = await startLocalServer((params) => {
-      callbackParams = params;
+      callbackParams = params as CallbackParams;
     });
 
     const redirectUri = `http://localhost:${port}/callback`;
@@ -48,10 +66,10 @@ export class OAuthService {
       redirectUri,
       port,
       close,
-      waitForCallback: async () => {
+      waitForCallback: async (): Promise<CallbackParams> => {
         spinner.start(`Waiting for ${providerName} authorization...`);
 
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error("Authentication timeout (5 minutes)"));
           }, OAUTH_TIMEOUT);
@@ -67,6 +85,10 @@ export class OAuthService {
 
         spinner.stop();
         close();
+
+        if (!callbackParams) {
+          throw new Error("No authorization response received");
+        }
 
         if (callbackParams.error) {
           throw new Error(
@@ -87,11 +109,11 @@ export class OAuthService {
    * Exchange authorization code for tokens
    */
   async exchangeCode(
-    code,
-    redirectUri,
-    codeVerifier,
-    contentType = "application/x-www-form-urlencoded",
-  ) {
+    code: string,
+    redirectUri: string,
+    codeVerifier: string,
+    contentType: string = "application/x-www-form-urlencoded",
+  ): Promise<Record<string, unknown>> {
     const body =
       contentType === "application/json"
         ? JSON.stringify({
@@ -123,13 +145,13 @@ export class OAuthService {
       throw new Error(`Token exchange failed: ${error}`);
     }
 
-    return await response.json();
+    return (await response.json()) as Record<string, unknown>;
   }
 
   /**
    * Complete OAuth flow
    */
-  async authenticate(providerName, buildAuthUrlFn) {
+  async authenticate(providerName: string, buildAuthUrlFn: (redirectUri: string, state: string, codeChallenge: string) => string) {
     // Generate PKCE
     const { codeVerifier, codeChallenge, state } = generatePKCE();
 

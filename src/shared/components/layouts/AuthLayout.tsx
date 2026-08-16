@@ -1,10 +1,14 @@
 "use client";
 
-import PropTypes from "prop-types";
+import { ReactNode } from "react";
 import { Flame } from "lucide-react";
 import ThemeToggle from "../ThemeToggle";
 
-export default function AuthLayout({ children }) {
+export interface AuthLayoutProps {
+  children: ReactNode;
+}
+
+export default function AuthLayout({ children }: AuthLayoutProps) {
   return (
     <div className="relative flex min-h-[100dvh] items-center justify-center overflow-x-hidden bg-bg px-5 py-16 text-text-main selection:bg-primary/20 selection:text-primary sm:px-8">
       <div className="absolute top-5 right-5 sm:top-8 sm:right-8">
@@ -26,7 +30,3 @@ export default function AuthLayout({ children }) {
     </div>
   );
 }
-
-AuthLayout.propTypes = {
-  children: PropTypes.node.isRequired,
-};

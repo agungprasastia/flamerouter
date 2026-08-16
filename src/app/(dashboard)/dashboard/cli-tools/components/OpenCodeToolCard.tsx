@@ -7,42 +7,89 @@ import {
   ModelSelectModal,
   ManualConfigModal,
 } from "@/shared/components";
+import type { ModelSelectItem, ActiveProviderItem } from "@/shared/components/ModelSelectModal";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
-import ApiKeySelect from "./ApiKeySelect";
+import ApiKeySelect, { type ApiKeyItem } from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import type { ToolCardDef } from "./DefaultToolCard";
+
+export interface OpenCodeStatus {
+  installed?: boolean;
+  hasFlameRouter?: boolean;
+  opencode?: {
+    models?: string[];
+    activeModel?: string;
+    [key: string]: unknown;
+  };
+  config?: {
+    provider?: {
+      flamerouter?: {
+        options?: {
+          baseURL?: string;
+          apiKey?: string;
+        };
+      };
+      [key: string]: unknown;
+    };
+    agent?: {
+      explorer?: {
+        model?: string;
+        [key: string]: unknown;
+      };
+    };
+    [key: string]: unknown;
+  };
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface OpenCodeToolCardProps {
+  tool: ToolCardDef;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  baseUrl?: string;
+  apiKeys?: ApiKeyItem[];
+  activeProviders?: ActiveProviderItem[];
+  cloudEnabled?: boolean;
+  initialStatus?: OpenCodeStatus | null;
+  tunnelEnabled?: boolean;
+  tunnelPublicUrl?: string | null;
+  tailscaleEnabled?: boolean;
+  tailscaleUrl?: string | null;
+}
 
 export default function OpenCodeToolCard({
   tool,
   isExpanded,
   onToggle,
   baseUrl,
-  apiKeys,
-  activeProviders,
-  cloudEnabled,
+  apiKeys = [],
+  activeProviders = [],
+  cloudEnabled = false,
   initialStatus,
-  tunnelEnabled,
-  tunnelPublicUrl,
-  tailscaleEnabled,
-  tailscaleUrl,
-}) {
-  const [status, setStatus] = useState(initialStatus || null);
+  tunnelEnabled = false,
+  tunnelPublicUrl = "",
+  tailscaleEnabled = false,
+  tailscaleUrl = "",
+}: OpenCodeToolCardProps) {
+  const [status, setStatus] = useState<OpenCodeStatus | null>(initialStatus || null);
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [subagentModel, setSubagentModel] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [subagentModalOpen, setSubagentModalOpen] = useState(false);
-  const [modelAliases, setModelAliases] = useState({});
+  const [modelAliases, setModelAliases] = useState<Record<string, string>>({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
-  const [selectedModels, setSelectedModels] = useState([]);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [activeModel, setActiveModel] = useState("");
-  const selectedModelsRef = useRef([]);
+  const selectedModelsRef = useRef<string[]>([]);
 
   /* eslint-disable react-hooks/immutability, react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -94,7 +141,7 @@ export default function OpenCodeToolCard({
     }
   };
 
-  const saveModels = async (models) => {
+  const saveModels = async (models: string[]) => {
     try {
       const keyToUse =
         selectedApiKey && selectedApiKey.trim()
@@ -135,20 +182,21 @@ export default function OpenCodeToolCard({
   const configStatus = getConfigStatus();
 
   const getEffectiveBaseUrl = () => {
-    const url = customBaseUrl || baseUrl;
+    const url = customBaseUrl || baseUrl || "http://127.0.0.1:20129";
     return url.endsWith("/v1") ? url : `${url}/v1`;
   };
 
-  const getDisplayUrl = () => customBaseUrl || `${baseUrl}/v1`;
+  const getDisplayUrl = () => customBaseUrl || `${baseUrl || "http://127.0.0.1:20129"}/v1`;
 
   const checkStatus = async () => {
     setChecking(true);
     try {
       const res = await fetch("/api/cli-tools/opencode-settings");
-      const data = await res.json();
+      const data: OpenCodeStatus = await res.json();
       setStatus(data);
-    } catch (error) {
-      setStatus({ installed: false, error: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setStatus({ installed: false, error: err.message });
     } finally {
       setChecking(false);
     }
@@ -187,8 +235,9 @@ export default function OpenCodeToolCard({
           text: data.error || "Failed to apply settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to apply settings" });
     } finally {
       setApplying(false);
     }
@@ -215,8 +264,9 @@ export default function OpenCodeToolCard({
           text: data.error || "Failed to reset settings",
         });
       }
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      setMessage({ type: "error", text: err.message || "Failed to reset settings" });
     } finally {
       setRestoring(false);
     }
@@ -236,7 +286,7 @@ export default function OpenCodeToolCard({
       activeModel || selectedModels[0] || modelsToShow[0];
     const effectiveSubagentModel = subagentModel || activeModelToShow;
 
-    const modelsObj = {};
+    const modelsObj: Record<string, { name: string; modalities: { input: string[]; output: string[] } }> = {};
     modelsToShow.forEach((m) => {
       modelsObj[m] = {
         name: m,
@@ -280,19 +330,21 @@ export default function OpenCodeToolCard({
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
-            <Image
-              src="/providers/opencode.png"
-              alt={tool.name}
-              width={32}
-              height={32}
-              className="size-8 object-contain rounded-lg"
-              sizes="32px"
-              onError={(e) => {
-                e.target.style.display = "none";
-              }}
-              loading="lazy"
-              decoding="async"
-            />
+            {tool.image ? (
+              <Image
+                src="/providers/opencode.png"
+                alt={tool.name}
+                width={32}
+                height={32}
+                className="size-8 object-contain rounded-lg"
+                sizes="32px"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = "none";
+                }}
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -644,7 +696,7 @@ export default function OpenCodeToolCard({
                   variant="outline"
                   size="sm"
                   onClick={handleReset}
-                  disabled={!status.hasFlameRouter}
+                  disabled={!status?.hasFlameRouter}
                   loading={restoring}
                 >
                   <span className="material-symbols-outlined text-[14px] mr-1">
@@ -675,13 +727,13 @@ export default function OpenCodeToolCard({
             setModalOpen(false);
             saveModels(selectedModelsRef.current);
           }}
-          onSelect={(model) => {
+          onSelect={(model: ModelSelectItem) => {
             if (!selectedModels.includes(model.value)) {
               setSelectedModels([...selectedModels, model.value]);
               if (!activeModel) setActiveModel(model.value);
             }
           }}
-          onDeselect={(model) => {
+          onDeselect={(model: ModelSelectItem) => {
             const remaining = selectedModels.filter((m) => m !== model.value);
             setSelectedModels(remaining);
             if (activeModel === model.value) {
@@ -701,7 +753,7 @@ export default function OpenCodeToolCard({
         <ModelSelectModal
           isOpen={subagentModalOpen}
           onClose={() => setSubagentModalOpen(false)}
-          onSelect={(model) => {
+          onSelect={(model: ModelSelectItem) => {
             setSubagentModel(model.value);
             setSubagentModalOpen(false);
           }}

@@ -3,6 +3,7 @@
 import { useParams, notFound, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import type { MouseEvent } from "react";
 import {
   Card,
   Badge,
@@ -16,20 +17,54 @@ import {
   AI_PROVIDERS,
   getProvidersByKind,
 } from "@/shared/constants/providers";
+import type { ProviderEntry } from "@/shared/constants/providers";
 
 // Kinds that support combos (currently disabled for image/tts — temporarily hidden).
 // webSearch/webFetch handled by /web page.
-const COMBO_KINDS = new Set([]);
-const COMBO_BASE_NAMES = { image: "image-combo", tts: "tts-combo" };
+const COMBO_KINDS = new Set<string>([]);
+const COMBO_BASE_NAMES: Record<string, string> = { image: "image-combo", tts: "tts-combo" };
 
-function getEffectiveStatus(conn) {
+interface ConnectionRecord {
+  id: string;
+  provider: string;
+  isActive?: boolean;
+  testStatus?: string;
+  [key: string]: unknown;
+}
+
+interface CustomNodeItem {
+  id: string;
+  name?: string;
+  type?: string;
+  [key: string]: unknown;
+}
+
+interface ComboItem {
+  id: string;
+  name: string;
+  models: string[];
+  kind?: string;
+  [key: string]: unknown;
+}
+
+function getEffectiveStatus(conn: ConnectionRecord): string | undefined {
   const isCooldown = Object.entries(conn).some(
     ([k, v]) =>
-      k.startsWith("modelLock_") && v && new Date(v).getTime() > Date.now(),
+      k.startsWith("modelLock_") &&
+      typeof v === "string" &&
+      new Date(v).getTime() > Date.now(),
   );
   return conn.testStatus === "unavailable" && !isCooldown
     ? "active"
     : conn.testStatus;
+}
+
+interface MediaProviderCardProps {
+  provider: ProviderEntry | { id: string; name: string; color: string; textIcon: string };
+  kind: string;
+  connections: ConnectionRecord[];
+  isCustom?: boolean;
+  onToggle?: (providerId: string, newActive: boolean) => Promise<void>;
 }
 
 function MediaProviderCard({
@@ -38,7 +73,7 @@ function MediaProviderCard({
   connections,
   isCustom,
   onToggle,
-}) {
+}: MediaProviderCardProps) {
   const providerInfo = AI_PROVIDERS[provider.id];
   const isNoAuth = !!providerInfo?.noAuth;
 
@@ -55,7 +90,7 @@ function MediaProviderCard({
   const allDisabled =
     total > 0 && providerConns.every((c) => c.isActive === false);
 
-  const handleToggleClick = (e) => {
+  const handleToggleClick = (e: MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     if (onToggle) onToggle(provider.id, allDisabled);
@@ -97,6 +132,8 @@ function MediaProviderCard({
     );
   };
 
+  const providerColor = (provider.color as string | undefined) || "#888";
+
   return (
     <Link
       href={`/dashboard/media-providers/${kind}/${provider.id}`}
@@ -111,7 +148,7 @@ function MediaProviderCard({
             <div
               className="size-8 rounded-lg flex items-center justify-center shrink-0"
               style={{
-                backgroundColor: `${provider.color?.length > 7 ? provider.color : (provider.color ?? "#888") + "15"}`,
+                backgroundColor: `${providerColor.length > 7 ? providerColor : providerColor + "15"}`,
               }}
             >
               <ProviderIcon
@@ -120,9 +157,9 @@ function MediaProviderCard({
                 size={30}
                 className="object-contain rounded-lg max-w-[30px] max-h-[30px]"
                 fallbackText={
-                  provider.textIcon || provider.id.slice(0, 2).toUpperCase()
+                  (provider.textIcon as string | undefined) || provider.id.slice(0, 2).toUpperCase()
                 }
-                fallbackColor={provider.color}
+                fallbackColor={providerColor}
               />
             </div>
             <div className="min-w-0">
@@ -156,7 +193,7 @@ function MediaProviderCard({
   );
 }
 
-function ComboList({ combos }) {
+function ComboList({ combos }: { combos: ComboItem[] }) {
   if (combos.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
@@ -194,9 +231,9 @@ function ComboList({ combos }) {
                         size={18}
                         className="object-contain rounded max-w-[18px] max-h-[18px]"
                         fallbackText={
-                          p?.textIcon || pid.slice(0, 2).toUpperCase()
+                          (p?.textIcon as string | undefined) || pid.slice(0, 2).toUpperCase()
                         }
-                        fallbackColor={p?.color}
+                        fallbackColor={p?.color as string | undefined}
                       />
                     </div>
                   );
@@ -222,11 +259,13 @@ function ComboList({ combos }) {
 }
 
 export default function MediaProviderKindPage() {
-  const { kind } = useParams();
+  const params = useParams();
+  const kindParam = Array.isArray(params?.kind) ? params.kind[0] : params?.kind;
+  const kind = kindParam || "";
   const router = useRouter();
-  const [connections, setConnections] = useState([]);
-  const [customNodes, setCustomNodes] = useState([]);
-  const [combos, setCombos] = useState([]);
+  const [connections, setConnections] = useState<ConnectionRecord[]>([]);
+  const [customNodes, setCustomNodes] = useState<CustomNodeItem[]>([]);
+  const [combos, setCombos] = useState<ComboItem[]>([]);
   const [showAddCustomEmbedding, setShowAddCustomEmbedding] = useState(false);
 
   // webSearch/webFetch listing pages are merged into /web
@@ -244,12 +283,12 @@ export default function MediaProviderKindPage() {
     if (!kindConfig) return;
     fetch("/api/providers", { cache: "no-store" })
       .then((r) => r.json())
-      .then((d) => setConnections(d.connections || []))
+      .then((d: { connections?: ConnectionRecord[] }) => setConnections(d.connections || []))
       .catch(() => {});
     if (isEmbedding) {
       fetch("/api/provider-nodes", { cache: "no-store" })
         .then((r) => r.json())
-        .then((d) =>
+        .then((d: { nodes?: CustomNodeItem[] }) =>
           setCustomNodes(
             (d.nodes || []).filter((n) => n.type === "custom-embedding"),
           ),
@@ -259,7 +298,7 @@ export default function MediaProviderKindPage() {
     if (supportsCombo) {
       fetch("/api/combos", { cache: "no-store" })
         .then((r) => r.json())
-        .then((d) => setCombos(d.combos || []))
+        .then((d: { combos?: ComboItem[] }) => setCombos(d.combos || []))
         .catch(() => {});
     }
   }, [isEmbedding, supportsCombo, kindConfig]);
@@ -279,7 +318,7 @@ export default function MediaProviderKindPage() {
 
   const allProviders = [...providers, ...customProviders];
 
-  const handleToggleProvider = async (providerId, newActive) => {
+  const handleToggleProvider = async (providerId: string, newActive: boolean) => {
     const providerConns = connections.filter((c) => c.provider === providerId);
     setConnections((prev) =>
       prev.map((c) =>
@@ -311,10 +350,10 @@ export default function MediaProviderKindPage() {
       body: JSON.stringify({ name, models: [], kind }),
     });
     if (res.ok) {
-      const created = await res.json();
+      const created = (await res.json()) as { id: string };
       router.push(`/dashboard/media-providers/combo/${created.id}`);
     } else {
-      const err = await res.json();
+      const err = (await res.json()) as { error?: string };
       alert(err.error || "Failed to create combo");
     }
   };
@@ -377,7 +416,7 @@ export default function MediaProviderKindPage() {
           isOpen={showAddCustomEmbedding}
           onClose={() => setShowAddCustomEmbedding(false)}
           onCreated={(node) => {
-            setCustomNodes((prev) => [...prev, node]);
+            setCustomNodes((prev) => [...prev, node as CustomNodeItem]);
             setShowAddCustomEmbedding(false);
           }}
         />

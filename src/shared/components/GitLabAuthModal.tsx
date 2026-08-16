@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import PropTypes from "prop-types";
 import { Modal, Button, Input, OAuthModal } from "@/shared/components";
 
 const GITLAB_COM = "https://gitlab.com";
@@ -12,6 +11,20 @@ function getRedirectUri() {
     window.location.port ||
     (window.location.protocol === "https:" ? "443" : "80");
   return `http://localhost:${port}/callback`;
+}
+
+export interface GitLabOAuthMeta {
+  baseUrl: string;
+  clientId: string;
+  clientSecret: string;
+  [key: string]: string;
+}
+
+export interface GitLabAuthModalProps {
+  isOpen: boolean;
+  providerInfo?: { name?: string };
+  onSuccess?: () => void;
+  onClose: () => void;
 }
 
 /**
@@ -25,16 +38,16 @@ export default function GitLabAuthModal({
   providerInfo,
   onSuccess,
   onClose,
-}) {
-  const [mode, setMode] = useState(null); // null | "oauth" | "pat"
+}: GitLabAuthModalProps) {
+  const [mode, setMode] = useState<null | "oauth" | "pat">(null); // null | "oauth" | "pat"
   const [baseUrl, setBaseUrl] = useState(GITLAB_COM);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [pat, setPat] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [showOAuth, setShowOAuth] = useState(false);
-  const [oauthMeta, setOauthMeta] = useState(null);
+  const [oauthMeta, setOauthMeta] = useState<GitLabOAuthMeta | null>(null);
 
   const reset = () => {
     setMode(null);
@@ -87,8 +100,9 @@ export default function GitLabAuthModal({
       if (!res.ok) throw new Error(data.error || "Authentication failed");
       onSuccess?.();
       handleClose();
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Authentication failed";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -104,6 +118,7 @@ export default function GitLabAuthModal({
         provider="gitlab"
         providerInfo={providerInfo}
         oauthMeta={oauthMeta}
+        idcConfig={null}
         onSuccess={() => {
           onSuccess?.();
           handleClose();
@@ -284,10 +299,3 @@ export default function GitLabAuthModal({
     </Modal>
   );
 }
-
-GitLabAuthModal.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  providerInfo: PropTypes.shape({ name: PropTypes.string }),
-  onSuccess: PropTypes.func,
-  onClose: PropTypes.func.isRequired,
-};

@@ -1,8 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 
 const CUSTOM_VALUE = "__custom__";
+
+export interface ApiKeyItem {
+  id?: string;
+  key: string;
+  name?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ApiKeySelectProps {
+  value: string;
+  onChange: (value: string) => void;
+  apiKeys?: ApiKeyItem[];
+  cloudEnabled?: boolean;
+  className?: string;
+}
 
 export default function ApiKeySelect({
   value,
@@ -10,16 +25,16 @@ export default function ApiKeySelect({
   apiKeys = [],
   cloudEnabled = false,
   className = "",
-}) {
+}: ApiKeySelectProps) {
   const isCustom = !apiKeys.some((k) => k.key === value) && value !== "";
-  const [mode, setMode] = useState(() => {
+  const [mode, setMode] = useState<string>(() => {
     if (!value) return apiKeys.length > 0 ? apiKeys[0].key : CUSTOM_VALUE;
     if (apiKeys.some((k) => k.key === value)) return value;
     return CUSTOM_VALUE;
   });
-  const [customInput, setCustomInput] = useState(isCustom ? value : "");
+  const [customInput, setCustomInput] = useState<string>(isCustom ? value : "");
 
-  const handleSelect = (e) => {
+  const handleSelect = (e: ChangeEvent<HTMLSelectElement>) => {
     const next = e.target.value;
     setMode(next);
     if (next === CUSTOM_VALUE) {
@@ -30,7 +45,7 @@ export default function ApiKeySelect({
     }
   };
 
-  const handleCustomInput = (e) => {
+  const handleCustomInput = (e: ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
     setCustomInput(v);
     onChange(v);
@@ -58,7 +73,7 @@ export default function ApiKeySelect({
         className="w-full min-w-0 px-2 py-2 bg-surface rounded text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
       >
         {apiKeys.map((k) => (
-          <option key={k.id} value={k.key}>
+          <option key={k.id || k.key} value={k.key}>
             {k.key}
           </option>
         ))}

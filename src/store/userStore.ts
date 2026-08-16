@@ -2,18 +2,28 @@
 
 import { create } from "zustand";
 
-const useUserStore = create((set) => ({
+export interface UserState {
+  user: Record<string, unknown> | null;
+  loading: boolean;
+  error: string | null;
+  setUser: (user: Record<string, unknown> | null) => void;
+  clearUser: () => void;
+  setLoading: (loading: boolean) => void;
+  setError: (error: string | null) => void;
+}
+
+const useUserStore = create<UserState>((set) => ({
   user: null,
   loading: false,
   error: null,
 
-  setUser: (user) => set({ user }),
+  setUser: (user: Record<string, unknown> | null) => set({ user }),
 
   clearUser: () => set({ user: null }),
 
-  setLoading: (loading) => set({ loading }),
+  setLoading: (loading: boolean) => set({ loading }),
 
-  setError: (error) => set({ error }),
+  setError: (error: string | null) => set({ error }),
 }));
 
 export default useUserStore;
