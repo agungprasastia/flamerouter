@@ -71,9 +71,11 @@ func (h *Handler) StartAuth(w http.ResponseWriter, r *http.Request, provider str
 	authURL := config.AuthURL + "?" + params.Encode()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"auth_url":    authURL,
-		"state":       state,
+	json.NewEncoder(w).Encode(map[string]any{
+		"authUrl":       authURL,
+		"auth_url":      authURL,
+		"state":         state,
+		"codeVerifier":  codeVerifier,
 		"code_verifier": codeVerifier,
 	})
 }
@@ -175,12 +177,93 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 	if !token.ExpiresAt.IsZero() {
 		expiresAt = token.ExpiresAt.UTC().Format(time.RFC3339)
 	}
-	id, err := st.CreateOAuthConnection(provider, "oauth", provider, token.AccessToken, token.RefreshToken, expiresAt, nil)
+
+	email := ""
+	name := provider
+	var psd map[string]any
+
+	// Extract email and info from ID token if present
+	if token.IDToken != "" {
+		if claims := decodeJWTClaims(token.IDToken); claims != nil {
+			if em, ok := claims["email"].(string); ok && em != "" {
+				email = em
+				name = em
+			}
+			if nm, ok := claims["name"].(string); ok && nm != "" && name == provider {
+				name = nm
+			}
+		}
+	}
+
+	// Antigravity post-exchange setup (fetch userinfo and project/tier)
+	if provider == "antigravity" {
+		psd = map[string]any{
+			"tierId": "legacy-tier",
+		}
+		// If email not in ID token, query userinfo
+		if email == "" {
+			req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v1/userinfo?alt=json", nil)
+			if err == nil {
+				req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					defer resp.Body.Close()
+					var uinfo map[string]any
+					if json.NewDecoder(resp.Body).Decode(&uinfo) == nil {
+						if em, ok := uinfo["email"].(string); ok && em != "" {
+							email = em
+							name = em
+						}
+					}
+				}
+			}
+		}
+		// Load Code Assist to get project ID and tier
+		loadReqBody := `{"metadata":{"ideType":9,"platform":1,"pluginType":2}}`
+		req, err := http.NewRequestWithContext(ctx, "POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("User-Agent", "antigravity/ide/2.1.1 darwin/arm64")
+			req.Header.Set("x-request-source", "local")
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				defer resp.Body.Close()
+				var loadData struct {
+					CloudAICompanionProject any `json:"cloudaicompanionProject"`
+					AllowedTiers            []struct {
+						ID        string `json:"id"`
+						IsDefault bool   `json:"isDefault"`
+					} `json:"allowedTiers"`
+				}
+				if json.NewDecoder(resp.Body).Decode(&loadData) == nil {
+					var projID string
+					switch p := loadData.CloudAICompanionProject.(type) {
+					case string:
+						projID = p
+					case map[string]any:
+						if id, ok := p["id"].(string); ok {
+							projID = id
+						}
+					}
+					if projID != "" {
+						psd["projectId"] = projID
+					}
+					for _, tier := range loadData.AllowedTiers {
+						if tier.IsDefault && tier.ID != "" {
+							psd["tierId"] = strings.TrimSpace(tier.ID)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	id, err := st.CreateOAuthConnection(provider, "oauth", name, token.AccessToken, token.RefreshToken, expiresAt, psd)
 	if err != nil {
 		return nil, err
 	}
 	_ = state
-	return map[string]any{"id": id, "provider": provider, "email": "", "displayName": provider}, nil
+	return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
 }
 
 func decodeJWTClaims(tok string) map[string]any {

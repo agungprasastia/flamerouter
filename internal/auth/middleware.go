@@ -9,8 +9,9 @@ import (
 
 // DashboardGuard protects dashboard API routes with JWT auth.
 // Public: /api/health, GET /api/settings/require-login, /api/auth/login|logout|status|oidc/*, /v1/*, non-/api paths.
+// If requireLogin is false in settings, allow access.
 // Protected: remaining /api/*
-func DashboardGuard(jwt *JWTManager, _ *store.Store, next http.Handler) http.Handler {
+func DashboardGuard(jwt *JWTManager, st *store.Store, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if isPublicPath(path, r.Method) {
@@ -21,6 +22,15 @@ func DashboardGuard(jwt *JWTManager, _ *store.Store, next http.Handler) http.Han
 			next.ServeHTTP(w, r)
 			return
 		}
+
+		// If requireLogin is explicitly disabled ("false"), allow access
+		if st != nil {
+			if val, err := st.GetSetting("requireLogin"); err == nil && val == "false" {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")

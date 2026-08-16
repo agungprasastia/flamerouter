@@ -165,16 +165,21 @@ var ProviderConfigs = map[string]*OAuthConfig{
 	},
 	"antigravity": {
 		Provider:     "antigravity",
-		// Same Google OAuth app as gemini.
-		ClientID:     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
-		ClientSecret: "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",
+		ClientID:     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+		ClientSecret: "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",
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		RefreshURL:   "https://oauth2.googleapis.com/token",
 		RedirectURL:  "http://localhost:20128/api/oauth/antigravity/callback",
-		Scopes:       []string{"openid", "email", "profile", "https://www.googleapis.com/auth/cloud-platform"},
-		AuthStyle:    "pkce",
-		TokenExpiry:  time.Hour,
+		Scopes: []string{
+			"https://www.googleapis.com/auth/cloud-platform",
+			"https://www.googleapis.com/auth/userinfo.email",
+			"https://www.googleapis.com/auth/userinfo.profile",
+			"https://www.googleapis.com/auth/cclog",
+			"https://www.googleapis.com/auth/experimentsandconfigs",
+		},
+		AuthStyle:   "pkce",
+		TokenExpiry: time.Hour,
 	},
 	"kilocode": {
 		Provider:     "kilocode",
