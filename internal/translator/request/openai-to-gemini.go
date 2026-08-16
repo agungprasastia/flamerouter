@@ -10,6 +10,7 @@ import (
 func init() {
 	translator.Register(translator.FormatOpenAI, translator.FormatGemini, openaiToGeminiRequest, nil)
 	translator.Register(translator.FormatOpenAI, translator.FormatGeminiCLI, openaiToGeminiCLIRequest, nil)
+	translator.Register(translator.FormatOpenAI, translator.FormatAntigravity, openaiToAntigravityRequest, nil)
 }
 
 func openaiToGeminiRequest(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any {
@@ -139,5 +140,48 @@ func openaiToGeminiCLIRequest(model string, body map[string]any, stream bool, cr
 		"system_instruction": inner["system_instruction"],
 		"tools":              inner["tools"],
 		"generationConfig":   inner["generationConfig"],
+	}
+}
+
+func openaiToAntigravityRequest(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any {
+	inner := openaiToGeminiRequest(model, body, stream, credentials)
+	req := map[string]any{
+		"contents":         inner["contents"],
+		"generationConfig": inner["generationConfig"],
+	}
+	if si, ok := inner["system_instruction"]; ok && si != nil {
+		req["systemInstruction"] = si
+	}
+	if t, ok := inner["tools"]; ok && t != nil {
+		req["tools"] = t
+		req["toolConfig"] = map[string]any{
+			"functionCallingConfig": map[string]any{"mode": "VALIDATED"},
+		}
+	}
+
+	project := ""
+	if credentials != nil {
+		if psd, ok := credentials["providerSpecificData"].(map[string]any); ok && psd != nil {
+			if pid, ok := psd["projectId"].(string); ok && pid != "" {
+				project = pid
+			}
+		}
+		if project == "" {
+			if pid, ok := credentials["projectId"].(string); ok && pid != "" {
+				project = pid
+			}
+		}
+	}
+	if project == "" {
+		project = formats.GenerateProjectId()
+	}
+
+	return map[string]any{
+		"project":     project,
+		"model":       model,
+		"userAgent":   "antigravity",
+		"requestType": "agent",
+		"requestId":   formats.GenerateRequestId(),
+		"request":     req,
 	}
 }

@@ -81,16 +81,30 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 	}
 
 	project := ""
-	if p, ok := body["project"].(string); ok {
+	if p, ok := body["project"].(string); ok && p != "" {
 		project = p
+	} else if cred.ProjectID != "" {
+		project = cred.ProjectID
+	} else if cred.ProviderSpecificData != nil {
+		if pid, ok := cred.ProviderSpecificData["projectId"].(string); ok && pid != "" {
+			project = pid
+		}
 	}
+	if project == "" {
+		project = formats.GenerateProjectId()
+	}
+
 	out := map[string]any{
-		"project": project,
-		"model":   model,
-		"request": request,
+		"project":     project,
+		"model":       model,
+		"userAgent":   "antigravity",
+		"requestType": "agent",
+		"request":     request,
 	}
-	if rid, ok := body["requestId"].(string); ok {
+	if rid, ok := body["requestId"].(string); ok && rid != "" {
 		out["requestId"] = rid
+	} else {
+		out["requestId"] = formats.GenerateRequestId()
 	}
 	return out
 }
@@ -155,9 +169,11 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, cred Credentials, mod
 	if tok != "" {
 		h.Set("Authorization", "Bearer "+tok)
 	}
-	h.Set("User-Agent", "antigravity/1.0")
+	h.Set("User-Agent", "antigravity/ide/2.1.1 darwin/arm64")
 	if stream {
 		h.Set("Accept", "text/event-stream")
+	} else {
+		h.Set("Accept", "application/json")
 	}
 	return e.DoPOST(ctx, url, h, payload)
 }

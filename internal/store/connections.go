@@ -119,8 +119,8 @@ func (s *Store) GetConnection(id string) (*Connection, error) {
 func (s *Store) CreateConnection(provider, authType, name, apiKey, baseURL string) (string, error) {
 	id := newID()
 	_, err := s.db.Exec(
-		`INSERT INTO provider_connections(id, provider, auth_type, name, priority, is_active, api_key, base_url, created_at)
-		 VALUES(?,?,?,?,0,1,?,?,?)`,
+		`INSERT INTO provider_connections(id, provider, auth_type, name, priority, is_active, test_status, api_key, base_url, created_at)
+		 VALUES(?,?,?,?,0,1,'active',?,?,?)`,
 		id, provider, authType, name, apiKey, baseURL, time.Now().UTC().Format(time.RFC3339),
 	)
 	return id, err
@@ -136,8 +136,8 @@ func (s *Store) CreateOAuthConnection(provider, authType, name, accessToken, ref
 		}
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO provider_connections(id, provider, auth_type, name, priority, is_active, access_token, refresh_token, expires_at, provider_specific_data, created_at)
-		 VALUES(?,?,?,?,0,1,?,?,?,?,?)`,
+		`INSERT INTO provider_connections(id, provider, auth_type, name, priority, is_active, test_status, access_token, refresh_token, expires_at, provider_specific_data, created_at)
+		 VALUES(?,?,?,?,0,1,'active',?,?,?,?,?)`,
 		id, provider, authType, name, accessToken, refreshToken, expiresAt, psdJSON, time.Now().UTC().Format(time.RFC3339),
 	)
 	return id, err
