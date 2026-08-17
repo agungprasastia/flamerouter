@@ -116,7 +116,7 @@ export function EmbeddingExampleCard({ providerId, customAlias }: EmbeddingExamp
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/v1/embeddings", {
+      const res = await fetch("/v1/embeddings", {
         method: "POST",
         headers,
         body: JSON.stringify(buildBody()),

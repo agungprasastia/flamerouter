@@ -244,6 +244,7 @@ func (s *Server) routesTunnelsAndUsage() {
 
 func (s *Server) routesV1API() {
 	s.mux.HandleFunc("/api/oauth/", s.handleOAuth)
+	s.mux.HandleFunc("/api/dashboard/chat/completions", s.handleChat)
 	s.mux.HandleFunc("GET /v1/models/info", s.handleModelsInfo)
 	s.mux.HandleFunc("GET /v1/models/{kind}", s.handleModelsByKind)
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)

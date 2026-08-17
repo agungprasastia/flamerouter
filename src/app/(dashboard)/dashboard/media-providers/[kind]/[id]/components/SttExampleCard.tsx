@@ -115,7 +115,7 @@ export function SttExampleCard({ providerId }: SttExampleCardProps) {
 
       const headers: Record<string, string> = {};
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/v1/audio/transcriptions", {
+      const res = await fetch("/v1/audio/transcriptions", {
         method: "POST",
         headers,
         body: fd,
