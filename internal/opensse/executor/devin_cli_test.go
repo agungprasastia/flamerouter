@@ -39,7 +39,7 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 `, delta)
 	}
 
-	if err := os.WriteFile(scriptName, []byte(scriptContent), 0o600); err != nil {
+	if err := os.WriteFile(scriptName, []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
