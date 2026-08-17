@@ -153,18 +153,22 @@ func isAgentTextRequest(messages []any) bool {
 	if len(messages) == 0 {
 		return false
 	}
+
 	for _, mRaw := range messages {
 		msg, ok := mRaw.(map[string]any)
 		if !ok {
 			return false
 		}
+
 		if tc, ok := msg["tool_calls"].([]any); ok && len(tc) > 0 {
 			return false
 		}
-		if role, _ := msg["role"].(string); role == "tool" {
+
+		if role, okRole := msg["role"].(string); okRole && role == "tool" {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -173,34 +177,42 @@ func encodeHistoryMessage(msg map[string]any) []byte {
 	if content == "" {
 		return nil
 	}
+
 	var textBuf bytes.Buffer
+
 	writeProtoField(&textBuf, 1, []byte(content))
 
 	var l1 bytes.Buffer
+
 	writeProtoField(&l1, 1, textBuf.Bytes())
 
 	var l2 bytes.Buffer
+
 	writeProtoField(&l2, 1, l1.Bytes())
 
-	role, _ := msg["role"].(string)
+	role, okRole := msg["role"].(string)
+
 	var histBuf bytes.Buffer
-	if role == "assistant" {
+
+	if okRole && role == "assistant" {
 		writeProtoField(&histBuf, 2, l2.Bytes())
 	} else {
 		writeProtoField(&histBuf, 1, l2.Bytes())
 	}
+
 	return histBuf.Bytes()
 }
 
 // BuildAgentRunFrame builds the protobuf wire payload for /agent.v1.AgentService/Run.
 func BuildAgentRunFrame(messages []any, model string) []byte {
 	var systemParts []string
-	var chatMessages []map[string]any
+
+	chatMessages := make([]map[string]any, 0, len(messages))
 
 	for _, mRaw := range messages {
 		if msg, ok := mRaw.(map[string]any); ok {
-			role, _ := msg["role"].(string)
-			if role == "system" {
+			role, okRole := msg["role"].(string)
+			if okRole && role == "system" {
 				c := extractMessageContentString(msg["content"])
 				if c != "" {
 					systemParts = append(systemParts, c)
@@ -214,15 +226,18 @@ func BuildAgentRunFrame(messages []any, model string) []byte {
 	system := strings.Join(systemParts, "\n\n")
 
 	lastUserIdx := -1
+
 	for i := len(chatMessages) - 1; i >= 0; i-- {
-		if r, _ := chatMessages[i]["role"].(string); r == "user" {
+		if r, okR := chatMessages[i]["role"].(string); okR && r == "user" {
 			lastUserIdx = i
 			break
 		}
 	}
 
 	var current map[string]any
+
 	var historyMessages []map[string]any
+
 	if lastUserIdx >= 0 {
 		current = chatMessages[lastUserIdx]
 		historyMessages = chatMessages[:lastUserIdx]
@@ -231,6 +246,7 @@ func BuildAgentRunFrame(messages []any, model string) []byte {
 	}
 
 	userText := "Continue."
+
 	if current != nil {
 		c := extractMessageContentString(current["content"])
 		if c != "" {
@@ -239,40 +255,50 @@ func BuildAgentRunFrame(messages []any, model string) []byte {
 	}
 
 	var userMsgBuf bytes.Buffer
+
 	writeProtoField(&userMsgBuf, 1, []byte(userText))
 	writeProtoField(&userMsgBuf, 2, []byte(randomUUID()))
 
 	var userActionBuf bytes.Buffer
+
 	writeProtoField(&userActionBuf, 1, userMsgBuf.Bytes())
 
 	if len(historyMessages) > 0 {
 		var histEntriesBuf bytes.Buffer
+
 		for _, hm := range historyMessages {
 			if encoded := encodeHistoryMessage(hm); len(encoded) > 0 {
 				writeProtoField(&histEntriesBuf, 1, encoded)
 			}
 		}
+
 		if histEntriesBuf.Len() > 0 {
 			writeProtoField(&userActionBuf, 7, histEntriesBuf.Bytes())
 		}
 	}
 
 	var convActionBuf bytes.Buffer
+
 	writeProtoField(&convActionBuf, 1, userActionBuf.Bytes())
 
 	var reqModelBuf bytes.Buffer
+
 	writeProtoField(&reqModelBuf, 1, []byte(model))
 	writeProtoVarintField(&reqModelBuf, 7, 1)
 
 	var runReqBuf bytes.Buffer
+
 	writeProtoField(&runReqBuf, 1, []byte{}) // empty ConversationStateStructure
 	writeProtoField(&runReqBuf, 2, convActionBuf.Bytes())
+
 	if system != "" {
 		writeProtoField(&runReqBuf, 8, []byte(system))
 	}
+
 	writeProtoField(&runReqBuf, 9, reqModelBuf.Bytes())
 
 	var topBuf bytes.Buffer
+
 	writeProtoField(&topBuf, 1, runReqBuf.Bytes())
 
 	return topBuf.Bytes()
@@ -576,6 +602,7 @@ func (e *CursorExecutor) executeOpenAICompatible(ctx context.Context, base strin
 func isComposerModel(model string) bool {
 	parts := strings.Split(model, "/")
 	modelID := parts[len(parts)-1]
+
 	return strings.HasPrefix(strings.ToLower(modelID), "composer")
 }
 
@@ -583,11 +610,14 @@ func visibleComposerContentFromThinking(thinking string) string {
 	if thinking == "" {
 		return ""
 	}
+
 	endTag := "</think>"
+
 	endIdx := strings.LastIndex(thinking, endTag)
 	if endIdx < 0 {
 		return ""
 	}
+
 	return strings.TrimLeft(thinking[endIdx+len(endTag):], " \t\r\n")
 }
 

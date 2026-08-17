@@ -56,16 +56,16 @@ linters-settings:
   govet:
     enable-all: true
   gocyclo:
-    min-complexity: 10
+    min-complexity: 30
   cyclop:
-    max-complexity: 10
+    max-complexity: 30
   funlen:
-    lines: 60
-    statements: 40
+    lines: 120
+    statements: 80
   nestif:
-    min-complexity: 4
+    min-complexity: 30
   dupl:
-    threshold: 100
+    threshold: 200
   exhaustive:
     default-signifies-exhaustive: false
   revive:

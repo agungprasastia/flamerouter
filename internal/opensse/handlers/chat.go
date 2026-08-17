@@ -262,10 +262,12 @@ func stripContinuityFields(m map[string]any) {
 	if m == nil {
 		return
 	}
+
 	messages, ok := m["messages"].([]any)
 	if !ok {
 		return
 	}
+
 	for _, msgRaw := range messages {
 		if msg, ok := msgRaw.(map[string]any); ok {
 			delete(msg, "encrypted_content")

@@ -16,14 +16,16 @@ func (s *Server) getRequestBaseURL(r *http.Request) string {
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
+
 	host := r.Host
 	if host == "" {
 		host = "127.0.0.1:20130"
 	}
+
 	return scheme + "://" + host
 }
 
-// GET/POST/PATCH/DELETE /api/cli-tools/{toolSettings}
+// GET/POST/PATCH/DELETE /api/cli-tools/{toolSettings}.
 func (s *Server) handleCLIToolSettings(w http.ResponseWriter, r *http.Request) {
 	seg := r.PathValue("toolSettings")
 
@@ -43,14 +45,20 @@ func (s *Server) handleCLIToolSettings(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+
 		writeJSONOK(w, status)
 
 	case http.MethodPost, http.MethodPatch:
-		var body map[string]any
+		body := make(map[string]any)
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid json")
 			return
 		}
+
+		if body == nil {
+			body = make(map[string]any)
+		}
+
 		if _, ok := body["baseUrl"]; !ok || body["baseUrl"] == "" {
 			body["baseUrl"] = baseURL
 		}
@@ -60,6 +68,7 @@ func (s *Server) handleCLIToolSettings(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+
 		writeJSONOK(w, res)
 
 	case http.MethodDelete:
@@ -68,6 +77,7 @@ func (s *Server) handleCLIToolSettings(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+
 		writeJSONOK(w, res)
 
 	default:
@@ -80,4 +90,3 @@ func (s *Server) handleAllCLIStatuses(w http.ResponseWriter, r *http.Request) {
 	baseURL := s.getRequestBaseURL(r)
 	writeJSONOK(w, s.cliTools().AllStatuses(baseURL))
 }
-

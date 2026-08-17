@@ -2,11 +2,12 @@ package clitools
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
 
-// --- Kilo ---
+// KiloHandler manages Kilo CLI tool configurations.
 type KiloHandler struct{}
 
 func (h *KiloHandler) getPath() string {
@@ -14,8 +15,10 @@ func (h *KiloHandler) getPath() string {
 	return filepath.Join(home, ".local", "share", "kilo", "auth.json")
 }
 
-func (h *KiloHandler) GetStatus(baseUrl string) (map[string]any, error) {
+// GetStatus returns status of Kilo CLI.
+func (h *KiloHandler) GetStatus(_ string) (map[string]any, error) {
 	p := h.getPath()
+
 	installed := checkCommandInstalled("kilo", p)
 	if !installed {
 		return map[string]any{
@@ -25,11 +28,20 @@ func (h *KiloHandler) GetStatus(baseUrl string) (map[string]any, error) {
 		}, nil
 	}
 
-	auth, _ := readJSONFile(p)
-	openAi, _ := auth["openai"].(map[string]any)
+	auth, errA := readJSONFile(p)
+	if errA != nil {
+		auth = make(map[string]any)
+	}
+
+	openAI, okOpenAI := auth["openai"].(map[string]any)
+	if !okOpenAI {
+		openAI = nil
+	}
+
 	has9Router := false
-	if openAi != nil {
-		if u, _ := openAi["base_url"].(string); u != "" {
+
+	if openAI != nil {
+		if u, okU := openAI["base_url"].(string); okU && u != "" {
 			if strings.Contains(u, "localhost") || strings.Contains(u, "127.0.0.1") || strings.Contains(u, "9router") || strings.Contains(u, "flamerouter") {
 				has9Router = true
 			}
@@ -44,21 +56,23 @@ func (h *KiloHandler) GetStatus(baseUrl string) (map[string]any, error) {
 	}, nil
 }
 
+// ApplySettings applies configuration for Kilo CLI.
 func (h *KiloHandler) ApplySettings(body map[string]any) (map[string]any, error) {
-	baseUrl, _ := body["baseUrl"].(string)
-	apiKey, _ := body["apiKey"].(string)
+	baseURL, okBase := body["baseUrl"].(string)
+	apiKey, okKey := body["apiKey"].(string)
 
-	if baseUrl == "" || apiKey == "" {
+	if !okBase || !okKey || baseURL == "" || apiKey == "" {
 		return nil, fmt.Errorf("baseUrl and apiKey are required")
 	}
 
 	p := h.getPath()
-	auth, _ := readJSONFile(p)
-	if auth == nil {
+
+	auth, errA := readJSONFile(p)
+	if errA != nil || auth == nil {
 		auth = make(map[string]any)
 	}
 
-	normBase := normalizeBaseURLV1(baseUrl)
+	normBase := normalizeBaseURLV1(baseURL)
 	auth["openai"] = map[string]any{
 		"base_url": normBase,
 		"api_key":  apiKey,
@@ -75,14 +89,25 @@ func (h *KiloHandler) ApplySettings(body map[string]any) (map[string]any, error)
 	}, nil
 }
 
+// ResetSettings resets Kilo CLI configurations.
 func (h *KiloHandler) ResetSettings() (map[string]any, error) {
 	p := h.getPath()
-	auth, _ := readJSONFile(p)
+
+	auth, errA := readJSONFile(p)
+	if errA != nil {
+		if os.IsNotExist(errA) {
+			return map[string]any{"success": true, "message": "No auth file to reset"}, nil
+		}
+
+		return nil, errA
+	}
+
 	if auth == nil {
 		return map[string]any{"success": true, "message": "No auth file to reset"}, nil
 	}
 
 	delete(auth, "openai")
+
 	if err := writeJSONFile(p, auth); err != nil {
 		return nil, err
 	}

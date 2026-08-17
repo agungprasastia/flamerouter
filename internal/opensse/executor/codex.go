@@ -50,10 +50,12 @@ func (e *CodexExecutor) transform(model string, body map[string]any) map[string]
 	// Convert system → developer in input & strip server item references
 	if input, ok := body["input"].([]any); ok {
 		var filtered []any
+
 		for _, itemRaw := range input {
 			if strID, isStr := itemRaw.(string); isStr && serverIDPattern.MatchString(strID) {
 				continue
 			}
+
 			item, ok := itemRaw.(map[string]any)
 			if !ok {
 				filtered = append(filtered, itemRaw)
@@ -71,8 +73,10 @@ func (e *CodexExecutor) transform(model string, body map[string]any) map[string]
 			if role, okRole := item["role"].(string); okRole && role == "system" {
 				item["role"] = "developer"
 			}
+
 			filtered = append(filtered, item)
 		}
+
 		body["input"] = filtered
 	}
 	// Strip non-allowlisted fields

@@ -2,20 +2,22 @@ package clitools
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
-// --- OpenClaw ---
+// OpenClawHandler manages OpenClaw CLI configurations.
 type OpenClawHandler struct{}
-
 
 func (h *OpenClawHandler) getPath() string {
 	home := userHomeDir()
 	return filepath.Join(home, ".openclaw", "openclaw.json")
 }
 
-func (h *OpenClawHandler) GetStatus(baseUrl string) (map[string]any, error) {
+// GetStatus returns status of OpenClaw CLI.
+func (h *OpenClawHandler) GetStatus(_ string) (map[string]any, error) {
 	p := h.getPath()
+
 	installed := checkCommandInstalled("openclaw", p)
 	if !installed {
 		return map[string]any{
@@ -25,14 +27,41 @@ func (h *OpenClawHandler) GetStatus(baseUrl string) (map[string]any, error) {
 		}, nil
 	}
 
-	settings, _ := readJSONFile(p)
-	modelsSection, _ := settings["models"].(map[string]any)
-	providersSection, _ := modelsSection["providers"].(map[string]any)
+	settings, errS := readJSONFile(p)
+	if errS != nil {
+		settings = make(map[string]any)
+	}
+
+	modelsSection, okModels := settings["models"].(map[string]any)
+	if !okModels {
+		modelsSection = nil
+	}
+
+	var providersSection map[string]any
+
+	if modelsSection != nil {
+		if prov, okProv := modelsSection["providers"].(map[string]any); okProv {
+			providersSection = prov
+		}
+	}
+
 	_, has9Router := providersSection["9router"]
 
 	var enrichedAgents []any
-	agentsObj, _ := settings["agents"].(map[string]any)
-	agentList, _ := agentsObj["list"].([]any)
+
+	agentsObj, okAgents := settings["agents"].(map[string]any)
+	if !okAgents {
+		agentsObj = nil
+	}
+
+	var agentList []any
+
+	if agentsObj != nil {
+		if l, okL := agentsObj["list"].([]any); okL {
+			agentList = l
+		}
+	}
+
 	for _, aRaw := range agentList {
 		if a, ok := aRaw.(map[string]any); ok {
 			agentCopy := make(map[string]any)
@@ -62,6 +91,7 @@ func (h *OpenClawHandler) GetStatus(baseUrl string) (map[string]any, error) {
 					}
 				}
 			}
+
 			enrichedAgents = append(enrichedAgents, agentCopy)
 		}
 	}
@@ -75,29 +105,37 @@ func (h *OpenClawHandler) GetStatus(baseUrl string) (map[string]any, error) {
 	}, nil
 }
 
+// ApplySettings applies configuration for OpenClaw CLI.
 func (h *OpenClawHandler) ApplySettings(body map[string]any) (map[string]any, error) {
-	baseUrl, _ := body["baseUrl"].(string)
-	apiKey, _ := body["apiKey"].(string)
-	model, _ := body["model"].(string)
-	agentId, _ := body["agentId"].(string)
+	baseURL, okBase := body["baseUrl"].(string)
+	apiKey, okKey := body["apiKey"].(string)
+	model, okModel := body["model"].(string)
+	agentID, okAgent := body["agentId"].(string)
 
-	if baseUrl == "" || apiKey == "" || model == "" {
+	if !okBase || !okKey || !okModel || baseURL == "" || apiKey == "" || model == "" {
 		return nil, fmt.Errorf("baseUrl, apiKey and model are required")
 	}
 
+	if !okAgent {
+		agentID = ""
+	}
+
 	p := h.getPath()
-	settings, _ := readJSONFile(p)
-	if settings == nil {
+
+	settings, errS := readJSONFile(p)
+	if errS != nil || settings == nil {
 		settings = make(map[string]any)
 	}
 
-	normBase := normalizeBaseURLV1(baseUrl)
-	modelsSec, _ := settings["models"].(map[string]any)
-	if modelsSec == nil {
+	normBase := normalizeBaseURLV1(baseURL)
+
+	modelsSec, okMS := settings["models"].(map[string]any)
+	if !okMS || modelsSec == nil {
 		modelsSec = make(map[string]any)
 	}
-	provSec, _ := modelsSec["providers"].(map[string]any)
-	if provSec == nil {
+
+	provSec, okPS := modelsSec["providers"].(map[string]any)
+	if !okPS || provSec == nil {
 		provSec = make(map[string]any)
 	}
 
@@ -117,21 +155,23 @@ func (h *OpenClawHandler) ApplySettings(body map[string]any) (map[string]any, er
 	modelsSec["providers"] = provSec
 	settings["models"] = modelsSec
 
-	// If agentId provided, configure that agent
-	if agentId != "" {
+	// If agentID provided, configure that agent
+	if agentID != "" {
 		if agentsObj, ok := settings["agents"].(map[string]any); ok {
 			if list, okList := agentsObj["list"].([]any); okList {
 				for _, aRaw := range list {
 					if a, okMap := aRaw.(map[string]any); okMap {
-						if id, _ := a["id"].(string); id == agentId {
+						if id, okID := a["id"].(string); okID && id == agentID {
 							a["model"] = "9router/" + model
 							if aDir, okDir := a["agentDir"].(string); okDir && aDir != "" {
 								mPath := filepath.Join(aDir, "models.json")
-								_ = writeJSONFile(mPath, map[string]any{
+								if errW := writeJSONFile(mPath, map[string]any{
 									"providers": map[string]any{
 										"9router": provSec["9router"],
 									},
-								})
+								}); errW != nil {
+									return nil, errW
+								}
 							}
 						}
 					}
@@ -151,9 +191,19 @@ func (h *OpenClawHandler) ApplySettings(body map[string]any) (map[string]any, er
 	}, nil
 }
 
+// ResetSettings resets OpenClaw CLI configurations.
 func (h *OpenClawHandler) ResetSettings() (map[string]any, error) {
 	p := h.getPath()
-	settings, _ := readJSONFile(p)
+
+	settings, errS := readJSONFile(p)
+	if errS != nil {
+		if os.IsNotExist(errS) {
+			return map[string]any{"success": true, "message": "No settings file to reset"}, nil
+		}
+
+		return nil, errS
+	}
+
 	if settings == nil {
 		return map[string]any{"success": true, "message": "No settings file to reset"}, nil
 	}

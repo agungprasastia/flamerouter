@@ -12,8 +12,8 @@ import (
 // Manager manages CLI tool configurations and provides real OS & filesystem detection/application.
 type Manager struct {
 	st       *store.Store
-	mu       sync.RWMutex
 	handlers map[string]ToolHandler
+	mu       sync.RWMutex
 }
 
 // New creates a new CLI tools manager.
@@ -36,6 +36,7 @@ func New(st *store.Store) *Manager {
 			"devin":        &DevinHandler{},
 			"cowork":       &CoworkHandler{},
 		},
+		mu: sync.RWMutex{},
 	}
 }
 
@@ -43,6 +44,7 @@ func (m *Manager) normalizeToolID(toolID string) string {
 	tid := strings.ToLower(strings.TrimSpace(toolID))
 	tid = strings.TrimSuffix(tid, "-settings")
 	tid = strings.ReplaceAll(tid, "_", "-")
+
 	return tid
 }
 
@@ -73,13 +75,17 @@ func (m *Manager) ApplySettings(toolID string, body map[string]any) (map[string]
 		if err := m.PatchSettings(toolID, body); err != nil {
 			return nil, err
 		}
+
 		return map[string]any{"success": true, "message": "Settings saved to store"}, nil
 	}
 
 	res, err := h.ApplySettings(body)
 	if err == nil && m.st != nil {
-		_ = m.PatchSettings(toolID, body)
+		if errPatch := m.PatchSettings(toolID, body); errPatch != nil {
+			return res, errPatch
+		}
 	}
+
 	return res, err
 }
 
@@ -92,15 +98,21 @@ func (m *Manager) ResetSettings(toolID string) (map[string]any, error) {
 
 	if !ok {
 		if m.st != nil {
-			_ = m.st.KVSet("cli-tools", toolID, "")
+			if errKV := m.st.KVSet("cli-tools", toolID, ""); errKV != nil {
+				return nil, errKV
+			}
 		}
+
 		return map[string]any{"success": true, "message": "Settings reset"}, nil
 	}
 
 	res, err := h.ResetSettings()
 	if err == nil && m.st != nil {
-		_ = m.st.KVSet("cli-tools", toolID, "")
+		if errKV := m.st.KVSet("cli-tools", toolID, ""); errKV != nil {
+			return res, errKV
+		}
 	}
+
 	return res, err
 }
 
@@ -109,6 +121,7 @@ func (m *Manager) GetSettings(toolID string) (map[string]any, error) {
 	if m.st == nil {
 		return map[string]any{}, nil
 	}
+
 	val, err := m.st.KVGet("cli-tools", toolID)
 	if err != nil {
 		return nil, err
@@ -135,6 +148,7 @@ func (m *Manager) PatchSettings(toolID string, patch map[string]any) error {
 	if m.st == nil {
 		return nil
 	}
+
 	cur, err := m.GetSettings(toolID)
 	if err != nil {
 		cur = make(map[string]any)
@@ -174,14 +188,15 @@ func Known(toolID string) bool {
 	tid := strings.ToLower(strings.TrimSpace(toolID))
 	tid = strings.TrimSuffix(tid, "-settings")
 	tid = strings.ReplaceAll(tid, "_", "-")
+
 	for _, id := range KnownTools {
 		if id == tid || id == toolID {
 			return true
 		}
 	}
+
 	return false
 }
 
 // ErrUnknownTool is returned for unknown tool IDs when strict checks apply.
 var ErrUnknownTool = fmt.Errorf("unknown cli tool")
-

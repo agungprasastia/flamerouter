@@ -11,68 +11,67 @@ import (
 	"strings"
 )
 
-// Handler interface for CLI tool configuration managers.
+// ToolHandler defines interface for CLI tool configuration managers.
 type ToolHandler interface {
-	GetStatus(baseUrl string) (map[string]any, error)
+	GetStatus(baseURL string) (map[string]any, error)
 	ApplySettings(body map[string]any) (map[string]any, error)
 	ResetSettings() (map[string]any, error)
 }
 
-
-// Strip JSONC trailing commas before parsing
+// Strip JSONC trailing commas before parsing.
 func stripJSONC(content string) string {
 	re := regexp.MustCompile(`,(\s*[}\]])`)
 	return re.ReplaceAllString(content, "$1")
 }
 
 func readJSONFile(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	stripped := stripJSONC(string(data))
-	var out map[string]any
-	if err := json.Unmarshal([]byte(stripped), &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
+	cleanPath := filepath.Clean(path)
 
-func readJSONArrayFile(path string) ([]any, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, err
 	}
+
 	stripped := stripJSONC(string(data))
-	var out []any
+
+	var out map[string]any
+
 	if err := json.Unmarshal([]byte(stripped), &out); err != nil {
 		return nil, err
 	}
+
 	return out, nil
 }
 
 func writeJSONFile(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	cleanPath := filepath.Clean(path)
+	if err := os.MkdirAll(filepath.Dir(cleanPath), 0o750); err != nil {
 		return err
 	}
+
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+
+	return os.WriteFile(cleanPath, data, 0o600)
 }
 
 func checkCommandInstalled(cmdName string, configFiles ...string) bool {
 	// 1. check executable in PATH
 	isWin := runtime.GOOS == "windows"
+
 	var checkCmd *exec.Cmd
+
 	if isWin {
 		env := os.Environ()
+
 		appData := os.Getenv("APPDATA")
 		if appData != "" {
 			npmPath := filepath.Join(appData, "npm")
 			env = append(env, "PATH="+npmPath+";"+os.Getenv("PATH"))
 		}
+
 		checkCmd = exec.Command("where", cmdName)
 		checkCmd.Env = env
 	} else {
@@ -91,6 +90,7 @@ func checkCommandInstalled(cmdName string, configFiles ...string) bool {
 			}
 		}
 	}
+
 	return false
 }
 
@@ -99,6 +99,7 @@ func userHomeDir() string {
 	if err != nil {
 		return os.Getenv("USERPROFILE")
 	}
+
 	return h
 }
 
@@ -107,8 +108,10 @@ func normalizeBaseURLV1(u string) string {
 	if u == "" {
 		return u
 	}
+
 	if strings.HasSuffix(u, "/v1") {
 		return u
 	}
+
 	return strings.TrimRight(u, "/") + "/v1"
 }

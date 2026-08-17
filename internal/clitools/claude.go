@@ -5,15 +5,16 @@ import (
 	"path/filepath"
 )
 
-// --- Claude ---
+// ClaudeHandler manages Claude CLI tool configuration.
 type ClaudeHandler struct{}
 
-func (h *ClaudeHandler) getPaths() (settingsPath, claudeJsonPath string) {
+func (h *ClaudeHandler) getPaths() (settingsPath, claudeJSONPath string) {
 	home := userHomeDir()
 	return filepath.Join(home, ".claude", "settings.json"), filepath.Join(home, ".claude.json")
 }
 
-func (h *ClaudeHandler) GetStatus(baseUrl string) (map[string]any, error) {
+// GetStatus returns status of Claude CLI.
+func (h *ClaudeHandler) GetStatus(_ string) (map[string]any, error) {
 	sFile, _ := h.getPaths()
 
 	installed := checkCommandInstalled("claude", sFile)
@@ -25,19 +26,33 @@ func (h *ClaudeHandler) GetStatus(baseUrl string) (map[string]any, error) {
 		}, nil
 	}
 
-	settings, _ := readJSONFile(sFile)
-	env, _ := settings["env"].(map[string]any)
+	settings, errS := readJSONFile(sFile)
+	if errS != nil {
+		settings = make(map[string]any)
+	}
+
+	env, okEnv := settings["env"].(map[string]any)
 	has9Router := false
-	if env != nil {
+
+	if okEnv && env != nil {
 		if u, ok := env["ANTHROPIC_BASE_URL"].(string); ok && u != "" {
 			has9Router = true
 		}
 	}
 
 	_, cFile := h.getPaths()
-	cJson, _ := readJSONFile(cFile)
-	mcpServers, _ := cJson["mcpServers"].(map[string]any)
-	_, hasExa := mcpServers["exa"]
+
+	cJSON, errC := readJSONFile(cFile)
+	if errC != nil {
+		cJSON = make(map[string]any)
+	}
+
+	mcpServers, okMcp := cJSON["mcpServers"].(map[string]any)
+	hasExa := false
+
+	if okMcp && mcpServers != nil {
+		_, hasExa = mcpServers["exa"]
+	}
 
 	return map[string]any{
 		"installed":     true,
@@ -48,20 +63,22 @@ func (h *ClaudeHandler) GetStatus(baseUrl string) (map[string]any, error) {
 	}, nil
 }
 
+// ApplySettings applies configuration for Claude CLI.
 func (h *ClaudeHandler) ApplySettings(body map[string]any) (map[string]any, error) {
-	env, _ := body["env"].(map[string]any)
-	if env == nil {
+	env, okEnv := body["env"].(map[string]any)
+	if !okEnv || env == nil {
 		return nil, fmt.Errorf("invalid env object")
 	}
 
 	sFile, cFile := h.getPaths()
-	curSettings, _ := readJSONFile(sFile)
-	if curSettings == nil {
+
+	curSettings, errS := readJSONFile(sFile)
+	if errS != nil || curSettings == nil {
 		curSettings = make(map[string]any)
 	}
 
-	curEnv, _ := curSettings["env"].(map[string]any)
-	if curEnv == nil {
+	curEnv, okCurEnv := curSettings["env"].(map[string]any)
+	if !okCurEnv || curEnv == nil {
 		curEnv = make(map[string]any)
 	}
 
@@ -71,6 +88,7 @@ func (h *ClaudeHandler) ApplySettings(body map[string]any) (map[string]any, erro
 				v = normalizeBaseURLV1(strVal)
 			}
 		}
+
 		curEnv[k] = v
 	}
 
@@ -89,14 +107,16 @@ func (h *ClaudeHandler) ApplySettings(body map[string]any) (map[string]any, erro
 
 	// Exa MCP toggle
 	if exaEnabled, ok := body["exaMcpEnabled"].(bool); ok {
-		cJson, _ := readJSONFile(cFile)
-		if cJson == nil {
-			cJson = make(map[string]any)
+		cJSON, errC := readJSONFile(cFile)
+		if errC != nil || cJSON == nil {
+			cJSON = make(map[string]any)
 		}
-		mcp, _ := cJson["mcpServers"].(map[string]any)
-		if mcp == nil {
+
+		mcp, okMcp := cJSON["mcpServers"].(map[string]any)
+		if !okMcp || mcp == nil {
 			mcp = make(map[string]any)
 		}
+
 		if exaEnabled {
 			mcp["exa"] = map[string]any{
 				"type": "sse",
@@ -105,12 +125,16 @@ func (h *ClaudeHandler) ApplySettings(body map[string]any) (map[string]any, erro
 		} else {
 			delete(mcp, "exa")
 		}
+
 		if len(mcp) > 0 {
-			cJson["mcpServers"] = mcp
+			cJSON["mcpServers"] = mcp
 		} else {
-			delete(cJson, "mcpServers")
+			delete(cJSON, "mcpServers")
 		}
-		_ = writeJSONFile(cFile, cJson)
+
+		if err := writeJSONFile(cFile, cJSON); err != nil {
+			return nil, err
+		}
 	}
 
 	return map[string]any{
@@ -119,8 +143,10 @@ func (h *ClaudeHandler) ApplySettings(body map[string]any) (map[string]any, erro
 	}, nil
 }
 
+// ResetSettings resets Claude CLI settings.
 func (h *ClaudeHandler) ResetSettings() (map[string]any, error) {
 	sFile, cFile := h.getPaths()
+
 	curSettings, err := readJSONFile(sFile)
 	if err == nil && curSettings != nil {
 		if curEnv, ok := curSettings["env"].(map[string]any); ok {
@@ -132,21 +158,28 @@ func (h *ClaudeHandler) ResetSettings() (map[string]any, error) {
 			for _, k := range keys {
 				delete(curEnv, k)
 			}
+
 			curSettings["env"] = curEnv
-			_ = writeJSONFile(sFile, curSettings)
+			if errW := writeJSONFile(sFile, curSettings); errW != nil {
+				return nil, errW
+			}
 		}
 	}
 
-	cJson, err := readJSONFile(cFile)
-	if err == nil && cJson != nil {
-		if mcp, ok := cJson["mcpServers"].(map[string]any); ok {
+	cJSON, err := readJSONFile(cFile)
+	if err == nil && cJSON != nil {
+		if mcp, ok := cJSON["mcpServers"].(map[string]any); ok {
 			delete(mcp, "exa")
+
 			if len(mcp) > 0 {
-				cJson["mcpServers"] = mcp
+				cJSON["mcpServers"] = mcp
 			} else {
-				delete(cJson, "mcpServers")
+				delete(cJSON, "mcpServers")
 			}
-			_ = writeJSONFile(cFile, cJson)
+
+			if errW := writeJSONFile(cFile, cJSON); errW != nil {
+				return nil, errW
+			}
 		}
 	}
 

@@ -19,7 +19,6 @@ func checkManagerStatus(t *testing.T, m *Manager) {
 	}
 }
 
-
 func TestManagerGetPatchStatuses(t *testing.T) {
 	dir := t.TempDir()
 

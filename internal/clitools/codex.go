@@ -7,17 +7,20 @@ import (
 	"strings"
 )
 
-// --- Codex ---
+// CodexHandler manages Codex CLI tool configuration.
 type CodexHandler struct{}
 
 func (h *CodexHandler) getPaths() (configPath, authPath string) {
 	home := userHomeDir()
 	dir := filepath.Join(home, ".codex")
+
 	return filepath.Join(dir, "config.toml"), filepath.Join(dir, "auth.json")
 }
 
-func (h *CodexHandler) GetStatus(baseUrl string) (map[string]any, error) {
+// GetStatus returns status of Codex CLI.
+func (h *CodexHandler) GetStatus(_ string) (map[string]any, error) {
 	cfgFile, _ := h.getPaths()
+
 	installed := checkCommandInstalled("codex", cfgFile)
 	if !installed {
 		return map[string]any{
@@ -28,7 +31,7 @@ func (h *CodexHandler) GetStatus(baseUrl string) (map[string]any, error) {
 	}
 
 	content := ""
-	if data, err := os.ReadFile(cfgFile); err == nil {
+	if data, err := os.ReadFile(filepath.Clean(cfgFile)); err == nil {
 		content = string(data)
 	}
 
@@ -43,72 +46,80 @@ func (h *CodexHandler) GetStatus(baseUrl string) (map[string]any, error) {
 	}, nil
 }
 
+// ApplySettings applies configuration for Codex CLI.
 func (h *CodexHandler) ApplySettings(body map[string]any) (map[string]any, error) {
-	baseUrl, _ := body["baseUrl"].(string)
-	apiKey, _ := body["apiKey"].(string)
-	model, _ := body["model"].(string)
-	subagentModel, _ := body["subagentModel"].(string)
+	baseURL, okBase := body["baseUrl"].(string)
+	apiKey, okKey := body["apiKey"].(string)
+	model, okModel := body["model"].(string)
+	subagentModel, okSub := body["subagentModel"].(string)
 
-	if baseUrl == "" || apiKey == "" || model == "" {
+	if !okBase || !okKey || !okModel || baseURL == "" || apiKey == "" || model == "" {
 		return nil, fmt.Errorf("baseUrl, apiKey and model are required")
 	}
 
 	cfgFile, authFile := h.getPaths()
-	if err := os.MkdirAll(filepath.Dir(cfgFile), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(filepath.Clean(cfgFile)), 0o750); err != nil {
 		return nil, err
 	}
 
-	normBase := normalizeBaseURLV1(baseUrl)
-
-	// Read existing config or start empty
-	existing := ""
-	if data, err := os.ReadFile(cfgFile); err == nil {
-		existing = string(data)
-	}
+	normBase := normalizeBaseURLV1(baseURL)
 
 	// Simple TOML upsert / generator for 9router provider
 	var b strings.Builder
+
 	b.WriteString(fmt.Sprintf("model = %q\n", model))
 	b.WriteString("model_provider = \"9router\"\n")
-	if subagentModel != "" {
+
+	if okSub && subagentModel != "" {
 		b.WriteString(fmt.Sprintf("subagent_model = %q\n", subagentModel))
 	}
+
 	b.WriteString("\n[model_providers.9router]\n")
 	b.WriteString(fmt.Sprintf("base_url = %q\n", normBase))
 	b.WriteString("wire_specification = \"openai\"\n")
 	b.WriteString("supports_websockets = false\n")
 
-	if err := os.WriteFile(cfgFile, []byte(b.String()), 0644); err != nil {
+	if err := os.WriteFile(filepath.Clean(cfgFile), []byte(b.String()), 0o600); err != nil {
 		return nil, err
 	}
 
-	authMap, _ := readJSONFile(authFile)
-	if authMap == nil {
+	authMap, errA := readJSONFile(authFile)
+	if errA != nil || authMap == nil {
 		authMap = make(map[string]any)
 	}
+
 	authMap["9router"] = apiKey
 	if err := writeJSONFile(authFile, authMap); err != nil {
 		return nil, err
 	}
 
-	_ = existing
 	return map[string]any{
 		"success": true,
 		"message": "Codex settings applied successfully!",
 	}, nil
 }
 
+// ResetSettings resets Codex CLI settings.
 func (h *CodexHandler) ResetSettings() (map[string]any, error) {
 	cfgFile, authFile := h.getPaths()
-	if _, err := os.Stat(cfgFile); err == nil {
+	cleanCfg := filepath.Clean(cfgFile)
+
+	if _, err := os.Stat(cleanCfg); err == nil {
 		// remove 9router config
-		_ = os.WriteFile(cfgFile, []byte(""), 0644)
+		if errW := os.WriteFile(cleanCfg, []byte(""), 0o600); errW != nil {
+			return nil, errW
+		}
 	}
-	authMap, _ := readJSONFile(authFile)
-	if authMap != nil {
+
+	authMap, errA := readJSONFile(authFile)
+	if errA == nil && authMap != nil {
 		delete(authMap, "9router")
-		_ = writeJSONFile(authFile, authMap)
+
+		if errW := writeJSONFile(authFile, authMap); errW != nil {
+			return nil, errW
+		}
 	}
+
 	return map[string]any{
 		"success": true,
 		"message": "9Router settings removed from Codex",

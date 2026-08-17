@@ -7,4 +7,3 @@ var KnownTools = []string{
 	"droid", "hermes", "jcode", "grok-build", "copilot",
 	"deepseek-tui", "cowork", "devin", "antigravity-mitm",
 }
-

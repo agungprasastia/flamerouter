@@ -2,11 +2,12 @@ package clitools
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
 
-// --- OpenCode ---
+// OpenCodeHandler manages OpenCode CLI configurations.
 type OpenCodeHandler struct{}
 
 func (h *OpenCodeHandler) getPath() string {
@@ -14,8 +15,10 @@ func (h *OpenCodeHandler) getPath() string {
 	return filepath.Join(home, ".config", "opencode", "opencode.json")
 }
 
-func (h *OpenCodeHandler) GetStatus(baseUrl string) (map[string]any, error) {
+// GetStatus returns status of OpenCode CLI.
+func (h *OpenCodeHandler) GetStatus(_ string) (map[string]any, error) {
 	p := h.getPath()
+
 	installed := checkCommandInstalled("opencode", p)
 	if !installed {
 		return map[string]any{
@@ -25,12 +28,28 @@ func (h *OpenCodeHandler) GetStatus(baseUrl string) (map[string]any, error) {
 		}, nil
 	}
 
-	config, _ := readJSONFile(p)
-	prov, _ := config["provider"].(map[string]any)
-	prov9R, _ := prov["9router"].(map[string]any)
+	config, errC := readJSONFile(p)
+	if errC != nil {
+		config = make(map[string]any)
+	}
+
+	prov, okProv := config["provider"].(map[string]any)
+	if !okProv {
+		prov = nil
+	}
+
+	var prov9R map[string]any
+
+	if prov != nil {
+		if r, okR := prov["9router"].(map[string]any); okR {
+			prov9R = r
+		}
+	}
+
 	has9Router := prov9R != nil
 
 	var models []string
+
 	if prov9R != nil {
 		if mmap, ok := prov9R["models"].(map[string]any); ok {
 			for k := range mmap {
@@ -45,9 +64,12 @@ func (h *OpenCodeHandler) GetStatus(baseUrl string) (map[string]any, error) {
 	}
 
 	optBase := ""
+
 	if prov9R != nil {
 		if opts, ok := prov9R["options"].(map[string]any); ok {
-			optBase, _ = opts["baseURL"].(string)
+			if b, okB := opts["baseURL"].(string); okB {
+				optBase = b
+			}
 		}
 	}
 
@@ -64,12 +86,26 @@ func (h *OpenCodeHandler) GetStatus(baseUrl string) (map[string]any, error) {
 	}, nil
 }
 
+// ApplySettings applies configuration for OpenCode CLI.
 func (h *OpenCodeHandler) ApplySettings(body map[string]any) (map[string]any, error) {
-	baseUrl, _ := body["baseUrl"].(string)
-	apiKey, _ := body["apiKey"].(string)
-	activeModel, _ := body["activeModel"].(string)
+	baseURL, okBase := body["baseUrl"].(string)
+	apiKey, okKey := body["apiKey"].(string)
+	activeModel, okAct := body["activeModel"].(string)
+
+	if !okBase {
+		baseURL = ""
+	}
+
+	if !okKey {
+		apiKey = ""
+	}
+
+	if !okAct {
+		activeModel = ""
+	}
 
 	var modelsArray []string
+
 	if mList, ok := body["models"].([]any); ok {
 		for _, m := range mList {
 			if s, ok := m.(string); ok && s != "" {
@@ -80,24 +116,26 @@ func (h *OpenCodeHandler) ApplySettings(body map[string]any) (map[string]any, er
 		modelsArray = append(modelsArray, singleM)
 	}
 
-	if baseUrl == "" || len(modelsArray) == 0 {
+	if baseURL == "" || len(modelsArray) == 0 {
 		return nil, fmt.Errorf("baseUrl and at least one model are required")
 	}
 
 	p := h.getPath()
-	config, _ := readJSONFile(p)
-	if config == nil {
+
+	config, errC := readJSONFile(p)
+	if errC != nil || config == nil {
 		config = make(map[string]any)
 	}
 
-	normBase := normalizeBaseURLV1(baseUrl)
+	normBase := normalizeBaseURLV1(baseURL)
+
 	keyToUse := apiKey
 	if keyToUse == "" {
 		keyToUse = "sk_9router"
 	}
 
-	prov, _ := config["provider"].(map[string]any)
-	if prov == nil {
+	prov, okProv := config["provider"].(map[string]any)
+	if !okProv || prov == nil {
 		prov = make(map[string]any)
 	}
 
@@ -121,6 +159,7 @@ func (h *OpenCodeHandler) ApplySettings(body map[string]any) (map[string]any, er
 	if activeModel == "" {
 		activeModel = modelsArray[0]
 	}
+
 	config["model"] = "9router/" + activeModel
 
 	if err := writeJSONFile(p, config); err != nil {
@@ -134,9 +173,19 @@ func (h *OpenCodeHandler) ApplySettings(body map[string]any) (map[string]any, er
 	}, nil
 }
 
+// ResetSettings resets OpenCode CLI configurations.
 func (h *OpenCodeHandler) ResetSettings() (map[string]any, error) {
 	p := h.getPath()
-	config, _ := readJSONFile(p)
+
+	config, errC := readJSONFile(p)
+	if errC != nil {
+		if os.IsNotExist(errC) {
+			return map[string]any{"success": true, "message": "No settings file to reset"}, nil
+		}
+
+		return nil, errC
+	}
+
 	if config == nil {
 		return map[string]any{"success": true, "message": "No settings file to reset"}, nil
 	}
@@ -144,6 +193,7 @@ func (h *OpenCodeHandler) ResetSettings() (map[string]any, error) {
 	if prov, ok := config["provider"].(map[string]any); ok {
 		delete(prov, "9router")
 	}
+
 	if m, ok := config["model"].(string); ok && strings.HasPrefix(m, "9router/") {
 		delete(config, "model")
 	}

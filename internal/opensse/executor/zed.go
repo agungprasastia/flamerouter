@@ -271,6 +271,7 @@ func (e *ZedExecutor) prepareZedRequest(ctx context.Context, cred Credentials, m
 	promptID, _ := m["prompt_id"].(string) // nolint:errcheck
 
 	targetFormat := translator.FormatOpenAI
+
 	switch provider {
 	case "Anthropic":
 		targetFormat = translator.FormatClaude
@@ -287,8 +288,13 @@ func (e *ZedExecutor) prepareZedRequest(ctx context.Context, cred Credentials, m
 		providerReq["stream"] = true
 	} else {
 		providerReq = translator.DefaultRegistry.TranslateRequest(translator.FormatOpenAI, targetFormat, m, translator.TranslateOptions{
-			Model:  model,
-			Stream: true,
+			Model:        model,
+			Stream:       true,
+			ClientTool:   "",
+			Credentials:  nil,
+			Provider:     "",
+			ConnectionID: "",
+			StripList:    nil,
 		})
 	}
 
@@ -447,6 +453,7 @@ func processZedPayload(payload map[string]any, provider, cid, model string, crea
 	}
 
 	var sourceFormat string
+
 	switch provider {
 	case "Anthropic":
 		sourceFormat = translator.FormatClaude
@@ -464,6 +471,7 @@ func processZedPayload(payload map[string]any, provider, cid, model string, crea
 			for _, item := range resList {
 				writeSSE(item)
 			}
+
 			return true
 		}
 	}
@@ -488,6 +496,7 @@ func wrapZedNDJSONStream(r io.ReadCloser, provider, model string) io.ReadCloser 
 		cid := fmt.Sprintf("chatcmpl-zed-%d", time.Now().UnixMilli())
 
 		var sourceFormat string
+
 		switch provider {
 		case "Anthropic":
 			sourceFormat = translator.FormatClaude
@@ -528,7 +537,9 @@ func wrapZedNDJSONStream(r io.ReadCloser, provider, model string) io.ReadCloser 
 				for _, item := range finalList {
 					writeSSE(item)
 				}
+
 				_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
+
 				return
 			}
 
@@ -547,6 +558,7 @@ func wrapZedNDJSONStream(r io.ReadCloser, provider, model string) io.ReadCloser 
 		for _, item := range finalList {
 			writeSSE(item)
 		}
+
 		_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
 	}()
 

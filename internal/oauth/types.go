@@ -57,12 +57,12 @@ type OAuthState struct {
 var ProviderConfigs = map[string]*OAuthConfig{
 	"claude": {
 		Provider:    "claude",
-		ClientID:    "aa70b58f81965147b47f18c3c2d54fc6",
+		ClientID:    "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
 		AuthURL:     "https://claude.ai/oauth/authorize",
-		TokenURL:    "https://claude.ai/oauth/token",
-		RefreshURL:  "https://claude.ai/oauth/token",
+		TokenURL:    "https://api.anthropic.com/v1/oauth/token",
+		RefreshURL:  "https://api.anthropic.com/v1/oauth/token",
 		RedirectURL: "http://localhost:20128/api/oauth/claude/callback",
-		Scopes:      []string{"user:inference"},
+		Scopes:      []string{"org:create_api_key", "user:profile", "user:inference"},
 		AuthStyle:   "pkce",
 		TokenExpiry: time.Hour,
 	},

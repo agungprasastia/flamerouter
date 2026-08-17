@@ -2,11 +2,12 @@ package clitools
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
 
-// --- Droid ---
+// DroidHandler manages Factory Droid CLI configurations.
 type DroidHandler struct{}
 
 func (h *DroidHandler) getPath() string {
@@ -14,8 +15,10 @@ func (h *DroidHandler) getPath() string {
 	return filepath.Join(home, ".factory", "settings.json")
 }
 
-func (h *DroidHandler) GetStatus(baseUrl string) (map[string]any, error) {
+// GetStatus returns status of Factory Droid CLI.
+func (h *DroidHandler) GetStatus(_ string) (map[string]any, error) {
 	p := h.getPath()
+
 	installed := checkCommandInstalled("droid", p)
 	if !installed {
 		return map[string]any{
@@ -25,9 +28,18 @@ func (h *DroidHandler) GetStatus(baseUrl string) (map[string]any, error) {
 		}, nil
 	}
 
-	settings, _ := readJSONFile(p)
-	customModels, _ := settings["customModels"].([]any)
+	settings, errS := readJSONFile(p)
+	if errS != nil {
+		settings = make(map[string]any)
+	}
+
+	customModels, okCM := settings["customModels"].([]any)
+	if !okCM {
+		customModels = nil
+	}
+
 	has9Router := false
+
 	for _, mRaw := range customModels {
 		if m, ok := mRaw.(map[string]any); ok {
 			if id, okID := m["id"].(string); okID && strings.HasPrefix(id, "custom:9Router") {
@@ -45,12 +57,26 @@ func (h *DroidHandler) GetStatus(baseUrl string) (map[string]any, error) {
 	}, nil
 }
 
+// ApplySettings applies configuration for Factory Droid CLI.
 func (h *DroidHandler) ApplySettings(body map[string]any) (map[string]any, error) {
-	baseUrl, _ := body["baseUrl"].(string)
-	apiKey, _ := body["apiKey"].(string)
-	activeModel, _ := body["activeModel"].(string)
+	baseURL, okBase := body["baseUrl"].(string)
+	apiKey, okKey := body["apiKey"].(string)
+	activeModel, okAct := body["activeModel"].(string)
+
+	if !okBase {
+		baseURL = ""
+	}
+
+	if !okKey {
+		apiKey = ""
+	}
+
+	if !okAct {
+		activeModel = ""
+	}
 
 	var modelsArray []string
+
 	if mList, ok := body["models"].([]any); ok {
 		for _, m := range mList {
 			if s, ok := m.(string); ok && s != "" {
@@ -61,23 +87,26 @@ func (h *DroidHandler) ApplySettings(body map[string]any) (map[string]any, error
 		modelsArray = append(modelsArray, singleM)
 	}
 
-	if baseUrl == "" || len(modelsArray) == 0 {
+	if baseURL == "" || len(modelsArray) == 0 {
 		return nil, fmt.Errorf("baseUrl and at least one model are required")
 	}
 
 	p := h.getPath()
-	settings, _ := readJSONFile(p)
-	if settings == nil {
+
+	settings, errS := readJSONFile(p)
+	if errS != nil || settings == nil {
 		settings = make(map[string]any)
 	}
 
-	normBase := normalizeBaseURLV1(baseUrl)
+	normBase := normalizeBaseURLV1(baseURL)
+
 	keyToUse := apiKey
 	if keyToUse == "" {
 		keyToUse = "your_api_key"
 	}
 
-	var existingModels []any
+	existingModels := make([]any, 0, len(modelsArray))
+
 	if cm, ok := settings["customModels"].([]any); ok {
 		for _, item := range cm {
 			if m, okMap := item.(map[string]any); okMap {
@@ -104,6 +133,7 @@ func (h *DroidHandler) ApplySettings(body map[string]any) (map[string]any, error
 	}
 
 	settings["customModels"] = existingModels
+
 	if activeModel != "" {
 		cleanName := strings.ReplaceAll(activeModel, "/", "-")
 		settings["model"] = fmt.Sprintf("custom:9Router-%s", cleanName)
@@ -120,15 +150,26 @@ func (h *DroidHandler) ApplySettings(body map[string]any) (map[string]any, error
 	}, nil
 }
 
+// ResetSettings resets Factory Droid CLI configurations.
 func (h *DroidHandler) ResetSettings() (map[string]any, error) {
 	p := h.getPath()
-	settings, _ := readJSONFile(p)
+
+	settings, errS := readJSONFile(p)
+	if errS != nil {
+		if os.IsNotExist(errS) {
+			return map[string]any{"success": true, "message": "No settings file to reset"}, nil
+		}
+
+		return nil, errS
+	}
+
 	if settings == nil {
 		return map[string]any{"success": true, "message": "No settings file to reset"}, nil
 	}
 
 	if cm, ok := settings["customModels"].([]any); ok {
 		var filtered []any
+
 		for _, item := range cm {
 			if m, okMap := item.(map[string]any); okMap {
 				if id, okID := m["id"].(string); okID && !strings.HasPrefix(id, "custom:9Router") {
@@ -136,6 +177,7 @@ func (h *DroidHandler) ResetSettings() (map[string]any, error) {
 				}
 			}
 		}
+
 		settings["customModels"] = filtered
 	}
 
