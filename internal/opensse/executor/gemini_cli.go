@@ -51,8 +51,12 @@ func (e *GeminiCLIExecutor) buildHeaders(cred Credentials, stream bool) http.Hea
 		h.Set("Authorization", "Bearer "+tok)
 	}
 
-	h.Set("User-Agent", "gemini-cli-go/1.0")
-	h.Set("X-Goog-Api-Client", "gl-node/gemini-cli")
+	h.Set("User-Agent", "GeminiCLI/0.34.0 (darwin; arm64)")
+	h.Set("X-Goog-Api-Client", "google-genai-sdk/1.41.0 gl-node/v22.19.0")
+
+	if cred.ProjectID != "" {
+		h.Set("X-Goog-User-Project", cred.ProjectID)
+	}
 
 	if stream {
 		h.Set("Accept", "text/event-stream")

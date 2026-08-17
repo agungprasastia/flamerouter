@@ -123,7 +123,8 @@ func applyCodeBuddyReasoning(body map[string]any) {
 		return
 	}
 
-	if eff == "none" || eff == "off" {
+	effLower := strings.ToLower(eff)
+	if effLower == "none" || effLower == "off" {
 		delete(body, "reasoning_effort")
 	} else if eff != "" {
 		body["reasoning_summary"] = "auto"

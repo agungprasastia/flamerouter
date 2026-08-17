@@ -67,16 +67,166 @@ func cleanFunctionDeclarations(t map[string]any) {
 	}
 }
 
-func cleanAntigravityTools(request map[string]any) {
+var agDefaultTools = map[string]bool{
+	"browser_subagent":           true,
+	"command_status":             true,
+	"find_by_name":               true,
+	"generate_image":             true,
+	"grep_search":                true,
+	"list_dir":                   true,
+	"list_resources":             true,
+	"multi_replace_file_content": true,
+	"notify_user":                true,
+	"read_resource":              true,
+	"read_terminal":              true,
+	"read_url_content":           true,
+	"replace_file_content":       true,
+	"run_command":                true,
+	"search_web":                 true,
+	"send_command_input":         true,
+	"task_boundary":              true,
+	"view_content_chunk":         true,
+	"view_file":                  true,
+	"write_to_file":              true,
+}
+
+var agDecoyTools = []map[string]any{
+	{"name": "browser_subagent", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "command_status", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "find_by_name", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "generate_image", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "grep_search", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "list_dir", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "list_resources", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "mcp_sequential-thinking_sequentialthinking", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "multi_replace_file_content", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "notify_user", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "read_resource", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "read_terminal", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "read_url_content", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "replace_file_content", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "run_command", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "search_web", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "send_command_input", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "task_boundary", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "view_content_chunk", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "view_file", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+	{"name": "write_to_file", "description": "This tool is currently unavailable.", "parameters": map[string]any{"type": "OBJECT", "properties": map[string]any{}, "required": []any{}}},
+}
+
+const agToolSuffix = "_ide"
+
+func extractClientDeclarations(tools []any, seenNames map[string]bool) []any {
+	var clientDecls []any
+
+	for _, tRaw := range tools {
+		t, okT := tRaw.(map[string]any)
+		if !okT {
+			continue
+		}
+
+		cleanFunctionDeclarations(t)
+
+		decls, okD := t["functionDeclarations"].([]any)
+		if !okD {
+			decls, _ = t["function_declarations"].([]any) // nolint:errcheck
+		}
+
+		for _, dRaw := range decls {
+			decl, okDecl := dRaw.(map[string]any)
+			if !okDecl {
+				continue
+			}
+
+			name, okN := decl["name"].(string)
+			if !okN || name == "" {
+				continue
+			}
+
+			if agDefaultTools[name] {
+				clientDecls = append(clientDecls, decl)
+				seenNames[name] = true
+
+				continue
+			}
+
+			suffixed := name + agToolSuffix
+			decl["name"] = suffixed
+			clientDecls = append(clientDecls, decl)
+			seenNames[suffixed] = true
+		}
+	}
+
+	return clientDecls
+}
+
+func cloakCallMap(m map[string]any) {
+	if fnName, okN := m["name"].(string); okN && fnName != "" {
+		if !agDefaultTools[fnName] && !strings.HasSuffix(fnName, agToolSuffix) {
+			m["name"] = fnName + agToolSuffix
+		}
+	}
+}
+
+func cloakPartFunction(p map[string]any) {
+	if fc, okFC := p["functionCall"].(map[string]any); okFC {
+		cloakCallMap(fc)
+	}
+
+	if fr, okFR := p["functionResponse"].(map[string]any); okFR {
+		cloakCallMap(fr)
+	}
+}
+
+func cloakContentsFunctions(contents []any) {
+	for _, cRaw := range contents {
+		c, okMsg := cRaw.(map[string]any)
+		if !okMsg {
+			continue
+		}
+
+		parts, okP := c["parts"].([]any)
+		if !okP {
+			continue
+		}
+
+		for _, pRaw := range parts {
+			if p, okPart := pRaw.(map[string]any); okPart {
+				cloakPartFunction(p)
+			}
+		}
+	}
+}
+
+func cloakAntigravityTools(request map[string]any) {
 	tools, ok := request["tools"].([]any)
-	if !ok {
+	if !ok || len(tools) == 0 {
 		return
 	}
 
-	for _, tRaw := range tools {
-		if t, okMap := tRaw.(map[string]any); okMap {
-			cleanFunctionDeclarations(t)
+	seenNames := make(map[string]bool)
+	clientDecls := extractClientDeclarations(tools, seenNames)
+
+	allDecls := make([]any, 0, len(clientDecls)+len(agDecoyTools))
+	allDecls = append(allDecls, clientDecls...)
+
+	for _, decoy := range agDecoyTools {
+		name, _ := decoy["name"].(string) // nolint:errcheck
+		if !seenNames[name] {
+			seenNames[name] = true
+
+			allDecls = append(allDecls, decoy)
 		}
+	}
+
+	request["tools"] = []any{
+		map[string]any{
+			"functionDeclarations": allDecls,
+		},
+	}
+
+	if contents, okC := request["contents"].([]any); okC {
+		cloakContentsFunctions(contents)
 	}
 }
 
@@ -213,7 +363,7 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 
 	e.stripBlacklisted(request)
 	e.stripBlacklisted(body)
-	cleanAntigravityTools(request)
+	cloakAntigravityTools(request)
 	sanitizeClaudeSystemInstruction(request)
 	fixAntigravityContents(request)
 

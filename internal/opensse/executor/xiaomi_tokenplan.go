@@ -77,12 +77,15 @@ func buildXiaomiTokenplanURL(model string, _ bool, cred Credentials) string {
 		return baseURL
 	}
 
+	trimmed := strings.TrimRight(baseURL, "/")
+
 	if isClaudeFormat(cred, model) {
-		trimmed := strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
-		return trimmed + "/anthropic/v1/messages"
+		clean := strings.TrimSuffix(trimmed, "/v1")
+		clean = strings.TrimRight(clean, "/")
+
+		return clean + "/anthropic/v1/messages"
 	}
 
-	trimmed := strings.TrimRight(baseURL, "/")
 	if strings.HasSuffix(trimmed, "/chat/completions") {
 		return trimmed
 	}

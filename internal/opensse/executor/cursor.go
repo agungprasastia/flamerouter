@@ -63,7 +63,7 @@ func BuildCursorHeaders(accessToken, machineID string, ghostMode bool) http.Head
 
 	checksum := GenerateCursorChecksum(effectiveMachineID)
 	reqID := randomUUID()
-	sessID := randomUUID()
+	sessID := GenerateCursorSessionID(cleanToken)
 
 	h := make(http.Header)
 	h.Set("authorization", "Bearer "+cleanToken)

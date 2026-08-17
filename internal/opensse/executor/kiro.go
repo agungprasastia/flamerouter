@@ -84,7 +84,7 @@ func (e *KiroExecutor) buildHeaders(cred Credentials, stream bool) http.Header {
 		}
 
 		h.Set("Authorization", "Bearer "+tok)
-		h.Set("tokentype", "API_KEY")
+		h.Set("TokenType", "API_KEY")
 	case cred.AccessToken != "":
 		h.Set("Authorization", "Bearer "+cred.AccessToken)
 

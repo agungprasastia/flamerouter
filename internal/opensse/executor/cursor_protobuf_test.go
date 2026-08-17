@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -34,13 +35,20 @@ func TestDecodeCursorProtobufEmpty(t *testing.T) {
 }
 
 func TestGenerateCursorChecksum(t *testing.T) {
-	cs := GenerateCursorChecksum("machine-abc")
+	machineID := "machine-abc"
+	cs := GenerateCursorChecksum(machineID)
+
 	if cs == "" {
 		t.Fatal("empty checksum")
 	}
 
-	if len(cs) != 32 {
-		t.Fatalf("len want 32 got %d", len(cs))
+	if !strings.HasSuffix(cs, machineID) {
+		t.Fatalf("checksum %q should end with machineID %q", cs, machineID)
+	}
+
+	// Jyh cipher 6 bytes -> base64 unpadded = 8 chars + len(machineID)
+	if len(cs) != 8+len(machineID) {
+		t.Fatalf("len want %d got %d (%q)", 8+len(machineID), len(cs), cs)
 	}
 }
 

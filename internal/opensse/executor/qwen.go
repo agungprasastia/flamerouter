@@ -98,6 +98,15 @@ func (e *QwenExecutor) Execute(ctx context.Context, cred Credentials, model stri
 
 	m["model"] = model
 	m["stream"] = stream
+
+	if stream {
+		if params, okP := m["parameters"].(map[string]any); okP {
+			params["incremental_output"] = true
+		} else {
+			m["incremental_output"] = true
+		}
+	}
+
 	m = e.transform(m)
 
 	payload, err := json.Marshal(m)
