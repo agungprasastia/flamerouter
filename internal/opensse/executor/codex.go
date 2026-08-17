@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const codexPeekBytes = 64 * 1024
+const codexPeekBytes = 256 * 1024
 
 var (
 	codexSSERetryPatterns           = []string{"server_is_overloaded", "service_unavailable_error"}
@@ -47,18 +47,33 @@ type CodexExecutor struct {
 }
 
 func (e *CodexExecutor) transform(model string, body map[string]any) map[string]any {
-	// Convert system → developer in input
+	// Convert system → developer in input & strip server item references
 	if input, ok := body["input"].([]any); ok {
+		var filtered []any
 		for _, itemRaw := range input {
+			if strID, isStr := itemRaw.(string); isStr && serverIDPattern.MatchString(strID) {
+				continue
+			}
 			item, ok := itemRaw.(map[string]any)
 			if !ok {
+				filtered = append(filtered, itemRaw)
 				continue
+			}
+
+			if t, okT := item["type"].(string); okT && t == "item_reference" {
+				continue
+			}
+
+			if id, okID := item["id"].(string); okID && serverIDPattern.MatchString(id) {
+				delete(item, "id")
 			}
 
 			if role, okRole := item["role"].(string); okRole && role == "system" {
 				item["role"] = "developer"
 			}
+			filtered = append(filtered, item)
 		}
+		body["input"] = filtered
 	}
 	// Strip non-allowlisted fields
 	out := map[string]any{}

@@ -258,6 +258,22 @@ func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, mode
 	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, "", 0, nil)
 }
 
+func stripContinuityFields(m map[string]any) {
+	if m == nil {
+		return
+	}
+	messages, ok := m["messages"].([]any)
+	if !ok {
+		return
+	}
+	for _, msgRaw := range messages {
+		if msg, ok := msgRaw.(map[string]any); ok {
+			delete(msg, "encrypted_content")
+			delete(msg, "reasoning_encrypted_content")
+		}
+	}
+}
+
 func prepareChatPayload(body []byte, providerID, modelName string, streamReq bool, sourceFormat, targetFormat string, conn *store.Connection, ts rtk.TokenSaverOptions) []byte {
 	var translatedBody map[string]any
 
@@ -266,6 +282,8 @@ func prepareChatPayload(body []byte, providerID, modelName string, streamReq boo
 		if err := json.Unmarshal(body, &bodyMap); err != nil || bodyMap == nil {
 			bodyMap = make(map[string]any)
 		}
+
+		stripContinuityFields(bodyMap)
 
 		translatedBody = translator.DefaultRegistry.TranslateRequest(sourceFormat, targetFormat, bodyMap, translator.TranslateOptions{
 			Model:      modelName,
@@ -284,6 +302,8 @@ func prepareChatPayload(body []byte, providerID, modelName string, streamReq boo
 	} else {
 		var bodyMap map[string]any
 		_ = json.Unmarshal(body, &bodyMap) //nolint:errcheck // best-effort body unmarshal
+
+		stripContinuityFields(bodyMap)
 
 		caps := concerns.GetCapabilitiesForModel(providerID, modelName)
 		if caps != nil {
@@ -543,6 +563,8 @@ func prepareStreamModelPayload(body []byte, providerID, modelName, sourceFormat,
 	if err := json.Unmarshal(body, &m); err != nil || m == nil {
 		m = make(map[string]any)
 	}
+
+	stripContinuityFields(m)
 
 	m["model"] = providerID + "/" + modelName
 	m["stream"] = true

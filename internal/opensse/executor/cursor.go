@@ -149,6 +149,135 @@ func encodeProtoMessage(msg map[string]any) []byte {
 	return msgBuf.Bytes()
 }
 
+func isAgentTextRequest(messages []any) bool {
+	if len(messages) == 0 {
+		return false
+	}
+	for _, mRaw := range messages {
+		msg, ok := mRaw.(map[string]any)
+		if !ok {
+			return false
+		}
+		if tc, ok := msg["tool_calls"].([]any); ok && len(tc) > 0 {
+			return false
+		}
+		if role, _ := msg["role"].(string); role == "tool" {
+			return false
+		}
+	}
+	return true
+}
+
+func encodeHistoryMessage(msg map[string]any) []byte {
+	content := extractMessageContentString(msg["content"])
+	if content == "" {
+		return nil
+	}
+	var textBuf bytes.Buffer
+	writeProtoField(&textBuf, 1, []byte(content))
+
+	var l1 bytes.Buffer
+	writeProtoField(&l1, 1, textBuf.Bytes())
+
+	var l2 bytes.Buffer
+	writeProtoField(&l2, 1, l1.Bytes())
+
+	role, _ := msg["role"].(string)
+	var histBuf bytes.Buffer
+	if role == "assistant" {
+		writeProtoField(&histBuf, 2, l2.Bytes())
+	} else {
+		writeProtoField(&histBuf, 1, l2.Bytes())
+	}
+	return histBuf.Bytes()
+}
+
+// BuildAgentRunFrame builds the protobuf wire payload for /agent.v1.AgentService/Run.
+func BuildAgentRunFrame(messages []any, model string) []byte {
+	var systemParts []string
+	var chatMessages []map[string]any
+
+	for _, mRaw := range messages {
+		if msg, ok := mRaw.(map[string]any); ok {
+			role, _ := msg["role"].(string)
+			if role == "system" {
+				c := extractMessageContentString(msg["content"])
+				if c != "" {
+					systemParts = append(systemParts, c)
+				}
+			} else {
+				chatMessages = append(chatMessages, msg)
+			}
+		}
+	}
+
+	system := strings.Join(systemParts, "\n\n")
+
+	lastUserIdx := -1
+	for i := len(chatMessages) - 1; i >= 0; i-- {
+		if r, _ := chatMessages[i]["role"].(string); r == "user" {
+			lastUserIdx = i
+			break
+		}
+	}
+
+	var current map[string]any
+	var historyMessages []map[string]any
+	if lastUserIdx >= 0 {
+		current = chatMessages[lastUserIdx]
+		historyMessages = chatMessages[:lastUserIdx]
+	} else if len(chatMessages) > 0 {
+		current = chatMessages[len(chatMessages)-1]
+	}
+
+	userText := "Continue."
+	if current != nil {
+		c := extractMessageContentString(current["content"])
+		if c != "" {
+			userText = c
+		}
+	}
+
+	var userMsgBuf bytes.Buffer
+	writeProtoField(&userMsgBuf, 1, []byte(userText))
+	writeProtoField(&userMsgBuf, 2, []byte(randomUUID()))
+
+	var userActionBuf bytes.Buffer
+	writeProtoField(&userActionBuf, 1, userMsgBuf.Bytes())
+
+	if len(historyMessages) > 0 {
+		var histEntriesBuf bytes.Buffer
+		for _, hm := range historyMessages {
+			if encoded := encodeHistoryMessage(hm); len(encoded) > 0 {
+				writeProtoField(&histEntriesBuf, 1, encoded)
+			}
+		}
+		if histEntriesBuf.Len() > 0 {
+			writeProtoField(&userActionBuf, 7, histEntriesBuf.Bytes())
+		}
+	}
+
+	var convActionBuf bytes.Buffer
+	writeProtoField(&convActionBuf, 1, userActionBuf.Bytes())
+
+	var reqModelBuf bytes.Buffer
+	writeProtoField(&reqModelBuf, 1, []byte(model))
+	writeProtoVarintField(&reqModelBuf, 7, 1)
+
+	var runReqBuf bytes.Buffer
+	writeProtoField(&runReqBuf, 1, []byte{}) // empty ConversationStateStructure
+	writeProtoField(&runReqBuf, 2, convActionBuf.Bytes())
+	if system != "" {
+		writeProtoField(&runReqBuf, 8, []byte(system))
+	}
+	writeProtoField(&runReqBuf, 9, reqModelBuf.Bytes())
+
+	var topBuf bytes.Buffer
+	writeProtoField(&topBuf, 1, runReqBuf.Bytes())
+
+	return topBuf.Bytes()
+}
+
 // BuildCursorProtobufRequest builds the protobuf wire payload for Cursor chat.
 func BuildCursorProtobufRequest(messages []any, model string) []byte {
 	var bodyBuf bytes.Buffer
@@ -444,6 +573,24 @@ func (e *CursorExecutor) executeOpenAICompatible(ctx context.Context, base strin
 	return e.DoPOST(ctx, base, h, payload)
 }
 
+func isComposerModel(model string) bool {
+	parts := strings.Split(model, "/")
+	modelID := parts[len(parts)-1]
+	return strings.HasPrefix(strings.ToLower(modelID), "composer")
+}
+
+func visibleComposerContentFromThinking(thinking string) string {
+	if thinking == "" {
+		return ""
+	}
+	endTag := "</think>"
+	endIdx := strings.LastIndex(thinking, endTag)
+	if endIdx < 0 {
+		return ""
+	}
+	return strings.TrimLeft(thinking[endIdx+len(endTag):], " \t\r\n")
+}
+
 func (e *CursorExecutor) executeUnaryConnectRPC(res *Result, model, cid string, created int64) (*Result, error) {
 	defer func() {
 		_ = res.Body.Close() // nolint:errcheck
@@ -455,6 +602,12 @@ func (e *CursorExecutor) executeUnaryConnectRPC(res *Result, model, cid string, 
 	}
 
 	text, thinking := ExtractTextFromCursorResponse(allBytes)
+
+	if isComposerModel(model) && text == "" {
+		if vis := visibleComposerContentFromThinking(thinking); vis != "" {
+			text = vis
+		}
+	}
 
 	msg := map[string]any{
 		"role":    "assistant",
@@ -490,7 +643,20 @@ func (e *CursorExecutor) executeUnaryConnectRPC(res *Result, model, cid string, 
 
 func (e *CursorExecutor) executeConnectRPC(ctx context.Context, base string, cred Credentials, model string, m map[string]any, stream bool) (*Result, error) {
 	messages, _ := m["messages"].([]any) // nolint:errcheck
-	protoPayload := BuildCursorProtobufRequest(messages, model)
+
+	var (
+		protoPayload []byte
+		url          string
+	)
+
+	if isAgentTextRequest(messages) {
+		protoPayload = BuildAgentRunFrame(messages, model)
+		url = base + "/agent.v1.AgentService/Run"
+	} else {
+		protoPayload = BuildCursorProtobufRequest(messages, model)
+		url = base + "/aiserver.v1.AiService/StreamUnifiedChatWithTools"
+	}
+
 	framedPayload := WrapConnectRPCFrame(protoPayload)
 
 	token := cred.AccessToken
@@ -507,7 +673,6 @@ func (e *CursorExecutor) executeConnectRPC(ctx context.Context, base string, cre
 	}
 
 	headers := BuildCursorHeaders(token, machineID, true)
-	url := base + "/aiserver.v1.AiService/StreamUnifiedChatWithTools"
 
 	reqRes, err := e.DoPOST(ctx, url, headers, framedPayload)
 	if err != nil {

@@ -17,7 +17,7 @@ func init() {
 func parseGeminiPart(p map[string]any, state *concerns.ResponseState) map[string]any {
 	if text, ok := p["text"].(string); ok && text != "" {
 		if thought, tOk := p["thought"].(bool); tOk && thought {
-			return buildGeminiOpenAIChunk(state, map[string]any{"content": "<think>" + text + "</think>"}, nil)
+			return buildGeminiOpenAIChunk(state, map[string]any{"reasoning_content": text}, nil)
 		}
 
 		return buildGeminiOpenAIChunk(state, map[string]any{"content": text}, nil)
@@ -144,6 +144,11 @@ func parseCandidateContent(candidate map[string]any, state *concerns.ResponseSta
 func geminiToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) []map[string]any {
 	if chunk == nil {
 		return nil
+	}
+
+	// Antigravity or nested response wrapper support
+	if resp, ok := chunk["response"].(map[string]any); ok && resp != nil {
+		chunk = resp
 	}
 
 	candidate := extractGeminiCandidate(chunk)

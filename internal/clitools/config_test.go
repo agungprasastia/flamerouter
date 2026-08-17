@@ -9,7 +9,7 @@ import (
 func checkManagerStatus(t *testing.T, m *Manager) {
 	t.Helper()
 
-	all := m.AllStatuses()
+	all := m.AllStatuses("http://127.0.0.1:20130")
 	if all["claude"] == nil {
 		t.Fatal("missing claude status")
 	}
@@ -18,6 +18,7 @@ func checkManagerStatus(t *testing.T, m *Manager) {
 		t.Fatal("Known")
 	}
 }
+
 
 func TestManagerGetPatchStatuses(t *testing.T) {
 	dir := t.TempDir()

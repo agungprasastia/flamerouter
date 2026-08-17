@@ -5,20 +5,110 @@ import (
 	"encoding/json"
 	"flamerouter/internal/store"
 	"fmt"
+	"strings"
+	"sync"
 )
 
-// Manager manages CLI tool configurations stored in the kv table.
+// Manager manages CLI tool configurations and provides real OS & filesystem detection/application.
 type Manager struct {
-	st *store.Store
+	st       *store.Store
+	mu       sync.RWMutex
+	handlers map[string]ToolHandler
 }
 
 // New creates a new CLI tools manager.
 func New(st *store.Store) *Manager {
-	return &Manager{st: st}
+	return &Manager{
+		st: st,
+		handlers: map[string]ToolHandler{
+			"claude":       &ClaudeHandler{},
+			"codex":        &CodexHandler{},
+			"opencode":     &OpenCodeHandler{},
+			"droid":        &DroidHandler{},
+			"openclaw":     &OpenClawHandler{},
+			"cline":        &ClineHandler{},
+			"kilo":         &KiloHandler{},
+			"copilot":      &CopilotHandler{},
+			"hermes":       &HermesHandler{},
+			"jcode":        &JCodeHandler{},
+			"deepseek-tui": &DeepSeekTuiHandler{},
+			"grok-build":   &GrokBuildHandler{},
+			"devin":        &DevinHandler{},
+			"cowork":       &CoworkHandler{},
+		},
+	}
 }
 
-// GetSettings returns the stored settings for a CLI tool.
+func (m *Manager) normalizeToolID(toolID string) string {
+	tid := strings.ToLower(strings.TrimSpace(toolID))
+	tid = strings.TrimSuffix(tid, "-settings")
+	tid = strings.ReplaceAll(tid, "_", "-")
+	return tid
+}
+
+// GetStatus returns the real filesystem status for a tool.
+func (m *Manager) GetStatus(toolID, baseURL string) (map[string]any, error) {
+	tid := m.normalizeToolID(toolID)
+	m.mu.RLock()
+	h, ok := m.handlers[tid]
+	m.mu.RUnlock()
+
+	if !ok {
+		// Fallback to KV if not in handlers
+		return m.GetSettings(toolID)
+	}
+
+	return h.GetStatus(baseURL)
+}
+
+// ApplySettings applies settings to the real tool config on disk.
+func (m *Manager) ApplySettings(toolID string, body map[string]any) (map[string]any, error) {
+	tid := m.normalizeToolID(toolID)
+	m.mu.RLock()
+	h, ok := m.handlers[tid]
+	m.mu.RUnlock()
+
+	if !ok {
+		// Fallback to storing in KV store
+		if err := m.PatchSettings(toolID, body); err != nil {
+			return nil, err
+		}
+		return map[string]any{"success": true, "message": "Settings saved to store"}, nil
+	}
+
+	res, err := h.ApplySettings(body)
+	if err == nil && m.st != nil {
+		_ = m.PatchSettings(toolID, body)
+	}
+	return res, err
+}
+
+// ResetSettings removes 9Router/Flamerouter configuration from the tool.
+func (m *Manager) ResetSettings(toolID string) (map[string]any, error) {
+	tid := m.normalizeToolID(toolID)
+	m.mu.RLock()
+	h, ok := m.handlers[tid]
+	m.mu.RUnlock()
+
+	if !ok {
+		if m.st != nil {
+			_ = m.st.KVSet("cli-tools", toolID, "")
+		}
+		return map[string]any{"success": true, "message": "Settings reset"}, nil
+	}
+
+	res, err := h.ResetSettings()
+	if err == nil && m.st != nil {
+		_ = m.st.KVSet("cli-tools", toolID, "")
+	}
+	return res, err
+}
+
+// GetSettings returns the stored settings for a CLI tool from KV.
 func (m *Manager) GetSettings(toolID string) (map[string]any, error) {
+	if m.st == nil {
+		return map[string]any{}, nil
+	}
 	val, err := m.st.KVGet("cli-tools", toolID)
 	if err != nil {
 		return nil, err
@@ -40,11 +130,14 @@ func (m *Manager) GetSettings(toolID string) (map[string]any, error) {
 	return out, nil
 }
 
-// PatchSettings merges partial settings for a CLI tool.
+// PatchSettings merges partial settings for a CLI tool in KV.
 func (m *Manager) PatchSettings(toolID string, patch map[string]any) error {
+	if m.st == nil {
+		return nil
+	}
 	cur, err := m.GetSettings(toolID)
 	if err != nil {
-		return err
+		cur = make(map[string]any)
 	}
 
 	for k, v := range patch {
@@ -59,32 +152,18 @@ func (m *Manager) PatchSettings(toolID string, patch map[string]any) error {
 	return m.st.KVSet("cli-tools", toolID, string(b))
 }
 
-// AllStatuses returns status for all known CLI tools.
-func (m *Manager) AllStatuses() map[string]any {
+// AllStatuses returns real status for all known CLI tools.
+func (m *Manager) AllStatuses(baseURL string) map[string]any {
 	out := make(map[string]any, len(KnownTools))
 
 	for _, id := range KnownTools {
-		settings, err := m.GetSettings(id)
+		st, err := m.GetStatus(id, baseURL)
 		if err != nil {
-			out[id] = map[string]any{"configured": false, "error": err.Error()}
+			out[id] = map[string]any{"installed": false, "configured": false, "error": err.Error()}
 			continue
 		}
 
-		configured := len(settings) > 0
-
-		if v, ok := settings["enabled"]; ok {
-			switch t := v.(type) {
-			case bool:
-				configured = t || configured
-			case string:
-				configured = t == "true" || t == "1" || configured
-			}
-		}
-
-		out[id] = map[string]any{
-			"configured": configured,
-			"settings":   settings,
-		}
+		out[id] = st
 	}
 
 	return out
@@ -92,14 +171,17 @@ func (m *Manager) AllStatuses() map[string]any {
 
 // Known reports whether toolID is in KnownTools.
 func Known(toolID string) bool {
+	tid := strings.ToLower(strings.TrimSpace(toolID))
+	tid = strings.TrimSuffix(tid, "-settings")
+	tid = strings.ReplaceAll(tid, "_", "-")
 	for _, id := range KnownTools {
-		if id == toolID {
+		if id == tid || id == toolID {
 			return true
 		}
 	}
-
 	return false
 }
 
 // ErrUnknownTool is returned for unknown tool IDs when strict checks apply.
 var ErrUnknownTool = fmt.Errorf("unknown cli tool")
+

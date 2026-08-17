@@ -155,6 +155,7 @@ var ErrorRules = []ErrorRule{
 	{Text: "insufficient_quota", Status: 0, CooldownMs: 0, Backoff: true},
 	{Text: "quota_exceeded", Status: 0, CooldownMs: 0, Backoff: true},
 	{Text: "rate_limit", Status: 0, CooldownMs: 0, Backoff: true},
+	{Text: "resource_exhausted", Status: 0, CooldownMs: 0, Backoff: true},
 	{Text: "too many requests", Status: 0, CooldownMs: 0, Backoff: true},
 	{Text: "requests per minute", Status: 0, CooldownMs: 0, Backoff: true},
 	{Text: "please slow down", Status: 0, CooldownMs: 0, Backoff: true},

@@ -2,11 +2,18 @@ package executor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flamerouter/internal/translator/formats"
+	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
+
 
 func init() {
 	RegisterSpecialized("antigravity", &AntigravityExecutor{
@@ -253,6 +260,35 @@ const (
 	defaultThinkingAGSignature = "e2E="
 )
 
+func gcd(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+var imageDimRegex = regexp.MustCompile(`-(\d+)x(\d+)$`)
+
+func parseImageConfig(model string) (map[string]any, string) {
+	config := map[string]any{"aspectRatio": "1:1"}
+	cleanModel := model
+	match := imageDimRegex.FindStringSubmatch(model)
+	if len(match) == 3 {
+		cleanModel = imageDimRegex.ReplaceAllString(model, "")
+		w, _ := strconv.Atoi(match[1])
+		h, _ := strconv.Atoi(match[2])
+		if w > 0 && h > 0 {
+			if w <= 16 && h <= 16 {
+				config["aspectRatio"] = fmt.Sprintf("%d:%d", w, h)
+			} else {
+				d := gcd(w, h)
+				config["aspectRatio"] = fmt.Sprintf("%d:%d", w/d, h/d)
+			}
+		}
+	}
+	return config, cleanModel
+}
+
 func isAntigravityImageModel(model string) bool {
 	lower := strings.ToLower(model)
 
@@ -353,6 +389,47 @@ func fixAntigravityContents(req map[string]any) {
 	}
 }
 
+func uuidFromSeed(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	b := sum[:16]
+	b[6] = (b[6] & 0x0f) | 0x50
+	b[8] = (b[8] & 0x3f) | 0x80
+	h := hex.EncodeToString(b)
+	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
+}
+
+var agIdeRequestIdRegex = regexp.MustCompile(`^agent/[^/]+/\d+/[^/]+/\d+$`)
+
+func buildIdeRequestId(body, req map[string]any, cred Credentials, model, requestType string) string {
+	if rid, ok := body["requestId"].(string); ok && agIdeRequestIdRegex.MatchString(rid) {
+		return rid
+	}
+	sessID := ""
+	if s, ok := req["sessionId"].(string); ok && s != "" {
+		sessID = s
+	} else if cred.ProviderSpecificData != nil {
+		if email, ok := cred.ProviderSpecificData["email"].(string); ok && email != "" {
+			sessID = email
+		}
+	}
+	if sessID == "" {
+		sessID = "anonymous"
+	}
+
+	convID := uuidFromSeed("antigravity:conversation:" + sessID)
+	trajID := uuidFromSeed(fmt.Sprintf("antigravity:trajectory:%s:%s:%s", sessID, model, requestType))
+	contentCount := 1
+	if contents, ok := req["contents"].([]any); ok && len(contents) > 0 {
+		contentCount = len(contents)
+	}
+	step := contentCount*2 - 1
+	if step < 1 {
+		step = 1
+	}
+	return fmt.Sprintf("agent/%s/%d/%s/%d", convID, time.Now().UnixMilli(), trajID, step)
+}
+
+
 func (e *AntigravityExecutor) transform(model string, body map[string]any, cred Credentials) map[string]any {
 	var request map[string]any
 	if req, ok := body["request"].(map[string]any); ok {
@@ -363,6 +440,61 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 
 	e.stripBlacklisted(request)
 	e.stripBlacklisted(body)
+	project := resolveAntigravityProjectID(body, cred)
+
+	if isAntigravityImageModel(model) {
+		imageConfig, cleanModel := parseImageConfig(model)
+		var contents []any
+		srcContents, _ := request["contents"].([]any)
+		if len(srcContents) == 0 {
+			srcContents, _ = body["contents"].([]any)
+		}
+		for _, cRaw := range srcContents {
+			if c, ok := cRaw.(map[string]any); ok {
+				var textParts []any
+				if parts, okP := c["parts"].([]any); okP {
+					for _, pRaw := range parts {
+						if p, okP2 := pRaw.(map[string]any); okP2 {
+							if txt, okT := p["text"].(string); okT {
+								textParts = append(textParts, map[string]any{"text": txt})
+							}
+						}
+					}
+				}
+				if len(textParts) > 0 {
+					role := "user"
+					if r, okR := c["role"].(string); okR && r != "" {
+						role = r
+					}
+					contents = append(contents, map[string]any{"role": role, "parts": textParts})
+				}
+			}
+		}
+
+		imgReq := map[string]any{
+			"contents": contents,
+			"generationConfig": map[string]any{
+				"temperature":     1.0,
+				"topP":            0.95,
+				"topK":            40,
+				"maxOutputTokens": 8192,
+				"imageConfig":     imageConfig,
+			},
+		}
+		if sess, ok := request["sessionId"].(string); ok && sess != "" {
+			imgReq["sessionId"] = sess
+		}
+
+		return map[string]any{
+			"project":     project,
+			"model":       cleanModel,
+			"userAgent":   "antigravity",
+			"requestType": "image_gen",
+			"requestId":   buildIdeRequestId(body, imgReq, cred, cleanModel, "image_gen"),
+			"request":     imgReq,
+		}
+	}
+
 	cloakAntigravityTools(request)
 	sanitizeClaudeSystemInstruction(request)
 	fixAntigravityContents(request)
@@ -373,12 +505,7 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 		}
 	}
 
-	project := resolveAntigravityProjectID(body, cred)
 	requestType := "agent"
-
-	if isAntigravityImageModel(model) {
-		requestType = "image_gen"
-	}
 
 	out := map[string]any{
 		"project":     project,
@@ -386,16 +513,12 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 		"userAgent":   "antigravity",
 		"requestType": requestType,
 		"request":     request,
-	}
-
-	if rid, ok := body["requestId"].(string); ok && rid != "" {
-		out["requestId"] = rid
-	} else {
-		out["requestId"] = formats.GenerateRequestID()
+		"requestId":   buildIdeRequestId(body, request, cred, model, requestType),
 	}
 
 	return out
 }
+
 
 func isSafeIdentChar(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||

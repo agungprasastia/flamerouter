@@ -184,7 +184,9 @@ func (s *Server) routesCLIToolsAndOps() {
 	s.mux.HandleFunc("GET /api/cli-tools/cowork-mcp-registry", s.handleCoworkMCPRegistry)
 	s.mux.HandleFunc("PATCH /api/cli-tools/cowork-mcp-registry", s.handleCoworkMCPRegistry)
 	s.mux.HandleFunc("GET /api/cli-tools/{toolSettings}", s.handleCLIToolSettings)
+	s.mux.HandleFunc("POST /api/cli-tools/{toolSettings}", s.handleCLIToolSettings)
 	s.mux.HandleFunc("PATCH /api/cli-tools/{toolSettings}", s.handleCLIToolSettings)
+	s.mux.HandleFunc("DELETE /api/cli-tools/{toolSettings}", s.handleCLIToolSettings)
 
 	s.mux.HandleFunc("GET /api/mcp/{plugin}/sse", s.handleMCPSSE)
 	s.mux.HandleFunc("POST /api/mcp/{plugin}/message", s.handleMCPMessage)

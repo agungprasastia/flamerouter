@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flamerouter/internal/translator"
+	"flamerouter/internal/translator/concerns"
 	"fmt"
 	"io"
 	"net/http"
@@ -258,27 +260,49 @@ func buildZedHeaders(llmToken string) http.Header {
 	return h
 }
 
-func (e *ZedExecutor) prepareZedRequest(ctx context.Context, cred Credentials, model string, body []byte) (string, http.Header, []byte, error) {
+func (e *ZedExecutor) prepareZedRequest(ctx context.Context, cred Credentials, model string, body []byte) (string, http.Header, []byte, string, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, "", err
 	}
 
 	provider := normalizeZedProvider("", model)
 	threadID, _ := m["thread_id"].(string) // nolint:errcheck
 	promptID, _ := m["prompt_id"].(string) // nolint:errcheck
 
+	targetFormat := translator.FormatOpenAI
+	switch provider {
+	case "Anthropic":
+		targetFormat = translator.FormatClaude
+	case "Google":
+		targetFormat = translator.FormatGemini
+	case "OpenAi":
+		targetFormat = translator.FormatOpenAIResponses
+	}
+
+	var providerReq map[string]any
+	if targetFormat == translator.FormatOpenAI {
+		providerReq = m
+		providerReq["model"] = model
+		providerReq["stream"] = true
+	} else {
+		providerReq = translator.DefaultRegistry.TranslateRequest(translator.FormatOpenAI, targetFormat, m, translator.TranslateOptions{
+			Model:  model,
+			Stream: true,
+		})
+	}
+
 	payload := map[string]any{
 		"thread_id":        threadID,
 		"prompt_id":        promptID,
 		"provider":         provider,
 		"model":            model,
-		"provider_request": m,
+		"provider_request": providerReq,
 	}
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, "", err
 	}
 
 	llmToken, err := e.fetchLlmToken(ctx, cred, false)
@@ -297,12 +321,12 @@ func (e *ZedExecutor) prepareZedRequest(ctx context.Context, cred Credentials, m
 	url := base + "/completions"
 	h := buildZedHeaders(llmToken)
 
-	return url, h, payloadBytes, nil
+	return url, h, payloadBytes, provider, nil
 }
 
 // Execute handles proxying requests to the Zed completions endpoint.
 func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, _ bool) (*Result, error) {
-	url, h, payloadBytes, err := e.prepareZedRequest(ctx, cred, model, body)
+	url, h, payloadBytes, provider, err := e.prepareZedRequest(ctx, cred, model, body)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +355,7 @@ func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model strin
 		return res, nil
 	}
 
-	wrappedBody := wrapZedNDJSONStream(res.Body, model)
+	wrappedBody := wrapZedNDJSONStream(res.Body, provider, model)
 
 	return &Result{
 		StatusCode: 200,
@@ -399,7 +423,7 @@ func handleZedClaudeEvent(evMap map[string]any, cid, model string, created int64
 	return false
 }
 
-func processZedPayload(payload map[string]any, cid, model string, created int64, writeSSE func(any)) bool {
+func processZedPayload(payload map[string]any, provider, cid, model string, created int64, state *concerns.ResponseState, writeSSE func(any)) bool {
 	if status, ok := payload["status"].(map[string]any); ok {
 		shouldBreak, shouldContinue := handleZedStatus(status, cid, model, writeSSE)
 		if shouldBreak {
@@ -416,10 +440,36 @@ func processZedPayload(payload map[string]any, cid, model string, created int64,
 		event = payload
 	}
 
-	if evMap, ok := event.(map[string]any); ok {
-		if handled := handleZedClaudeEvent(evMap, cid, model, created, writeSSE); handled {
+	evMap, ok := event.(map[string]any)
+	if !ok {
+		writeSSE(event)
+		return true
+	}
+
+	var sourceFormat string
+	switch provider {
+	case "Anthropic":
+		sourceFormat = translator.FormatClaude
+	case "Google":
+		sourceFormat = translator.FormatGemini
+	case "OpenAi":
+		sourceFormat = translator.FormatOpenAIResponses
+	default:
+		sourceFormat = translator.FormatOpenAI
+	}
+
+	if sourceFormat != translator.FormatOpenAI {
+		resList := translator.DefaultRegistry.TranslateResponse(sourceFormat, translator.FormatOpenAI, evMap, state)
+		if len(resList) > 0 {
+			for _, item := range resList {
+				writeSSE(item)
+			}
 			return true
 		}
+	}
+
+	if handled := handleZedClaudeEvent(evMap, cid, model, created, writeSSE); handled {
+		return true
 	}
 
 	writeSSE(event)
@@ -427,7 +477,7 @@ func processZedPayload(payload map[string]any, cid, model string, created int64,
 	return true
 }
 
-func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
+func wrapZedNDJSONStream(r io.ReadCloser, provider, model string) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
 		defer func() { _ = r.Close() }()  // nolint:errcheck
@@ -436,6 +486,21 @@ func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
 		sc := bufio.NewScanner(r)
 		created := time.Now().Unix()
 		cid := fmt.Sprintf("chatcmpl-zed-%d", time.Now().UnixMilli())
+
+		var sourceFormat string
+		switch provider {
+		case "Anthropic":
+			sourceFormat = translator.FormatClaude
+		case "Google":
+			sourceFormat = translator.FormatGemini
+		case "OpenAi":
+			sourceFormat = translator.FormatOpenAIResponses
+		default:
+			sourceFormat = translator.FormatOpenAI
+		}
+
+		state := concerns.NewResponseState()
+		state.Model = model
 
 		writeSSE := func(obj any) {
 			b, err := json.Marshal(obj)
@@ -459,7 +524,12 @@ func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
 			}
 
 			if line == "[DONE]" {
-				break
+				finalList := translator.DefaultRegistry.TranslateResponse(sourceFormat, translator.FormatOpenAI, nil, state)
+				for _, item := range finalList {
+					writeSSE(item)
+				}
+				_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
+				return
 			}
 
 			var payload map[string]any
@@ -467,11 +537,16 @@ func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
 				continue
 			}
 
-			if !processZedPayload(payload, cid, model, created, writeSSE) {
-				break
+			if !processZedPayload(payload, provider, cid, model, created, state, writeSSE) {
+				_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
+				return
 			}
 		}
 
+		finalList := translator.DefaultRegistry.TranslateResponse(sourceFormat, translator.FormatOpenAI, nil, state)
+		for _, item := range finalList {
+			writeSSE(item)
+		}
 		_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
 	}()
 
