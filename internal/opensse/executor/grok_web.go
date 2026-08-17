@@ -59,7 +59,9 @@ type GrokWebExecutor struct{ Base }
 
 func grokRandomHex(n int) string {
 	b := make([]byte, n)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
 
 	return hex.EncodeToString(b)
 }
@@ -70,55 +72,63 @@ func generateStatsigID() string {
 	return base64.StdEncoding.EncodeToString([]byte(msg))
 }
 
-func parseOpenAIMessages(messages []any) string {
-	type extracted struct {
-		role string
-		text string
-	}
+func extractContentParts(c any) string {
+	switch val := c.(type) {
+	case string:
+		return val
+	case []any:
+		var parts []string
 
-	var items []extracted
-
-	for _, raw := range messages {
-		msg, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		role, _ := msg["role"].(string)
-		if role == "" {
-			role = "user"
-		}
-
-		if role == "developer" {
-			role = "system"
-		}
-
-		content := ""
-		switch c := msg["content"].(type) {
-		case string:
-			content = c
-		case []any:
-			var parts []string
-
-			for _, p := range c {
-				pm, ok := p.(map[string]any)
-				if !ok {
-					continue
-				}
-
-				if t, _ := pm["type"].(string); t == "text" {
-					parts = append(parts, fmt.Sprint(pm["text"]))
-				}
+		for _, p := range val {
+			pm, ok := p.(map[string]any)
+			if !ok {
+				continue
 			}
 
-			content = strings.Join(parts, " ")
+			if t, okT := pm["type"].(string); okT && t == "text" {
+				parts = append(parts, fmt.Sprint(pm["text"]))
+			}
 		}
 
-		if strings.TrimSpace(content) == "" {
-			continue
-		}
+		return strings.Join(parts, " ")
+	default:
+		return ""
+	}
+}
 
-		items = append(items, extracted{role: role, text: content})
+type grokExtractedMsg struct {
+	role string
+	text string
+}
+
+func extractGrokItem(raw any) (grokExtractedMsg, bool) {
+	msg, ok := raw.(map[string]any)
+	if !ok {
+		return grokExtractedMsg{role: "", text: ""}, false
+	}
+
+	role, okRole := msg["role"].(string)
+	if !okRole || role == "" {
+		role = "user"
+	} else if role == "developer" {
+		role = "system"
+	}
+
+	content := extractContentParts(msg["content"])
+	if strings.TrimSpace(content) == "" {
+		return grokExtractedMsg{role: "", text: ""}, false
+	}
+
+	return grokExtractedMsg{role: role, text: content}, true
+}
+
+func parseOpenAIMessages(messages []any) string {
+	var items []grokExtractedMsg
+
+	for _, raw := range messages {
+		if it, ok := extractGrokItem(raw); ok {
+			items = append(items, it)
+		}
 	}
 
 	if len(items) == 0 {
@@ -148,13 +158,13 @@ func parseOpenAIMessages(messages []any) string {
 }
 
 func jsonErr(status int, msg, typ, code string) *Result {
-	body := map[string]any{"error": map[string]any{"message": msg, "type": typ}}
-
+	errMap := map[string]any{"message": msg, "type": typ}
 	if code != "" {
-		body["error"].(map[string]any)["code"] = code
+		errMap["code"] = code
 	}
 
-	b, _ := json.Marshal(body)
+	body := map[string]any{"error": errMap}
+	b, _ := json.Marshal(body) // nolint:errcheck
 
 	return &Result{
 		StatusCode: status,
@@ -163,46 +173,7 @@ func jsonErr(status int, msg, typ, code string) *Result {
 	}
 }
 
-func (e *GrokWebExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, err
-	}
-
-	messages, _ := m["messages"].([]any)
-	if len(messages) == 0 {
-		return jsonErr(400, "Missing or empty messages array", "invalid_request", ""), nil
-	}
-
-	info, ok := grokWebModelMap[model]
-	if !ok {
-		info = grokWebModelMap["grok-4.1-fast"]
-	}
-
-	message := parseOpenAIMessages(messages)
-	if strings.TrimSpace(message) == "" {
-		return jsonErr(400, "Empty query after processing", "invalid_request", ""), nil
-	}
-
-	payload := map[string]any{
-		"temporary": true, "modelName": info.GrokModel, "modelMode": info.ModelMode, "message": message,
-		"fileAttachments": []any{}, "imageAttachments": []any{},
-		"disableSearch": false, "enableImageGeneration": false, "returnImageBytes": false,
-		"returnRawGrokInXaiRequest": false, "enableImageStreaming": false, "imageGenerationCount": 0,
-		"forceConcise": false, "toolOverrides": map[string]any{}, "enableSideBySide": true, "sendFinalMetadata": true,
-		"isReasoning": false, "disableTextFollowUps": false, "disableMemory": true,
-		"forceSideBySide": false, "isAsyncChat": false, "disableSelfHarmShortCircuit": false,
-		"deviceEnvInfo": map[string]any{
-			"darkModeEnabled": false, "devicePixelRatio": 2,
-			"screenWidth": 2056, "screenHeight": 1329, "viewportWidth": 2056, "viewportHeight": 1083,
-		},
-	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
+func buildGrokWebHeaders(cred Credentials) http.Header {
 	traceID := grokRandomHex(16)
 	spanID := grokRandomHex(8)
 	h := make(http.Header)
@@ -235,42 +206,117 @@ func (e *GrokWebExecutor) Execute(ctx context.Context, cred Credentials, model s
 		h.Set("Cookie", "sso="+token)
 	}
 
-	res, err := e.DoPOST(ctx, grokWebChatAPI, h, payloadBytes)
+	return h
+}
+
+func buildGrokWebPayload(info grokWebModelInfo, message string) ([]byte, error) {
+	payload := map[string]any{
+		"temporary": true, "modelName": info.GrokModel, "modelMode": info.ModelMode, "message": message,
+		"fileAttachments": []any{}, "imageAttachments": []any{},
+		"disableSearch": false, "enableImageGeneration": false, "returnImageBytes": false,
+		"returnRawGrokInXaiRequest": false, "enableImageStreaming": false, "imageGenerationCount": 0,
+		"forceConcise": false, "toolOverrides": map[string]any{}, "enableSideBySide": true, "sendFinalMetadata": true,
+		"isReasoning": false, "disableTextFollowUps": false, "disableMemory": true,
+		"forceSideBySide": false, "isAsyncChat": false, "disableSelfHarmShortCircuit": false,
+		"deviceEnvInfo": map[string]any{
+			"darkModeEnabled": false, "devicePixelRatio": 2,
+			"screenWidth": 2056, "screenHeight": 1329, "viewportWidth": 2056, "viewportHeight": 1083,
+		},
+	}
+
+	return json.Marshal(payload)
+}
+
+func handleGrokWebStatusError(res *Result) *Result {
+	status := res.StatusCode
+	msg := fmt.Sprintf("Grok returned HTTP %d", status)
+
+	if status == 401 || status == 403 {
+		msg = "Grok auth failed — SSO cookie may be expired. Re-paste your sso cookie value from grok.com."
+	} else if status == 429 {
+		msg = "Grok rate limited. Wait a moment and retry, or rotate cookies."
+	}
+
+	DrainBody(res.Body)
+
+	return jsonErr(status, msg, "upstream_error", fmt.Sprintf("HTTP_%d", status))
+}
+
+func makeGrokSSEResult(body io.ReadCloser) *Result {
+	return &Result{
+		StatusCode: 200,
+		Header: http.Header{
+			"Content-Type":      []string{"text/event-stream"},
+			"Cache-Control":     []string{"no-cache"},
+			"Connection":        []string{"keep-alive"},
+			"X-Accel-Buffering": []string{"no"},
+		},
+		Body: body,
+	}
+}
+
+func makeGrokJSONResult(body []byte) *Result {
+	return &Result{
+		StatusCode: 200,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+}
+
+func parseGrokRequest(body []byte, model string) (grokWebModelInfo, string, *Result, error) {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return grokWebModelInfo{GrokModel: "", ModelMode: ""}, "", nil, err
+	}
+
+	messages, ok := m["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		return grokWebModelInfo{GrokModel: "", ModelMode: ""}, "", jsonErr(400, "Missing or empty messages array", "invalid_request", ""), nil
+	}
+
+	info, okInfo := grokWebModelMap[model]
+	if !okInfo {
+		info = grokWebModelMap["grok-4.1-fast"]
+	}
+
+	message := parseOpenAIMessages(messages)
+	if strings.TrimSpace(message) == "" {
+		return grokWebModelInfo{GrokModel: "", ModelMode: ""}, "", jsonErr(400, "Empty query after processing", "invalid_request", ""), nil
+	}
+
+	return info, message, nil, nil
+}
+
+// Execute performs Grok web completions.
+func (e *GrokWebExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+	info, message, errRes, err := parseGrokRequest(body, model)
+	if err != nil {
+		return nil, err
+	}
+
+	if errRes != nil {
+		return errRes, nil
+	}
+
+	payloadBytes, err := buildGrokWebPayload(info, message)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := e.DoPOST(ctx, grokWebChatAPI, buildGrokWebHeaders(cred), payloadBytes)
 	if err != nil {
 		return nil, err
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		status := res.StatusCode
-		msg := fmt.Sprintf("Grok returned HTTP %d", status)
-
-		if status == 401 || status == 403 {
-			msg = "Grok auth failed — SSO cookie may be expired. Re-paste your sso cookie value from grok.com."
-		} else if status == 429 {
-			msg = "Grok rate limited. Wait a moment and retry, or rotate cookies."
-		}
-
-		DrainBody(res.Body)
-
-		return jsonErr(status, msg, "upstream_error", fmt.Sprintf("HTTP_%d", status)), nil
+		return handleGrokWebStatusError(res), nil
 	}
 
 	cid := "chatcmpl-grok-" + randomUUID()[:12]
 	created := time.Now().Unix()
 
 	if stream {
-		sseBody := convertGrokNDJSONToSSE(res.Body, model, cid, created)
-
-		return &Result{
-			StatusCode: 200,
-			Header: http.Header{
-				"Content-Type":      []string{"text/event-stream"},
-				"Cache-Control":     []string{"no-cache"},
-				"Connection":        []string{"keep-alive"},
-				"X-Accel-Buffering": []string{"no"},
-			},
-			Body: sseBody,
-		}, nil
+		return makeGrokSSEResult(convertGrokNDJSONToSSE(res.Body, model, cid, created)), nil
 	}
 
 	jsonBody, err := convertGrokNDJSONToJSON(res.Body, model, cid, created)
@@ -278,16 +324,59 @@ func (e *GrokWebExecutor) Execute(ctx context.Context, cred Credentials, model s
 		return jsonErr(502, err.Error(), "upstream_error", "GROK_ERROR"), nil
 	}
 
-	return &Result{
-		StatusCode: 200,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(bytes.NewReader(jsonBody)),
-	}, nil
+	return makeGrokJSONResult(jsonBody), nil
 }
 
 type grokChunk struct {
 	delta, fullMessage, errorMsg string
 	done                         bool
+}
+
+func parseGrokNDJSONError(event map[string]any) (grokChunk, bool) {
+	if errObj, ok := event["error"].(map[string]any); ok {
+		msg, okMsg := errObj["message"].(string)
+		if !okMsg || msg == "" {
+			msg = fmt.Sprintf("Grok error: %v", errObj["code"])
+		}
+
+		return grokChunk{errorMsg: msg, done: true, delta: "", fullMessage: ""}, true
+	}
+
+	return grokChunk{errorMsg: "", done: false, delta: "", fullMessage: ""}, false
+}
+
+func parseGrokNDJSONResponse(resp map[string]any) (grokChunk, bool) {
+	if mr, ok := resp["modelResponse"].(map[string]any); ok {
+		if msg, okMsg := mr["message"].(string); okMsg && msg != "" {
+			return grokChunk{fullMessage: msg, delta: "", errorMsg: "", done: false}, true
+		}
+
+		return grokChunk{fullMessage: "", delta: "", errorMsg: "", done: false}, false
+	}
+
+	if tok, ok := resp["token"]; ok && tok != nil {
+		return grokChunk{delta: fmt.Sprint(tok), fullMessage: "", errorMsg: "", done: false}, true
+	}
+
+	return grokChunk{delta: "", fullMessage: "", errorMsg: "", done: false}, false
+}
+
+func parseGrokNDJSONEvent(event map[string]any) (grokChunk, bool) {
+	if errChunk, ok := parseGrokNDJSONError(event); ok {
+		return errChunk, true
+	}
+
+	result, okResult := event["result"].(map[string]any)
+	if !okResult {
+		return grokChunk{delta: "", fullMessage: "", errorMsg: "", done: false}, false
+	}
+
+	resp, okResp := result["response"].(map[string]any)
+	if !okResp || resp == nil {
+		return grokChunk{delta: "", fullMessage: "", errorMsg: "", done: false}, false
+	}
+
+	return parseGrokNDJSONResponse(resp)
 }
 
 func readGrokNDJSON(r io.Reader, out chan<- grokChunk) {
@@ -307,50 +396,69 @@ func readGrokNDJSON(r io.Reader, out chan<- grokChunk) {
 			continue
 		}
 
-		if errObj, ok := event["error"].(map[string]any); ok {
-			msg, _ := errObj["message"].(string)
-			if msg == "" {
-				msg = fmt.Sprintf("Grok error: %v", errObj["code"])
+		if chunk, ok := parseGrokNDJSONEvent(event); ok {
+			out <- chunk
+
+			if chunk.done {
+				return
 			}
-			out <- grokChunk{errorMsg: msg, done: true, delta: "", fullMessage: ""}
-
-			return
-		}
-
-		result, _ := event["result"].(map[string]any)
-
-		resp, _ := result["response"].(map[string]any)
-		if resp == nil {
-			continue
-		}
-
-		if mr, ok := resp["modelResponse"].(map[string]any); ok {
-			if msg, _ := mr["message"].(string); msg != "" {
-				out <- grokChunk{fullMessage: msg, delta: "", errorMsg: "", done: false}
-			}
-
-			continue
-		}
-
-		if tok, ok := resp["token"]; ok && tok != nil {
-			out <- grokChunk{delta: fmt.Sprint(tok), fullMessage: "", errorMsg: "", done: false}
 		}
 	}
+
 	out <- grokChunk{done: true, delta: "", fullMessage: "", errorMsg: ""}
+}
+
+func emitGrokStreamChunks(ch <-chan grokChunk, cid, model string, created int64, writeSSE func(map[string]any)) {
+	for c := range ch {
+		if c.errorMsg != "" {
+			writeSSE(map[string]any{
+				"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+				"system_fingerprint": nil,
+				"choices": []any{map[string]any{
+					"index": 0, "delta": map[string]any{"content": "[Error: " + c.errorMsg + "]"},
+					"finish_reason": nil, "logprobs": nil,
+				}},
+			})
+
+			break
+		}
+
+		if c.done {
+			break
+		}
+
+		if c.delta != "" {
+			writeSSE(map[string]any{
+				"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+				"system_fingerprint": nil,
+				"choices": []any{map[string]any{
+					"index": 0, "delta": map[string]any{"content": c.delta},
+					"finish_reason": nil, "logprobs": nil,
+				}},
+			})
+		}
+	}
 }
 
 func convertGrokNDJSONToSSE(r io.ReadCloser, model, cid string, created int64) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
-		defer r.Close()
-		defer pw.Close()
+		defer func() {
+			_ = r.Close()  // nolint:errcheck
+			_ = pw.Close() // nolint:errcheck
+		}()
 
 		writeSSE := func(obj map[string]any) {
-			b, _ := json.Marshal(obj)
-			_, _ = pw.Write([]byte("data: "))
-			_, _ = pw.Write(b)
-			_, _ = pw.Write([]byte("\n\n"))
+			b, err := json.Marshal(obj)
+			if err != nil {
+				return
+			}
+
+			_, _ = pw.Write([]byte("data: ")) // nolint:errcheck
+			_, _ = pw.Write(b)                // nolint:errcheck
+			_, _ = pw.Write([]byte("\n\n"))   // nolint:errcheck
 		}
+
 		writeSSE(map[string]any{
 			"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
 			"system_fingerprint": nil,
@@ -362,35 +470,7 @@ func convertGrokNDJSONToSSE(r io.ReadCloser, model, cid string, created int64) i
 		ch := make(chan grokChunk, 16)
 		go readGrokNDJSON(r, ch)
 
-		for c := range ch {
-			if c.errorMsg != "" {
-				writeSSE(map[string]any{
-					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-					"system_fingerprint": nil,
-					"choices": []any{map[string]any{
-						"index": 0, "delta": map[string]any{"content": "[Error: " + c.errorMsg + "]"},
-						"finish_reason": nil, "logprobs": nil,
-					}},
-				})
-
-				break
-			}
-
-			if c.done {
-				break
-			}
-
-			if c.delta != "" {
-				writeSSE(map[string]any{
-					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-					"system_fingerprint": nil,
-					"choices": []any{map[string]any{
-						"index": 0, "delta": map[string]any{"content": c.delta},
-						"finish_reason": nil, "logprobs": nil,
-					}},
-				})
-			}
-		}
+		emitGrokStreamChunks(ch, cid, model, created, writeSSE)
 
 		writeSSE(map[string]any{
 			"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
@@ -400,14 +480,16 @@ func convertGrokNDJSONToSSE(r io.ReadCloser, model, cid string, created int64) i
 			}},
 		})
 
-		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+		_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
 	}()
 
 	return pr
 }
 
 func convertGrokNDJSONToJSON(r io.ReadCloser, model, cid string, created int64) ([]byte, error) {
-	defer r.Close()
+	defer func() {
+		_ = r.Close() // nolint:errcheck
+	}()
 
 	ch := make(chan grokChunk, 16)
 	go readGrokNDJSON(r, ch)

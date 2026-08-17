@@ -109,8 +109,8 @@ func TestWindsurfExecutor_ExecutionAndStreaming(t *testing.T) {
 		gotContentType = r.Header.Get("Content-Type")
 
 		w.Header().Set("Content-Type", "application/grpc-web+proto")
-		_, _ = w.Write(buildMockWindsurfContentFrame("Hello from Windsurf"))
-		_, _ = w.Write(buildMockWindsurfDoneFrame(12, 8))
+		_, _ = w.Write(buildMockWindsurfContentFrame("Hello from Windsurf")) // nolint:errcheck
+		_, _ = w.Write(buildMockWindsurfDoneFrame(12, 8))                    // nolint:errcheck
 	}))
 	defer srv.Close()
 
@@ -134,7 +134,8 @@ func TestWindsurfExecutor_ExecutionAndStreaming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = res.Body.Close() }()
+
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
@@ -161,10 +162,10 @@ func TestWindsurfExecutor_ExecutionAndStreaming(t *testing.T) {
 }
 
 func TestWindsurfExecutor_NonStreaming(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/grpc-web+proto")
-		_, _ = w.Write(buildMockWindsurfContentFrame("Unary code result"))
-		_, _ = w.Write(buildMockWindsurfDoneFrame(5, 5))
+		_, _ = w.Write(buildMockWindsurfContentFrame("Unary code result")) // nolint:errcheck
+		_, _ = w.Write(buildMockWindsurfDoneFrame(5, 5))                   // nolint:errcheck
 	}))
 	defer srv.Close()
 
@@ -184,7 +185,8 @@ func TestWindsurfExecutor_NonStreaming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = res.Body.Close() }()
+
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
 
 	var respObj map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {

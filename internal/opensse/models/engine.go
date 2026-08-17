@@ -194,10 +194,6 @@ func (e *Engine) ResolveModels(ctx context.Context, conn *store.Connection) ([]D
 		e.mu.Unlock()
 	}()
 
-	if resolver == nil {
-		return nil, nil
-	}
-
 	models, err := resolver.Resolve(ctx, conn)
 	if err != nil {
 		return nil, err

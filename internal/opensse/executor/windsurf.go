@@ -138,10 +138,8 @@ func ResolveWsModelID(model string) string {
 	return model
 }
 
-// BuildWindsurfGetChatMessageRequest constructs the gRPC protobuf request for Codeium chat messages.
-func BuildWindsurfGetChatMessageRequest(apiKey, model string, messages []any) []byte {
+func buildWindsurfMeta(apiKey string) []byte {
 	sessionID := randomUUID()
-	cascadeID := randomUUID()
 
 	var metaBuf bytes.Buffer
 	// Field 1: apiKey
@@ -157,13 +155,62 @@ func BuildWindsurfGetChatMessageRequest(apiKey, model string, messages []any) []
 	// Field 6: locale
 	writeProtoField(&metaBuf, 6, []byte(windsurfLocale))
 
+	return metaBuf.Bytes()
+}
+
+func parseWindsurfMsgContent(content any) string {
+	switch c := content.(type) {
+	case string:
+		return c
+	case []any:
+		parts := make([]string, 0, len(c))
+
+		for _, p := range c {
+			if pm, ok := p.(map[string]any); ok {
+				if t, ok := pm["type"].(string); ok && t == "text" {
+					parts = append(parts, fmt.Sprint(pm["text"]))
+				}
+			}
+		}
+
+		return strings.Join(parts, " ")
+	default:
+		return ""
+	}
+}
+
+func buildWindsurfChatMessageProto(msg map[string]any) []byte {
+	role, ok := msg["role"].(string)
+	if !ok || role == "" {
+		role = "user"
+	}
+
+	content := parseWindsurfMsgContent(msg["content"])
+
+	var chatMsgBuf bytes.Buffer
+
+	writeProtoField(&chatMsgBuf, 1, []byte(role))
+	writeProtoField(&chatMsgBuf, 2, []byte(content))
+
+	if tcid, ok := msg["tool_call_id"].(string); ok && tcid != "" {
+		writeProtoField(&chatMsgBuf, 3, []byte(tcid))
+	}
+
+	return chatMsgBuf.Bytes()
+}
+
+// BuildWindsurfGetChatMessageRequest constructs the gRPC protobuf request for Codeium chat messages.
+func BuildWindsurfGetChatMessageRequest(apiKey, model string, messages []any) []byte {
+	cascadeID := randomUUID()
+	metaBytes := buildWindsurfMeta(apiKey)
+
 	var modelBuf bytes.Buffer
 
 	writeProtoField(&modelBuf, 1, []byte(model))
 
 	var reqBuf bytes.Buffer
 	// Field 1: metadata
-	writeProtoField(&reqBuf, 1, metaBuf.Bytes())
+	writeProtoField(&reqBuf, 1, metaBytes)
 	// Field 2: cascade_id
 	writeProtoField(&reqBuf, 2, []byte(cascadeID))
 	// Field 3: model_or_alias
@@ -176,39 +223,8 @@ func BuildWindsurfGetChatMessageRequest(apiKey, model string, messages []any) []
 			continue
 		}
 
-		role, _ := msg["role"].(string)
-		if role == "" {
-			role = "user"
-		}
-
-		content := ""
-		switch c := msg["content"].(type) {
-		case string:
-			content = c
-		case []any:
-			var parts []string
-
-			for _, p := range c {
-				if pm, ok := p.(map[string]any); ok {
-					if t, _ := pm["type"].(string); t == "text" {
-						parts = append(parts, fmt.Sprint(pm["text"]))
-					}
-				}
-			}
-
-			content = strings.Join(parts, " ")
-		}
-
-		var chatMsgBuf bytes.Buffer
-
-		writeProtoField(&chatMsgBuf, 1, []byte(role))
-		writeProtoField(&chatMsgBuf, 2, []byte(content))
-
-		if tcid, _ := msg["tool_call_id"].(string); tcid != "" {
-			writeProtoField(&chatMsgBuf, 3, []byte(tcid))
-		}
-
-		writeProtoField(&reqBuf, 4, chatMsgBuf.Bytes())
+		chatMsgBytes := buildWindsurfChatMessageProto(msg)
+		writeProtoField(&reqBuf, 4, chatMsgBytes)
 	}
 
 	return reqBuf.Bytes()
@@ -237,6 +253,7 @@ func decodeWsField(fieldNum uint64, fieldBytes []byte) wsDecodedChunk {
 		}
 	case 3: // DoneChunk -> field 1 UsageStats
 		pt, ct := decodeWsDoneChunk(fieldBytes)
+
 		return wsDecodedChunk{
 			kind:             "done",
 			text:             "",
@@ -246,6 +263,7 @@ func decodeWsField(fieldNum uint64, fieldBytes []byte) wsDecodedChunk {
 		}
 	case 4: // ErrorChunk -> field 1 string
 		errMsg := decodeWsStringField(fieldBytes, 1)
+
 		return wsDecodedChunk{
 			kind:             "error",
 			text:             "",
@@ -264,8 +282,29 @@ func decodeWsField(fieldNum uint64, fieldBytes []byte) wsDecodedChunk {
 	}
 }
 
+func decodeWsLengthDelimited(payload []byte, p *int) ([]byte, bool) {
+	length, ln := binary.Uvarint(payload[*p:])
+	if ln <= 0 || length > uint64(math.MaxInt) {
+		return nil, false
+	}
+
+	*p += ln
+	end := *p + int(length) // #nosec G115
+
+	if end > len(payload) {
+		return nil, false
+	}
+
+	fieldBytes := payload[*p:end]
+	*p = end
+
+	return fieldBytes, true
+}
+
 func decodeWsCompletionChunk(payload []byte) wsDecodedChunk {
+	unknown := wsDecodedChunk{kind: "unknown", text: "", promptTokens: 0, completionTokens: 0, message: ""}
 	p := 0
+
 	for p < len(payload) {
 		tag, n := binary.Uvarint(payload[p:])
 		if n <= 0 {
@@ -276,48 +315,34 @@ func decodeWsCompletionChunk(payload []byte) wsDecodedChunk {
 		fieldNum := tag >> 3
 		wireType := tag & 0x07
 
-		if wireType == 2 {
-			length, ln := binary.Uvarint(payload[p:])
-			if ln <= 0 || length > uint64(math.MaxInt) {
-				break
+		switch wireType {
+		case 2:
+			fieldBytes, ok := decodeWsLengthDelimited(payload, &p)
+			if !ok {
+				return unknown
 			}
-
-			p += ln
-
-			end := p + int(length) // #nosec G115
-			if end > len(payload) {
-				break
-			}
-
-			fieldBytes := payload[p:end]
-			p = end
 
 			if res := decodeWsField(fieldNum, fieldBytes); res.kind != "unknown" {
 				return res
 			}
-		} else if wireType == 0 {
+		case 0:
 			_, vn := binary.Uvarint(payload[p:])
 			if vn <= 0 {
-				break
+				return unknown
 			}
 
 			p += vn
-		} else {
-			break
+		default:
+			return unknown
 		}
 	}
 
-	return wsDecodedChunk{
-		kind:             "unknown",
-		text:             "",
-		promptTokens:     0,
-		completionTokens: 0,
-		message:          "",
-	}
+	return unknown
 }
 
 func decodeWsStringField(payload []byte, targetField uint64) string {
 	p := 0
+
 	for p < len(payload) {
 		tag, n := binary.Uvarint(payload[p:])
 		if n <= 0 {
@@ -326,35 +351,27 @@ func decodeWsStringField(payload []byte, targetField uint64) string {
 
 		p += n
 		fieldNum := tag >> 3
+		wireType := tag & 7
 
-		wireType := tag & 0x07
-		if wireType == 2 {
-			length, ln := binary.Uvarint(payload[p:])
-			if ln <= 0 || length > uint64(math.MaxInt) {
-				break
-			}
-
-			p += ln
-
-			end := p + int(length) // #nosec G115
-			if end > len(payload) {
-				break
+		switch wireType {
+		case 2:
+			fieldBytes, ok := decodeWsLengthDelimited(payload, &p)
+			if !ok {
+				return ""
 			}
 
 			if fieldNum == targetField {
-				return string(payload[p:end])
+				return string(fieldBytes)
 			}
-
-			p = end
-		} else if wireType == 0 {
+		case 0:
 			_, vn := binary.Uvarint(payload[p:])
 			if vn <= 0 {
-				break
+				return ""
 			}
 
 			p += vn
-		} else {
-			break
+		default:
+			return ""
 		}
 	}
 
@@ -394,6 +411,19 @@ func parseWsUsageStats(usageBytes []byte) (promptTokens, completionTokens int) {
 	return promptTokens, completionTokens
 }
 
+func handleWsLengthDelimitedDone(payload []byte, p *int, fieldNum uint64, promptTokens, completionTokens *int) bool {
+	fieldBytes, ok := decodeWsLengthDelimited(payload, p)
+	if !ok {
+		return false
+	}
+
+	if fieldNum == 1 {
+		*promptTokens, *completionTokens = parseWsUsageStats(fieldBytes)
+	}
+
+	return true
+}
+
 func decodeWsDoneChunk(payload []byte) (promptTokens, completionTokens int) {
 	p := 0
 	for p < len(payload) {
@@ -406,33 +436,20 @@ func decodeWsDoneChunk(payload []byte) (promptTokens, completionTokens int) {
 		fieldNum := tag >> 3
 		wireType := tag & 0x07
 
-		if wireType == 2 { // Field 1 = UsageStats
-			length, ln := binary.Uvarint(payload[p:])
-			if ln <= 0 || length > uint64(math.MaxInt) {
-				break
+		switch wireType {
+		case 2:
+			if !handleWsLengthDelimitedDone(payload, &p, fieldNum, &promptTokens, &completionTokens) {
+				return promptTokens, completionTokens
 			}
-
-			p += ln
-
-			end := p + int(length) // #nosec G115
-			if end > len(payload) {
-				break
-			}
-
-			if fieldNum == 1 {
-				promptTokens, completionTokens = parseWsUsageStats(payload[p:end])
-			}
-
-			p = end
-		} else if wireType == 0 {
+		case 0:
 			_, vn := binary.Uvarint(payload[p:])
 			if vn <= 0 {
-				break
+				return promptTokens, completionTokens
 			}
 
 			p += vn
-		} else {
-			break
+		default:
+			return promptTokens, completionTokens
 		}
 	}
 
@@ -452,8 +469,8 @@ func prepareWindsurfRequest(cred Credentials, model string, body []byte) (string
 
 	wsModel := ResolveWsModelID(model)
 
-	messages, _ := m["messages"].([]any)
-	if len(messages) == 0 {
+	messages, ok := m["messages"].([]any)
+	if !ok || len(messages) == 0 {
 		messages = []any{map[string]any{"role": "user", "content": ""}}
 	}
 
@@ -623,14 +640,20 @@ func finishWsStream(cid, model string, created int64, hadError string, promptTok
 func wrapWindsurfStream(r io.ReadCloser, model, cid string, created int64) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
-		defer func() { _ = r.Close() }()
-		defer func() { _ = pw.Close() }()
+		defer func() {
+			_ = r.Close()  // nolint:errcheck
+			_ = pw.Close() // nolint:errcheck
+		}()
 
 		writeSSE := func(obj map[string]any) {
-			b, _ := json.Marshal(obj)
-			_, _ = pw.Write([]byte("data: "))
-			_, _ = pw.Write(b)
-			_, _ = pw.Write([]byte("\n\n"))
+			b, err := json.Marshal(obj)
+			if err != nil {
+				return
+			}
+
+			_, _ = pw.Write([]byte("data: ")) // nolint:errcheck
+			_, _ = pw.Write(b)                // nolint:errcheck
+			_, _ = pw.Write([]byte("\n\n"))   // nolint:errcheck
 		}
 
 		writeSSE(map[string]any{
@@ -651,7 +674,7 @@ func wrapWindsurfStream(r io.ReadCloser, model, cid string, created int64) io.Re
 
 		finishWsStream(cid, model, created, hadError, promptTokens, completionTokens, writeSSE)
 
-		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+		_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
 	}()
 
 	return pr
@@ -684,7 +707,7 @@ func handleWsNonStreamFrame(flag byte, payload []byte, hadError *string, totalTe
 }
 
 func collectWindsurfNonStreaming(r io.ReadCloser, model, cid string, created int64) ([]byte, error) {
-	defer func() { _ = r.Close() }()
+	defer func() { _ = r.Close() }() // nolint:errcheck
 
 	var (
 		totalText                      string

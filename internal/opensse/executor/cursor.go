@@ -499,6 +499,7 @@ func (e *CursorExecutor) executeConnectRPC(ctx context.Context, base string, cre
 	}
 
 	machineID := ""
+
 	if cred.ProviderSpecificData != nil {
 		if mid, ok := cred.ProviderSpecificData["machineId"].(string); ok {
 			machineID = mid

@@ -39,6 +39,7 @@ const (
 	traeUserAgent      = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
 )
 
+// TraeExecutor executes chat requests via the Trae API.
 type TraeExecutor struct {
 	Base
 }
@@ -118,6 +119,29 @@ func resolveTraeMode(model string) traeModeInfo {
 	return traeModeInfo{mode: "code", strategy: strategy, modelName: modelName}
 }
 
+func extractTraeMessageContent(c any) string {
+	switch val := c.(type) {
+	case string:
+		return val
+	case []any:
+		var sub []string
+
+		for _, p := range val {
+			if s, ok := p.(string); ok {
+				sub = append(sub, s)
+			} else if pm, ok := p.(map[string]any); ok {
+				if t, ok := pm["text"].(string); ok {
+					sub = append(sub, t)
+				}
+			}
+		}
+
+		return strings.Join(sub, "")
+	default:
+		return ""
+	}
+}
+
 func flattenTraeQuery(messages []any) string {
 	var parts []string
 
@@ -127,33 +151,15 @@ func flattenTraeQuery(messages []any) string {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
+		role, _ := msg["role"].(string) // nolint:errcheck
+		content := extractTraeMessageContent(msg["content"])
 
-		content := ""
-		switch c := msg["content"].(type) {
-		case string:
-			content = c
-		case []any:
-			var sub []string
-
-			for _, p := range c {
-				if s, ok := p.(string); ok {
-					sub = append(sub, s)
-				} else if pm, ok := p.(map[string]any); ok {
-					if t, ok := pm["text"].(string); ok {
-						sub = append(sub, t)
-					}
-				}
-			}
-
-			content = strings.Join(sub, "")
-		}
-
-		if role == "system" {
+		switch role {
+		case "system":
 			parts = append(parts, fmt.Sprintf("[System]\n%s", content))
-		} else if role == "assistant" {
+		case "assistant":
 			parts = append(parts, fmt.Sprintf("[Assistant]\n%s", content))
-		} else {
+		default:
 			parts = append(parts, content)
 		}
 	}
@@ -166,84 +172,51 @@ func flattenTraeQuery(messages []any) string {
 			},
 		},
 	}
-	b, _ := json.Marshal(typedBlocks)
+
+	b, err := json.Marshal(typedBlocks)
+	if err != nil {
+		return ""
+	}
 
 	return string(b)
 }
 
-func buildTraeCommonParams(psd map[string]any, mode string) string {
-	appLang := "en"
-	appVer := "1.0.0.1229"
-	webID := ""
-	userIdentity := "Free"
-	bizUserID := ""
-	userUniqueID := ""
-	scope := "marscode-us"
-	tenant := "marscode"
-	region := "US-East"
-	aiRegion := "US-East"
-
-	if psd != nil {
-		if v, ok := psd["appLanguage"].(string); ok && v != "" {
-			appLang = v
-		}
-
-		if v, ok := psd["appVersion"].(string); ok && v != "" {
-			appVer = v
-		}
-
-		if v, ok := psd["webId"].(string); ok {
-			webID = v
-		}
-
-		if v, ok := psd["userIdentity"].(string); ok && v != "" {
-			userIdentity = v
-		}
-
-		if v, ok := psd["bizUserId"].(string); ok {
-			bizUserID = v
-		}
-
-		if v, ok := psd["userUniqueId"].(string); ok {
-			userUniqueID = v
-		}
-
-		if v, ok := psd["scope"].(string); ok && v != "" {
-			scope = v
-		}
-
-		if v, ok := psd["tenant"].(string); ok && v != "" {
-			tenant = v
-		}
-
-		if v, ok := psd["region"].(string); ok && v != "" {
-			region = v
-		}
-
-		if v, ok := psd["aiRegion"].(string); ok && v != "" {
-			aiRegion = v
-		}
+func getPSDString(psd map[string]any, key, defaultVal string) string {
+	if psd == nil {
+		return defaultVal
 	}
 
+	if v, ok := psd[key].(string); ok && v != "" {
+		return v
+	}
+
+	return defaultVal
+}
+
+func buildTraeCommonParams(psd map[string]any, mode string) string {
 	cp := map[string]any{
 		"language":        "en-us",
-		"app_language":    appLang,
+		"app_language":    getPSDString(psd, "appLanguage", "en"),
 		"quality":         "stable",
-		"app_version":     appVer,
-		"web_id":          webID,
-		"user_identity":   userIdentity,
+		"app_version":     getPSDString(psd, "appVersion", "1.0.0.1229"),
+		"web_id":          getPSDString(psd, "webId", ""),
+		"user_identity":   getPSDString(psd, "userIdentity", "Free"),
 		"is_freshman":     "0",
-		"biz_user_id":     bizUserID,
-		"user_unique_id":  userUniqueID,
-		"scope":           scope,
-		"tenant":          tenant,
-		"region":          region,
-		"aiRegion":        aiRegion,
+		"biz_user_id":     getPSDString(psd, "bizUserId", ""),
+		"user_unique_id":  getPSDString(psd, "userUniqueId", ""),
+		"scope":           getPSDString(psd, "scope", "marscode-us"),
+		"tenant":          getPSDString(psd, "tenant", "marscode"),
+		"region":          getPSDString(psd, "region", "US-East"),
+		"aiRegion":        getPSDString(psd, "aiRegion", "US-East"),
 		"is_privacy_mode": 0,
 		"privacy_mode":    "off",
 		"solo_chat_mode":  mode,
 	}
-	b, _ := json.Marshal(cp)
+
+	b, err := json.Marshal(cp)
+	if err != nil {
+		return "{}"
+	}
 
 	return string(b)
 }
@@ -279,9 +252,13 @@ func (e *TraeExecutor) createSession(ctx context.Context, headers http.Header, q
 		return "", "", err
 	}
 
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
 
-	bodyBytes, _ := io.ReadAll(res.Body)
+	bodyBytes, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", "", err
+	}
+
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return "", "", fmt.Errorf("[%d] %s", res.StatusCode, string(bodyBytes))
 	}
@@ -306,13 +283,18 @@ func (e *TraeExecutor) createSession(ctx context.Context, headers http.Header, q
 	return jsonResp.Data.ChatSessionID, jsonResp.Data.MessageID, nil
 }
 
+// Execute runs a completion request against Trae Solo backend.
 func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
 
-	messages, _ := m["messages"].([]any)
+	messages, ok := m["messages"].([]any)
+	if !ok {
+		messages = nil
+	}
+
 	query := flattenTraeQuery(messages)
 
 	headers := e.buildHeaders(cred, stream)
@@ -322,32 +304,14 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 		return jsonErr(502, err.Error(), "api_error", ""), nil
 	}
 
-	eventsURL := fmt.Sprintf("%s/chat_sessions/%s/events?reply_to_message_id=%s",
-		e.base(cred), sessionID, url.QueryEscape(messageID))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, eventsURL, nil)
+	res, err := e.fetchTraeEvents(ctx, cred, headers, sessionID, messageID)
 	if err != nil {
 		return nil, err
-	}
-
-	for k, vals := range headers {
-		for _, v := range vals {
-			req.Header.Add(k, v)
-		}
-	}
-
-	res, err := e.client().Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	if res == nil || res.Body == nil {
-		return nil, fmt.Errorf("nil response from upstream")
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		DrainBody(res.Body)
-		_ = res.Body.Close()
+		_ = res.Body.Close() // nolint:errcheck
 
 		return jsonErr(res.StatusCode, fmt.Sprintf("events stream HTTP %d", res.StatusCode), "api_error", ""), nil
 	}
@@ -381,6 +345,33 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 	}, nil
 }
 
+func (e *TraeExecutor) fetchTraeEvents(ctx context.Context, cred Credentials, headers http.Header, sessionID, messageID string) (*http.Response, error) {
+	eventsURL := fmt.Sprintf("%s/chat_sessions/%s/events?reply_to_message_id=%s",
+		e.base(cred), sessionID, url.QueryEscape(messageID))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, eventsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for k, vals := range headers {
+		for _, v := range vals {
+			req.Header.Add(k, v)
+		}
+	}
+
+	res, err := e.client().Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if res == nil || res.Body == nil {
+		return nil, fmt.Errorf("nil response from upstream")
+	}
+
+	return res, nil
+}
+
 type traePlanState struct {
 	thoughts map[string]string
 	order    []string
@@ -388,8 +379,8 @@ type traePlanState struct {
 }
 
 func (s *traePlanState) renderNewText(data map[string]any) string {
-	pid, _ := data["id"].(string)
-	if pid == "" {
+	pid, ok := data["id"].(string)
+	if !ok || pid == "" {
 		return ""
 	}
 
@@ -401,8 +392,8 @@ func (s *traePlanState) renderNewText(data map[string]any) string {
 		s.order = append(s.order, pid)
 	}
 
-	t, _ := data["thought"].(string)
-	if len(t) >= len(s.thoughts[pid]) {
+	t, ok := data["thought"].(string)
+	if ok && len(t) >= len(s.thoughts[pid]) {
 		s.thoughts[pid] = t
 	}
 
@@ -418,17 +409,100 @@ func (s *traePlanState) renderNewText(data map[string]any) string {
 	return piece
 }
 
+func handleTraeSSEData(payload string, currentEvent *string, state *traePlanState, usage *map[string]any, errorEvent *map[string]any, onPlanItem func(piece string)) bool {
+	var data map[string]any
+
+	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+		data = map[string]any{"_raw": payload}
+	}
+
+	switch *currentEvent {
+	case "error":
+		*errorEvent = data
+	case "token_usage":
+		*usage = data
+	case "plan_item":
+		piece := state.renderNewText(data)
+		if onPlanItem != nil && piece != "" {
+			onPlanItem(piece)
+		}
+	}
+
+	return *currentEvent == "error" || *currentEvent == "done"
+}
+
+func parseTraeSSELine(line string, currentEvent *string, state *traePlanState, usage *map[string]any, errorEvent *map[string]any, onPlanItem func(piece string)) bool {
+	switch {
+	case strings.HasPrefix(line, "event:"):
+		*currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+	case strings.HasPrefix(line, "data:"):
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		return handleTraeSSEData(payload, currentEvent, state, usage, errorEvent, onPlanItem)
+	case line == "":
+		*currentEvent = ""
+	}
+
+	return false
+}
+
+func emitTraeStreamEnd(pw *io.PipeWriter, cid, model string, created int64, errorEvent, usage map[string]any) {
+	writeSSE := func(obj map[string]any) {
+		b, err := json.Marshal(obj)
+		if err != nil {
+			return
+		}
+
+		_, _ = pw.Write([]byte("data: ")) // nolint:errcheck
+		_, _ = pw.Write(b)                // nolint:errcheck
+		_, _ = pw.Write([]byte("\n\n"))   // nolint:errcheck
+	}
+
+	if errorEvent != nil {
+		writeSSE(map[string]any{
+			"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+			"choices": []any{},
+			"error": map[string]any{
+				"message": fmt.Sprintf("trae %v: %v", errorEvent["code"], errorEvent["message"]),
+				"type":    "api_error",
+			},
+		})
+	} else {
+		choiceChunk := map[string]any{
+			"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+			"choices": []any{map[string]any{
+				"index": 0, "delta": map[string]any{}, "finish_reason": "stop",
+			}},
+		}
+
+		if usage != nil {
+			choiceChunk["usage"] = map[string]any{
+				"prompt_tokens":     usage["prompt_tokens"],
+				"completion_tokens": usage["completion_tokens"],
+				"total_tokens":      usage["total_tokens"],
+			}
+		}
+
+		writeSSE(choiceChunk)
+	}
+
+	_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
+}
+
 func wrapTraeEventStream(r io.ReadCloser, model, cid string, created int64) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
-		defer r.Close()
-		defer pw.Close()
+		defer func() { _ = r.Close() }()  // nolint:errcheck
+		defer func() { _ = pw.Close() }() // nolint:errcheck
 
 		writeSSE := func(obj map[string]any) {
-			b, _ := json.Marshal(obj)
-			_, _ = pw.Write([]byte("data: "))
-			_, _ = pw.Write(b)
-			_, _ = pw.Write([]byte("\n\n"))
+			b, err := json.Marshal(obj)
+			if err != nil {
+				return
+			}
+
+			_, _ = pw.Write([]byte("data: ")) // nolint:errcheck
+			_, _ = pw.Write(b)                // nolint:errcheck
+			_, _ = pw.Write([]byte("\n\n"))   // nolint:errcheck
 		}
 
 		writeSSE(map[string]any{
@@ -454,81 +528,29 @@ func wrapTraeEventStream(r io.ReadCloser, model, cid string, created int64) io.R
 
 		for sc.Scan() {
 			line := strings.TrimRight(sc.Text(), "\r\n")
-			if strings.HasPrefix(line, "event:") {
-				currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			} else if strings.HasPrefix(line, "data:") {
-				payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 
-				var data map[string]any
-
-				if err := json.Unmarshal([]byte(payload), &data); err != nil {
-					data = map[string]any{"_raw": payload}
-				}
-
-				if currentEvent == "error" {
-					errorEvent = data
-					break
-				}
-
-				if currentEvent == "token_usage" {
-					usage = data
-				}
-
-				if currentEvent == "plan_item" {
-					piece := state.renderNewText(data)
-					if piece != "" {
-						writeSSE(map[string]any{
-							"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-							"choices": []any{map[string]any{
-								"index": 0, "delta": map[string]any{"content": piece}, "finish_reason": nil,
-							}},
-						})
-					}
-				}
-
-				if currentEvent == "done" {
-					break
-				}
-			} else if line == "" {
-				currentEvent = ""
-			}
-		}
-
-		if errorEvent != nil {
-			writeSSE(map[string]any{
-				"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-				"choices": []any{},
-				"error": map[string]any{
-					"message": fmt.Sprintf("trae %v: %v", errorEvent["code"], errorEvent["message"]),
-					"type":    "api_error",
-				},
+			stop := parseTraeSSELine(line, &currentEvent, state, &usage, &errorEvent, func(piece string) {
+				writeSSE(map[string]any{
+					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+					"choices": []any{map[string]any{
+						"index": 0, "delta": map[string]any{"content": piece}, "finish_reason": nil,
+					}},
+				})
 			})
-		} else {
-			choiceChunk := map[string]any{
-				"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-				"choices": []any{map[string]any{
-					"index": 0, "delta": map[string]any{}, "finish_reason": "stop",
-				}},
-			}
-			if usage != nil {
-				choiceChunk["usage"] = map[string]any{
-					"prompt_tokens":     usage["prompt_tokens"],
-					"completion_tokens": usage["completion_tokens"],
-					"total_tokens":      usage["total_tokens"],
-				}
-			}
 
-			writeSSE(choiceChunk)
+			if stop {
+				break
+			}
 		}
 
-		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+		emitTraeStreamEnd(pw, cid, model, created, errorEvent, usage)
 	}()
 
 	return pr
 }
 
 func collectTraeNonStreaming(r io.ReadCloser, model, cid string, created int64) ([]byte, error) {
-	defer r.Close()
+	defer func() { _ = r.Close() }() // nolint:errcheck
 
 	sc := bufio.NewScanner(r)
 
@@ -546,35 +568,11 @@ func collectTraeNonStreaming(r io.ReadCloser, model, cid string, created int64) 
 
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r\n")
-		if strings.HasPrefix(line, "event:") {
-			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		} else if strings.HasPrefix(line, "data:") {
-			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 
-			var data map[string]any
+		stop := parseTraeSSELine(line, &currentEvent, state, &usage, &errorEvent, nil)
 
-			if err := json.Unmarshal([]byte(payload), &data); err != nil {
-				data = map[string]any{"_raw": payload}
-			}
-
-			if currentEvent == "error" {
-				errorEvent = data
-				break
-			}
-
-			if currentEvent == "token_usage" {
-				usage = data
-			}
-
-			if currentEvent == "plan_item" {
-				state.renderNewText(data)
-			}
-
-			if currentEvent == "done" {
-				break
-			}
-		} else if line == "" {
-			currentEvent = ""
+		if stop {
+			break
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flamerouter/internal/opensse/executor"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,35 +13,41 @@ import (
 	"testing"
 )
 
-func TestDevinCliExecutor_PromptBuilderAndExecutionMock(t *testing.T) {
-	tmpDir := t.TempDir()
+func makeDevinMockScript(t *testing.T, tmpDir, name, delta string) string {
+	t.Helper()
 
-	var scriptName string
-
-	var scriptContent string
+	var (
+		scriptName    string
+		scriptContent string
+	)
 
 	if runtime.GOOS == "windows" {
-		scriptName = filepath.Join(tmpDir, "devin.bat")
-		scriptContent = `@echo off
+		scriptName = filepath.Join(tmpDir, name+".bat")
+		scriptContent = fmt.Sprintf(`@echo off
 echo {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"0.3"}}
 echo {"jsonrpc":"2.0","id":2,"result":{"sessionId":"mock-devin-ses-1"}}
-echo {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":"Hello from Devin CLI"}}}
+echo {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":"%s"}}}
 echo {"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":"done"}}
-`
+`, delta)
 	} else {
-		scriptName = filepath.Join(tmpDir, "devin.sh")
-		scriptContent = `#!/bin/sh
+		scriptName = filepath.Join(tmpDir, name+".sh")
+		scriptContent = fmt.Sprintf(`#!/bin/sh
 echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"0.3"}}'
 echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"mock-devin-ses-1"}}'
-echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":"Hello from Devin CLI"}}}'
+echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":"%s"}}}'
 echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":"done"}}'
-`
+`, delta)
 	}
 
-	if err := os.WriteFile(scriptName, []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(scriptName, []byte(scriptContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
+	return scriptName
+}
+
+func TestDevinCliExecutor_PromptBuilderAndExecutionMock(t *testing.T) {
+	scriptName := makeDevinMockScript(t, t.TempDir(), "devin", "Hello from Devin CLI")
 	t.Setenv("CLI_DEVIN_BIN", scriptName)
 
 	ex := executor.GetExecutor("devin-cli")
@@ -65,7 +72,8 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = res.Body.Close() }()
+
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
@@ -80,40 +88,13 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 }
 
 func TestDevinCliExecutor_NonStreaming(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	var scriptName string
-
-	var scriptContent string
-
-	if runtime.GOOS == "windows" {
-		scriptName = filepath.Join(tmpDir, "devin_nonstream.bat")
-		scriptContent = `@echo off
-echo {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"0.3"}}
-echo {"jsonrpc":"2.0","id":2,"result":{"sessionId":"mock-devin-ses-2"}}
-echo {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":"Non-streaming result"}}}
-echo {"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":"done"}}
-`
-	} else {
-		scriptName = filepath.Join(tmpDir, "devin_nonstream.sh")
-		scriptContent = `#!/bin/sh
-echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"0.3"}}'
-echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"mock-devin-ses-2"}}'
-echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":"Non-streaming result"}}}'
-echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":"done"}}'
-`
-	}
-
-	if err := os.WriteFile(scriptName, []byte(scriptContent), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
+	scriptName := makeDevinMockScript(t, t.TempDir(), "devin_nonstream", "Non-streaming result")
 	t.Setenv("CLI_DEVIN_BIN", scriptName)
 
 	ex := executor.GetExecutor("devin-cli")
 	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
 		"messages": []map[string]any{
-			{"role": "user", "content": "quick test"},
+			{"role": "user", "content": "solve this task"},
 		},
 	})
 
@@ -128,16 +109,19 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = res.Body.Close() }()
 
-	var respObj map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {
-		t.Fatal(err)
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
+
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
 	}
 
-	choices, ok := respObj["choices"].([]any)
+	var m map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&m) // nolint:errcheck
+
+	choices, ok := m["choices"].([]any)
 	if !ok || len(choices) == 0 {
-		t.Fatal("empty choices")
+		t.Fatalf("expected choices in non-streaming response: %v", m)
 	}
 
 	first, ok := choices[0].(map[string]any)

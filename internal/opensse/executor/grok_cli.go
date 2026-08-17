@@ -14,7 +14,7 @@ import (
 func init() {
 	RegisterSpecialized("grok-cli", &GrokCliExecutor{
 		Base: Base{
-			Client:   nil,
+			Client: nil,
 			Headers: map[string]string{
 				"User-Agent":               "grok-shell/0.2.99 (linux; x86_64)",
 				"x-grok-client-identifier": "grok-shell",
@@ -55,7 +55,10 @@ type GrokCliExecutor struct{ Base }
 
 func randomUUID() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 
@@ -64,7 +67,11 @@ func randomUUID() string {
 }
 
 func normalizeGrokCliEffort(value any) string {
-	s, _ := value.(string)
+	s, ok := value.(string)
+	if !ok {
+		return "high"
+	}
+
 	s = strings.TrimSpace(strings.ToLower(s))
 
 	if s == "max" {
@@ -106,8 +113,8 @@ func countGrokCliUserTurns(input any) int {
 			continue
 		}
 
-		role, _ := m["role"].(string)
-		typ, _ := m["type"].(string)
+		role, _ := m["role"].(string) // nolint:errcheck
+		typ, _ := m["type"].(string)  // nolint:errcheck
 
 		if role == "user" && (typ == "" || typ == "message") {
 			n++
@@ -121,6 +128,31 @@ func countGrokCliUserTurns(input any) int {
 	return n
 }
 
+func stripStoredItem(item any) (any, bool) {
+	if s, ok := item.(string); ok {
+		if serverIDPattern.MatchString(s) {
+			return nil, false
+		}
+
+		return item, true
+	}
+
+	m, ok := item.(map[string]any)
+	if !ok {
+		return item, true
+	}
+
+	if typ, okTyp := m["type"].(string); okTyp && typ == "item_reference" {
+		return nil, false
+	}
+
+	if id, okID := m["id"].(string); okID && id != "" && serverIDPattern.MatchString(id) && !grokCliNativeItemID.MatchString(id) {
+		delete(m, "id")
+	}
+
+	return m, true
+}
+
 func stripStoredItemReferences(body map[string]any) {
 	input, ok := body["input"].([]any)
 	if !ok {
@@ -130,42 +162,34 @@ func stripStoredItemReferences(body map[string]any) {
 	out := make([]any, 0, len(input))
 
 	for _, item := range input {
-		if s, ok := item.(string); ok {
-			if serverIDPattern.MatchString(s) {
-				continue
-			}
-
-			out = append(out, item)
-
-			continue
+		if cleaned, keep := stripStoredItem(item); keep {
+			out = append(out, cleaned)
 		}
-
-		m, ok := item.(map[string]any)
-		if !ok {
-			out = append(out, item)
-			continue
-		}
-
-		if typ, _ := m["type"].(string); typ == "item_reference" {
-			continue
-		}
-
-		if id, _ := m["id"].(string); id != "" && serverIDPattern.MatchString(id) && !grokCliNativeItemID.MatchString(id) {
-			delete(m, "id")
-		}
-
-		out = append(out, m)
 	}
 
 	body["input"] = out
 }
 
+func extractToolParams(t, fn map[string]any) any {
+	if p, ok := t["parameters"].(map[string]any); ok {
+		return p
+	}
+
+	if fn != nil {
+		if p, ok := fn["parameters"].(map[string]any); ok {
+			return p
+		}
+	}
+
+	return map[string]any{"type": "object", "properties": map[string]any{}}
+}
+
 func normalizeToolFn(t map[string]any, typ string) (map[string]any, string, bool) {
-	fn, _ := t["function"].(map[string]any)
-	rawName, _ := t["name"].(string)
+	fn, _ := t["function"].(map[string]any) // nolint:errcheck
+	rawName, _ := t["name"].(string)        // nolint:errcheck
 
 	if rawName == "" && fn != nil {
-		rawName, _ = fn["name"].(string)
+		rawName, _ = fn["name"].(string) // nolint:errcheck
 	}
 
 	name := strings.TrimSpace(rawName)
@@ -177,19 +201,12 @@ func normalizeToolFn(t map[string]any, typ string) (map[string]any, string, bool
 		return nil, "", false
 	}
 
-	desc, _ := t["description"].(string)
+	desc, _ := t["description"].(string) // nolint:errcheck
 	if desc == "" && fn != nil {
-		desc, _ = fn["description"].(string)
+		desc, _ = fn["description"].(string) // nolint:errcheck
 	}
 
-	var params any = map[string]any{"type": "object", "properties": map[string]any{}}
-	if p, ok := t["parameters"].(map[string]any); ok {
-		params = p
-	} else if fn != nil {
-		if p, ok := fn["parameters"].(map[string]any); ok {
-			params = p
-		}
-	}
+	params := extractToolParams(t, fn)
 
 	if len(name) > 128 {
 		name = name[:128]
@@ -203,26 +220,31 @@ func normalizeToolFn(t map[string]any, typ string) (map[string]any, string, bool
 	return flat, name, true
 }
 
+func resolveToolChoiceName(tc map[string]any) string {
+	rawName, _ := tc["name"].(string) // nolint:errcheck
+	if rawName == "" {
+		if fn, ok := tc["function"].(map[string]any); ok {
+			rawName, _ = fn["name"].(string) // nolint:errcheck
+		}
+	}
+
+	name := strings.TrimSpace(rawName)
+	if len(name) > 128 {
+		name = name[:128]
+	}
+
+	return name
+}
+
 func filterGrokCliToolChoice(body map[string]any, validNames map[string]bool, hostedTypes map[string]bool) {
 	tc, ok := body["tool_choice"].(map[string]any)
 	if !ok {
 		return
 	}
 
-	choiceType, _ := tc["type"].(string)
+	choiceType, _ := tc["type"].(string) // nolint:errcheck
 	if choiceType == "function" || choiceType == "custom" {
-		rawName, _ := tc["name"].(string)
-		if rawName == "" {
-			if fn, ok := tc["function"].(map[string]any); ok {
-				rawName, _ = fn["name"].(string)
-			}
-		}
-
-		name := strings.TrimSpace(rawName)
-		if len(name) > 128 {
-			name = name[:128]
-		}
-
+		name := resolveToolChoiceName(tc)
 		if name == "" || !validNames[name] {
 			delete(body, "tool_choice")
 		} else {
@@ -252,9 +274,10 @@ func normalizeGrokCliTools(body map[string]any) {
 			continue
 		}
 
-		typ, _ := tool["type"].(string)
+		typ, _ := tool["type"].(string) // nolint:errcheck
 		if typ != "function" && hostedToolTypes[typ] {
 			hostedTypes[typ] = true
+
 			out = append(out, tool)
 
 			continue
@@ -290,7 +313,7 @@ func messagesToInput(messages []any) []any {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
+		role, _ := msg["role"].(string) // nolint:errcheck
 		if role == "" {
 			role = "user"
 		}
@@ -300,8 +323,10 @@ func messagesToInput(messages []any) []any {
 		case string:
 			content = c
 		default:
-			b, _ := json.Marshal(c)
-			content = string(b)
+			b, err := json.Marshal(c)
+			if err == nil {
+				content = string(b)
+			}
 		}
 
 		out = append(out, map[string]any{"type": "message", "role": role, "content": content})
@@ -310,50 +335,58 @@ func messagesToInput(messages []any) []any {
 	return out
 }
 
+func buildDefaultGrokReasoning(body map[string]any, supportsEffort bool, modelEffort string) map[string]any {
+	reasoning := map[string]any{"summary": "concise"}
+	if !supportsEffort {
+		return reasoning
+	}
+
+	effort := modelEffort
+	if re, okEffort := body["reasoning_effort"]; okEffort {
+		effort = normalizeGrokCliEffort(re)
+	} else if effort == "" {
+		effort = "high"
+	} else {
+		effort = normalizeGrokCliEffort(effort)
+	}
+
+	reasoning["effort"] = effort
+
+	return reasoning
+}
+
+func updateExistingGrokReasoning(reasoning, body map[string]any, supportsEffort bool, modelEffort string) {
+	if supportsEffort {
+		effortSrc := reasoning["effort"]
+		if effortSrc == nil {
+			effortSrc = body["reasoning_effort"]
+		}
+
+		if effortSrc == nil && modelEffort != "" {
+			effortSrc = modelEffort
+		}
+
+		reasoning["effort"] = normalizeGrokCliEffort(effortSrc)
+	} else {
+		delete(reasoning, "effort")
+	}
+
+	if _, has := reasoning["summary"]; !has {
+		reasoning["summary"] = "concise"
+	}
+}
+
 func (e *GrokCliExecutor) applyGrokReasoning(body map[string]any, model, modelEffort string) {
 	supportsEffort := supportsGrokCliReasoningEffort(model)
 
 	reasoning, ok := body["reasoning"].(map[string]any)
 	if !ok {
-		reasoning = map[string]any{"summary": "concise"}
-
-		if supportsEffort {
-			effort := modelEffort
-			if re, okEffort := body["reasoning_effort"]; okEffort {
-				effort = normalizeGrokCliEffort(re)
-			} else if effort == "" {
-				effort = "high"
-			} else {
-				effort = normalizeGrokCliEffort(effort)
-			}
-
-			reasoning["effort"] = effort
-		}
-
-		body["reasoning"] = reasoning
+		reasoning = buildDefaultGrokReasoning(body, supportsEffort, modelEffort)
 	} else {
-		if supportsEffort {
-			effortSrc := reasoning["effort"]
-			if effortSrc == nil {
-				effortSrc = body["reasoning_effort"]
-			}
-
-			if effortSrc == nil && modelEffort != "" {
-				effortSrc = modelEffort
-			}
-
-			reasoning["effort"] = normalizeGrokCliEffort(effortSrc)
-		} else {
-			delete(reasoning, "effort")
-		}
-
-		if _, has := reasoning["summary"]; !has {
-			reasoning["summary"] = "concise"
-		}
-
-		body["reasoning"] = reasoning
+		updateExistingGrokReasoning(reasoning, body, supportsEffort, modelEffort)
 	}
 
+	body["reasoning"] = reasoning
 	delete(body, "reasoning_effort")
 	includeEncryptedReasoning(body, reasoning)
 }
@@ -376,6 +409,27 @@ func includeEncryptedReasoning(body map[string]any, reasoning map[string]any) {
 	}
 
 	body["include"] = append(include, "reasoning.encrypted_content")
+}
+
+func resolveGrokModelEffort(model string, body map[string]any) (string, string) {
+	modelEffort := resolveEffortFromModel(model)
+	resolved := model
+
+	if modelEffort != "" {
+		resolved = strings.TrimSuffix(resolved, "-"+modelEffort)
+	}
+
+	if bm, ok := body["model"].(string); ok && bm != "" {
+		me := resolveEffortFromModel(bm)
+		resolved = bm
+
+		if me != "" {
+			modelEffort = me
+			resolved = strings.TrimSuffix(resolved, "-"+me)
+		}
+	}
+
+	return resolved, modelEffort
 }
 
 func (e *GrokCliExecutor) transform(model string, body map[string]any) map[string]any {
@@ -402,22 +456,7 @@ func (e *GrokCliExecutor) transform(model string, body map[string]any) map[strin
 	body["stream"] = true
 	body["store"] = false
 
-	modelEffort := resolveEffortFromModel(model)
-	resolved := model
-
-	if modelEffort != "" {
-		resolved = strings.TrimSuffix(resolved, "-"+modelEffort)
-	}
-
-	if bm, _ := body["model"].(string); bm != "" {
-		me := resolveEffortFromModel(bm)
-		resolved = bm
-
-		if me != "" {
-			modelEffort = me
-			resolved = strings.TrimSuffix(resolved, "-"+me)
-		}
-	}
+	resolved, modelEffort := resolveGrokModelEffort(model, body)
 
 	body["model"] = resolved
 	e.applyGrokReasoning(body, resolved, modelEffort)
@@ -439,40 +478,23 @@ func (e *GrokCliExecutor) transform(model string, body map[string]any) map[strin
 	return body
 }
 
-func (e *GrokCliExecutor) buildHeaders(cred Credentials, model string, body map[string]any) http.Header {
-	h := make(http.Header)
-	h.Set("Content-Type", "application/json")
-	h.Set("Accept", "text/event-stream")
-	h.Set("User-Agent", grokCliUserAgent)
-	h.Set("x-grok-client-identifier", grokCliClientID)
-	h.Set("x-grok-client-version", grokCliVersion)
-
+func resolveGrokCliSessionID(cred Credentials, body map[string]any) string {
 	sessionID := strPSD(cred, "connectionId")
-	if sessionID == "" {
-		if pck, _ := body["prompt_cache_key"].(string); pck != "" {
-			sessionID = pck
-		}
+	if sessionID != "" {
+		return sessionID
 	}
 
-	if sessionID == "" {
-		sessionID = randomUUID()
+	if pck, ok := body["prompt_cache_key"].(string); ok && pck != "" {
+		return pck
 	}
 
-	reqID := randomUUID()
-	turnIdx := countGrokCliUserTurns(body["input"])
+	return randomUUID()
+}
 
-	h.Set("x-grok-session-id", sessionID)
-	h.Set("x-grok-conv-id", sessionID)
-	h.Set("x-grok-req-id", reqID)
-	h.Set("x-grok-turn-idx", strconv.Itoa(turnIdx))
-
-	if model != "" {
-		h.Set("x-grok-model-override", model)
-	}
-
+func applyGrokCliUserHeaders(h http.Header, cred Credentials) {
 	email := strPSD(cred, "email")
-
 	userID := strPSD(cred, "userId")
+
 	if userID == "" {
 		userID = strPSD(cred, "providerUserId")
 	}
@@ -490,6 +512,30 @@ func (e *GrokCliExecutor) buildHeaders(cred Credentials, model string, body map[
 	} else if aid := strPSD(cred, "agentId"); aid != "" {
 		h.Set("x-grok-agent-id", aid)
 	}
+}
+
+func (e *GrokCliExecutor) buildHeaders(cred Credentials, model string, body map[string]any) http.Header {
+	h := make(http.Header)
+	h.Set("Content-Type", "application/json")
+	h.Set("Accept", "text/event-stream")
+	h.Set("User-Agent", grokCliUserAgent)
+	h.Set("x-grok-client-identifier", grokCliClientID)
+	h.Set("x-grok-client-version", grokCliVersion)
+
+	sessionID := resolveGrokCliSessionID(cred, body)
+	reqID := randomUUID()
+	turnIdx := countGrokCliUserTurns(body["input"])
+
+	h.Set("x-grok-session-id", sessionID)
+	h.Set("x-grok-conv-id", sessionID)
+	h.Set("x-grok-req-id", reqID)
+	h.Set("x-grok-turn-idx", strconv.Itoa(turnIdx))
+
+	if model != "" {
+		h.Set("x-grok-model-override", model)
+	}
+
+	applyGrokCliUserHeaders(h, cred)
 
 	tok := cred.AccessToken
 	if tok == "" {
@@ -503,14 +549,19 @@ func (e *GrokCliExecutor) buildHeaders(cred Credentials, model string, body map[
 	return h
 }
 
-func (e *GrokCliExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+// Execute performs Grok CLI completion requests.
+func (e *GrokCliExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, _ bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
 
 	m = e.transform(model, m)
-	resolved, _ := m["model"].(string)
+
+	resolved, ok := m["model"].(string)
+	if !ok {
+		resolved = model
+	}
 
 	payload, err := json.Marshal(m)
 	if err != nil {

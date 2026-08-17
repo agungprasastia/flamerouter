@@ -252,6 +252,7 @@ func (e *MimoFreeExecutor) bootstrapJWT(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	defer func() {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close() // nolint:errcheck

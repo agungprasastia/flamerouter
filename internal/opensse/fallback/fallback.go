@@ -228,6 +228,46 @@ func (f *Fallback) buildRRViews(base []store.Connection) []rrView {
 	return available
 }
 
+func compareRRSeqDesc(ai, aj int64) (diff bool, result bool) {
+	if ai == 0 {
+		return true, false
+	}
+
+	if aj == 0 {
+		return true, true
+	}
+
+	if ai != aj {
+		return true, ai > aj
+	}
+
+	return false, false
+}
+
+func compareRRSeqAsc(ai, aj int64) (diff bool, result bool) {
+	if ai == 0 && aj != 0 {
+		return true, true
+	}
+
+	if ai != 0 && aj == 0 {
+		return true, false
+	}
+
+	if ai != aj {
+		return true, ai < aj
+	}
+
+	return false, false
+}
+
+func compareRRSeq(ai, aj int64, desc bool) (diff bool, result bool) {
+	if desc {
+		return compareRRSeqDesc(ai, aj)
+	}
+
+	return compareRRSeqAsc(ai, aj)
+}
+
 func sortRRViews(views []rrView, desc bool) []rrView {
 	sorted := append([]rrView(nil), views...)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -236,20 +276,8 @@ func sortRRViews(views []rrView, desc bool) []rrView {
 			return sorted[i].conn.Priority < sorted[j].conn.Priority
 		}
 
-		if ai == 0 {
-			return false
-		}
-
-		if aj == 0 {
-			return true
-		}
-
-		if ai != aj {
-			if desc {
-				return ai > aj
-			}
-
-			return ai < aj
+		if diff, res := compareRRSeq(ai, aj, desc); diff {
+			return res
 		}
 
 		return sorted[i].conn.Priority < sorted[j].conn.Priority

@@ -58,10 +58,7 @@ func TestQoder_BuildRequestBody(t *testing.T) {
 		"max_tokens": float64(1024),
 	}
 
-	qoderKey, payload, err := buildQoderRequestBody("qoder/qmodel", body, cred)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	qoderKey, payload := buildQoderRequestBody("qoder/qmodel", body, cred)
 
 	if qoderKey != "qmodel" {
 		t.Fatalf("expected qmodel, got %s", qoderKey)
@@ -102,8 +99,8 @@ func TestQoder_ExecuteMissingCredentials(t *testing.T) {
 	}
 }
 
-func TestQoder_ExecuteSuccessAndWrapSSE(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func mockQoderServer(t *testing.T) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Model-Key") != "auto" {
 			t.Errorf("expected X-Model-Key auto, got %s", r.Header.Get("X-Model-Key"))
 		}
@@ -113,19 +110,23 @@ func TestQoder_ExecuteSuccessAndWrapSSE(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, _ := w.(http.Flusher)
-		_, _ = w.Write([]byte("data: {\"statusCodeValue\":200,\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"Hello\\\"}}]}\"}\n\n"))
+		flusher, ok := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"statusCodeValue\":200,\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"Hello\\\"}}]}\"}\n\n")) // nolint:errcheck
 
-		if flusher != nil {
+		if ok && flusher != nil {
 			flusher.Flush()
 		}
 
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
 
-		if flusher != nil {
+		if ok && flusher != nil {
 			flusher.Flush()
 		}
 	}))
+}
+
+func TestQoder_ExecuteSuccessAndWrapSSE(t *testing.T) {
+	srv := mockQoderServer(t)
 	defer srv.Close()
 
 	ex := NewQoderExecutor(srv.Client())
@@ -138,7 +139,7 @@ func TestQoder_ExecuteSuccessAndWrapSSE(t *testing.T) {
 		ProviderSpecificData: map[string]any{"userId": "u123"},
 		ProjectID:            "",
 	}
-	body, _ := json.Marshal(map[string]any{
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
 		"messages": []any{
 			map[string]any{"role": "user", "content": "Hi"},
 		},
@@ -149,7 +150,7 @@ func TestQoder_ExecuteSuccessAndWrapSSE(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
 
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", res.StatusCode)

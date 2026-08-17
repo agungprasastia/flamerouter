@@ -11,19 +11,19 @@ import (
 	"testing"
 )
 
-func TestTraeExecutor_ExecutionAndStreaming(t *testing.T) {
-	var gotAuth string
-
-	var gotCreateSessionBody map[string]any
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
+func mockTraeServer(gotAuth *string, gotBody *map[string]any) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*gotAuth = r.Header.Get("Authorization")
 
 		if r.URL.Path == "/chat_sessions" {
-			defer func() { _ = r.Body.Close() }()
-			_ = json.NewDecoder(r.Body).Decode(&gotCreateSessionBody) // nolint:errcheck
+			defer func() {
+				_ = r.Body.Close() // nolint:errcheck
+			}()
+
+			_ = json.NewDecoder(r.Body).Decode(gotBody) // nolint:errcheck
 
 			w.Header().Set("Content-Type", "application/json")
+
 			_ = json.NewEncoder(w).Encode(map[string]any{ // nolint:errcheck
 				"code": 0,
 				"data": map[string]any{
@@ -37,25 +37,22 @@ func TestTraeExecutor_ExecutionAndStreaming(t *testing.T) {
 
 		if strings.HasPrefix(r.URL.Path, "/chat_sessions/session-trae-123/events") {
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte(`event: plan_item
-data: {"id":"item1","thought":"Hello "}
-
-event: plan_item
-data: {"id":"item1","thought":"Hello from Trae SOLO"}
-
-event: token_usage
-data: {"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
-
-event: done
-data: {}
-
-`)) // nolint:errcheck
+			_, _ = w.Write([]byte("event: plan_item\ndata: {\"id\":\"item1\",\"thought\":\"Hello \"}\n\nevent: plan_item\ndata: {\"id\":\"item1\",\"thought\":\"Hello from Trae SOLO\"}\n\nevent: token_usage\ndata: {\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}\n\nevent: done\ndata: {}\n\n")) // nolint:errcheck
 
 			return
 		}
 
 		http.NotFound(w, r)
 	}))
+}
+
+func TestTraeExecutor_ExecutionAndStreaming(t *testing.T) {
+	var (
+		gotAuth              string
+		gotCreateSessionBody map[string]any
+	)
+
+	srv := mockTraeServer(&gotAuth, &gotCreateSessionBody)
 	defer srv.Close()
 
 	ex := executor.GetExecutor("trae")
@@ -78,7 +75,8 @@ data: {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = res.Body.Close() }()
+
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
@@ -100,8 +98,8 @@ data: {}
 	}
 }
 
-func TestTraeExecutor_NonStreaming(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func mockTraeNonStreamServer() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/chat_sessions" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{ // nolint:errcheck
@@ -117,16 +115,15 @@ func TestTraeExecutor_NonStreaming(t *testing.T) {
 
 		if strings.HasPrefix(r.URL.Path, "/chat_sessions/session-1/events") {
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte(`event: plan_item
-data: {"id":"item1","thought":"Unary Trae result"}
-
-event: done
-data: {}
-`)) // nolint:errcheck
+			_, _ = w.Write([]byte("event: plan_item\ndata: {\"id\":\"item1\",\"thought\":\"Unary Trae result\"}\n\nevent: done\ndata: {}\n")) // nolint:errcheck
 
 			return
 		}
 	}))
+}
+
+func TestTraeExecutor_NonStreaming(t *testing.T) {
+	srv := mockTraeNonStreamServer()
 	defer srv.Close()
 
 	ex := executor.GetExecutor("trae")
@@ -145,7 +142,8 @@ data: {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = res.Body.Close() }()
+
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
 
 	var respObj map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {

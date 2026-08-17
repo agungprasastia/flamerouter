@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flamerouter/internal/netutil"
 	"flamerouter/internal/store"
 	"io"
@@ -49,7 +51,14 @@ func (s *Server) handleCodexResetCredits(w http.ResponseWriter, r *http.Request)
 
 	conn, err := s.st.GetConnection(connID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "Connection not found")
+
+			return
+		}
+
 		writeErr(w, http.StatusInternalServerError, "db")
+
 		return
 	}
 

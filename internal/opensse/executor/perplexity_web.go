@@ -76,6 +76,7 @@ type pplxSessionEntry struct {
 	ts          int64
 }
 
+// PerplexityWebExecutor handles queries to Perplexity Web backend.
 type PerplexityWebExecutor struct {
 	Base
 }
@@ -92,7 +93,7 @@ type pplxParsedMessages struct {
 }
 
 func pplxSessionKey(history []pplxHistoryItem) string {
-	var parts []string
+	parts := make([]string, 0, len(history))
 	for _, h := range history {
 		parts = append(parts, h.Role+":"+h.Content)
 	}
@@ -154,10 +155,10 @@ func pplxSessionStore(history []pplxHistoryItem, currentMsg, responseText, backe
 	if len(pplxSessionCache) > 200 {
 		var oldestKey string
 
-		var oldestTs int64 = math.MaxInt64
+		var oldestTS int64 = math.MaxInt64
 		for k, v := range pplxSessionCache {
-			if v.ts < oldestTs {
-				oldestTs = v.ts
+			if v.ts < oldestTS {
+				oldestTS = v.ts
 				oldestKey = k
 			}
 		}
@@ -185,10 +186,43 @@ func cleanPplxResponse(text string, strip bool) string {
 	return t
 }
 
+func parsePplxContent(c any) string {
+	switch content := c.(type) {
+	case string:
+		return content
+	case []any:
+		parts := make([]string, 0, len(content))
+
+		for _, p := range content {
+			if pm, ok := p.(map[string]any); ok {
+				if t, ok := pm["type"].(string); ok && t == "text" {
+					parts = append(parts, fmt.Sprint(pm["text"]))
+				}
+			}
+		}
+
+		return strings.Join(parts, " ")
+	default:
+		return ""
+	}
+}
+
+func parsePplxRole(role string) string {
+	if role == "" || role == "developer" {
+		if role == "developer" {
+			return "system"
+		}
+
+		return "user"
+	}
+
+	return role
+}
+
 func parsePplxOpenAIMessages(messages []any) pplxParsedMessages {
 	var systemMsg strings.Builder
 
-	var history []pplxHistoryItem
+	history := make([]pplxHistoryItem, 0, len(messages))
 
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
@@ -196,41 +230,23 @@ func parsePplxOpenAIMessages(messages []any) pplxParsedMessages {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
-		if role == "" {
+		role, ok := msg["role"].(string)
+		if !ok {
 			role = "user"
 		}
 
-		if role == "developer" {
-			role = "system"
-		}
+		role = parsePplxRole(role)
 
-		content := ""
-		switch c := msg["content"].(type) {
-		case string:
-			content = c
-		case []any:
-			var parts []string
-
-			for _, p := range c {
-				if pm, ok := p.(map[string]any); ok {
-					if t, _ := pm["type"].(string); t == "text" {
-						parts = append(parts, fmt.Sprint(pm["text"]))
-					}
-				}
-			}
-
-			content = strings.Join(parts, " ")
-		}
-
+		content := parsePplxContent(msg["content"])
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
 
-		if role == "system" {
-			systemMsg.WriteString(content)
-			systemMsg.WriteString("\n")
-		} else if role == "user" || role == "assistant" {
+		switch role {
+		case "system":
+			_, _ = systemMsg.WriteString(content) // nolint:errcheck
+			_, _ = systemMsg.WriteString("\n")    // nolint:errcheck
+		case "user", "assistant":
 			history = append(history, pplxHistoryItem{Role: role, Content: content})
 		}
 	}
@@ -248,38 +264,43 @@ func parsePplxOpenAIMessages(messages []any) pplxParsedMessages {
 	}
 }
 
+func formatSinglePplxTool(tm map[string]any) string {
+	fn, ok := tm["function"].(map[string]any)
+	if !ok {
+		fn = tm
+	}
+
+	name, ok := fn["name"].(string)
+	if !ok || name == "" {
+		name = "unnamed"
+	}
+
+	desc, ok := fn["description"].(string)
+	if !ok {
+		desc = ""
+	}
+
+	if firstLine := strings.Split(desc, "\n")[0]; len(firstLine) > 200 {
+		desc = firstLine[:200]
+	} else {
+		desc = firstLine
+	}
+
+	return fmt.Sprintf("- %s: %s", name, desc)
+}
+
 func formatPplxToolsHint(tools any) string {
 	toolsArr, ok := tools.([]any)
 	if !ok || len(toolsArr) == 0 {
 		return ""
 	}
 
-	var lines []string
+	lines := make([]string, 0, len(toolsArr))
 
 	for _, t := range toolsArr {
-		tm, ok := t.(map[string]any)
-		if !ok {
-			continue
+		if tm, ok := t.(map[string]any); ok {
+			lines = append(lines, formatSinglePplxTool(tm))
 		}
-
-		fn, ok := tm["function"].(map[string]any)
-		if !ok {
-			fn = tm
-		}
-
-		name, _ := fn["name"].(string)
-		if name == "" {
-			name = "unnamed"
-		}
-
-		desc, _ := fn["description"].(string)
-		if firstLine := strings.Split(desc, "\n")[0]; len(firstLine) > 200 {
-			desc = firstLine[:200]
-		} else {
-			desc = firstLine
-		}
-
-		lines = append(lines, fmt.Sprintf("- %s: %s", name, desc))
 	}
 
 	if len(lines) == 0 {
@@ -318,7 +339,7 @@ func buildPplxQuery(parsed pplxParsedMessages, followUpUUID string, tools any) s
 		obj["query"] = ""
 	}
 
-	b, _ := json.Marshal(obj)
+	b, _ := json.Marshal(obj) // nolint:errcheck
 
 	s := string(b)
 	if len(s) > 96000 {
@@ -329,7 +350,7 @@ func buildPplxQuery(parsed pplxParsedMessages, followUpUUID string, tools any) s
 }
 
 func buildPplxRequestBody(query, mode, modelPref, followUpUUID string) map[string]any {
-	var followUpVal any = nil
+	var followUpVal any
 	if followUpUUID != "" {
 		followUpVal = followUpUUID
 	}
@@ -356,17 +377,7 @@ func buildPplxRequestBody(query, mode, modelPref, followUpUUID string) map[strin
 	}
 }
 
-func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, err
-	}
-
-	messages, _ := m["messages"].([]any)
-	if len(messages) == 0 {
-		return jsonErr(400, "Missing or empty messages array", "invalid_request", ""), nil
-	}
-
+func resolvePplxModelAndMode(model string, m map[string]any) (string, string) {
 	thinking := false
 	if th, ok := m["thinking"].(bool); ok && th {
 		thinking = true
@@ -385,21 +396,10 @@ func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, m
 		modelPref = mapped[1]
 	}
 
-	parsed := parsePplxOpenAIMessages(messages)
-	followUpUUID := pplxSessionLookup(parsed.History)
+	return pplxMode, modelPref
+}
 
-	query := buildPplxQuery(parsed, followUpUUID, m["tools"])
-	if strings.TrimSpace(query) == "" {
-		return jsonErr(400, "Empty query after processing", "invalid_request", ""), nil
-	}
-
-	reqPayload := buildPplxRequestBody(query, pplxMode, modelPref, followUpUUID)
-
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return nil, err
-	}
-
+func buildPplxRequestHeaders(cred Credentials) http.Header {
 	h := make(http.Header)
 	h.Set("Content-Type", "application/json")
 	h.Set("Accept", "text/event-stream")
@@ -415,29 +415,53 @@ func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, m
 		h.Set("Cookie", fmt.Sprintf("__Secure-next-auth.session-token=%s", cred.APIKey))
 	}
 
+	return h
+}
+
+func (e *PerplexityWebExecutor) sendPplxRequest(ctx context.Context, cred Credentials, query, pplxMode, modelPref, followUpUUID string) (*Result, error) {
+	payloadBytes, err := json.Marshal(buildPplxRequestBody(query, pplxMode, modelPref, followUpUUID))
+	if err != nil {
+		return nil, err
+	}
+
+	h := buildPplxRequestHeaders(cred)
+
 	url := strings.TrimRight(cred.BaseURL, "/")
 	if url == "" {
 		url = pplxSSEEndpoint
 	}
 
-	res, err := e.DoPOST(ctx, url, h, payloadBytes)
+	return e.DoPOST(ctx, url, h, payloadBytes)
+}
+
+// Execute performs Perplexity Web chat completion requests.
+func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, err
+	}
+
+	messages, ok := m["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		return jsonErr(400, "Missing or empty messages array", "invalid_request", ""), nil
+	}
+
+	pplxMode, modelPref := resolvePplxModelAndMode(model, m)
+	parsed := parsePplxOpenAIMessages(messages)
+	followUpUUID := pplxSessionLookup(parsed.History)
+
+	query := buildPplxQuery(parsed, followUpUUID, m["tools"])
+	if strings.TrimSpace(query) == "" {
+		return jsonErr(400, "Empty query after processing", "invalid_request", ""), nil
+	}
+
+	res, err := e.sendPplxRequest(ctx, cred, query, pplxMode, modelPref, followUpUUID)
 	if err != nil {
 		return nil, err
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		status := res.StatusCode
-		msg := fmt.Sprintf("Perplexity returned HTTP %d", status)
-
-		if status == 401 || status == 403 {
-			msg = "Perplexity auth failed — session cookie may be expired. Re-paste your __Secure-next-auth.session-token."
-		} else if status == 429 {
-			msg = "Perplexity rate limited. Wait a moment and retry."
-		}
-
-		DrainBody(res.Body)
-
-		return jsonErr(status, msg, "upstream_error", fmt.Sprintf("HTTP_%d", status)), nil
+		return handlePplxHTTPError(res), nil
 	}
 
 	cid := fmt.Sprintf("chatcmpl-pplx-%s", randomUUID()[:12])
@@ -469,6 +493,22 @@ func (e *PerplexityWebExecutor) Execute(ctx context.Context, cred Credentials, m
 	}, nil
 }
 
+func handlePplxHTTPError(res *Result) *Result {
+	status := res.StatusCode
+	msg := fmt.Sprintf("Perplexity returned HTTP %d", status)
+
+	switch status {
+	case 401, 403:
+		msg = "Perplexity auth failed — session cookie may be expired. Re-paste your __Secure-next-auth.session-token."
+	case 429:
+		msg = "Perplexity rate limited. Wait a moment and retry."
+	}
+
+	DrainBody(res.Body)
+
+	return jsonErr(status, msg, "upstream_error", fmt.Sprintf("HTTP_%d", status))
+}
+
 type pplxExtractedChunk struct {
 	delta       string
 	answer      string
@@ -476,6 +516,175 @@ type pplxExtractedChunk struct {
 	backendUUID string
 	errorMsg    string
 	done        bool
+}
+
+func parsePplxSearchWebQuery(qm map[string]any, seenThinking map[string]bool, backendUUID string, out chan<- pplxExtractedChunk) {
+	qr, ok := qm["query"].(string)
+	if ok && qr != "" && !seenThinking[qr] {
+		seenThinking[qr] = true
+		out <- pplxExtractedChunk{
+			delta:       "",
+			answer:      "",
+			thinking:    "Searching: " + qr,
+			errorMsg:    "",
+			backendUUID: backendUUID,
+			done:        false,
+		}
+	}
+}
+
+func parsePplxProSearchStep(sRaw any, seenThinking map[string]bool, backendUUID string, out chan<- pplxExtractedChunk) {
+	s, ok := sRaw.(map[string]any)
+	if !ok || s["step_type"] != "SEARCH_WEB" {
+		return
+	}
+
+	swc, ok := s["search_web_content"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	queries, ok := swc["queries"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, qRaw := range queries {
+		if qm, ok := qRaw.(map[string]any); ok {
+			parsePplxSearchWebQuery(qm, seenThinking, backendUUID, out)
+		}
+	}
+}
+
+func parsePplxProSearchSteps(b map[string]any, seenThinking map[string]bool, backendUUID string, out chan<- pplxExtractedChunk) {
+	pb, ok := b["plan_block"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	steps, ok := pb["steps"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, sRaw := range steps {
+		parsePplxProSearchStep(sRaw, seenThinking, backendUUID, out)
+	}
+}
+
+func parsePplxMarkdownBlock(b map[string]any, fullAnswer *string, seenLen *int, backendUUID string, out chan<- pplxExtractedChunk) {
+	mb, ok := b["markdown_block"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	chunks, ok := mb["chunks"].([]any)
+	if !ok || len(chunks) == 0 {
+		return
+	}
+
+	var sb strings.Builder
+	for _, c := range chunks {
+		sb.WriteString(fmt.Sprint(c))
+	}
+
+	chunkText := sb.String()
+
+	prog, ok := mb["progress"].(string)
+	if ok && prog == "DONE" {
+		*fullAnswer = chunkText
+	} else {
+		*fullAnswer += chunkText
+	}
+
+	if len(*fullAnswer) > *seenLen {
+		delta := (*fullAnswer)[*seenLen:]
+		*seenLen = len(*fullAnswer)
+		out <- pplxExtractedChunk{
+			delta:       delta,
+			answer:      *fullAnswer,
+			thinking:    "",
+			errorMsg:    "",
+			backendUUID: backendUUID,
+			done:        false,
+		}
+	}
+}
+
+func handlePplxSingleBlock(bRaw any, fullAnswer *string, seenLen *int, seenThinking map[string]bool, backendUUID string, out chan<- pplxExtractedChunk) {
+	b, ok := bRaw.(map[string]any)
+	if !ok {
+		return
+	}
+
+	usage, ok := b["intended_usage"].(string)
+	if !ok {
+		return
+	}
+
+	switch {
+	case usage == "pro_search_steps":
+		parsePplxProSearchSteps(b, seenThinking, backendUUID, out)
+	case strings.Contains(usage, "markdown"):
+		parsePplxMarkdownBlock(b, fullAnswer, seenLen, backendUUID, out)
+	}
+}
+
+func handlePplxEventBlocks(blocks []any, fullAnswer *string, seenLen *int, seenThinking map[string]bool, backendUUID string, out chan<- pplxExtractedChunk) {
+	for _, bRaw := range blocks {
+		handlePplxSingleBlock(bRaw, fullAnswer, seenLen, seenThinking, backendUUID, out)
+	}
+}
+
+func handlePplxEventText(txt string, fullAnswer *string, seenLen *int, backendUUID string, out chan<- pplxExtractedChunk) {
+	t := strings.TrimSpace(txt)
+	if len(t) > *seenLen {
+		delta := t[*seenLen:]
+		*fullAnswer = t
+		*seenLen = len(t)
+		out <- pplxExtractedChunk{
+			delta:       delta,
+			answer:      *fullAnswer,
+			thinking:    "",
+			errorMsg:    "",
+			backendUUID: backendUUID,
+			done:        false,
+		}
+	}
+}
+
+func handlePplxEventContent(event map[string]any, fullAnswer *string, seenLen *int, seenThinking map[string]bool, backendUUID string, out chan<- pplxExtractedChunk) {
+	if blocks, ok := event["blocks"].([]any); ok && len(blocks) > 0 {
+		handlePplxEventBlocks(blocks, fullAnswer, seenLen, seenThinking, backendUUID, out)
+	} else if txt, ok := event["text"].(string); ok && txt != "" {
+		handlePplxEventText(txt, fullAnswer, seenLen, backendUUID, out)
+	}
+}
+
+func handlePplxSingleEvent(event map[string]any, fullAnswer *string, seenLen *int, seenThinking map[string]bool, backendUUID *string, out chan<- pplxExtractedChunk) (bool, bool) {
+	if errMsg, ok := event["error_message"].(string); ok && errMsg != "" {
+		out <- pplxExtractedChunk{
+			delta:       "",
+			answer:      "",
+			thinking:    "",
+			errorMsg:    errMsg,
+			backendUUID: "",
+			done:        true,
+		}
+
+		return true, true
+	}
+
+	if bu, ok := event["backend_uuid"].(string); ok && bu != "" {
+		*backendUUID = bu
+	}
+
+	handlePplxEventContent(event, fullAnswer, seenLen, seenThinking, *backendUUID, out)
+
+	fin, okFin := event["final"].(bool)
+	status, okStatus := event["status"].(string)
+
+	return false, (okFin && fin) || (okStatus && status == "COMPLETED")
 }
 
 func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
@@ -507,137 +716,16 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 			continue
 		}
 
-		if errMsg, _ := event["error_message"].(string); errMsg != "" {
-			out <- pplxExtractedChunk{
-				delta:       "",
-				answer:      "",
-				thinking:    "",
-				errorMsg:    errMsg,
-				backendUUID: "",
-				done:        true,
-			}
+		shouldReturn, shouldBreak := handlePplxSingleEvent(event, &fullAnswer, &seenLen, seenThinking, &backendUUID, out)
+		if shouldReturn {
 			return
 		}
 
-		if bu, _ := event["backend_uuid"].(string); bu != "" {
-			backendUUID = bu
-		}
-
-		blocks, _ := event["blocks"].([]any)
-		for _, bRaw := range blocks {
-			b, ok := bRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			usage, _ := b["intended_usage"].(string)
-
-			if usage == "pro_search_steps" {
-				if pb, ok := b["plan_block"].(map[string]any); ok {
-					if steps, ok := pb["steps"].([]any); ok {
-						for _, sRaw := range steps {
-							if s, ok := sRaw.(map[string]any); ok {
-								st, _ := s["step_type"].(string)
-								if st == "SEARCH_WEB" {
-									if swc, ok := s["search_web_content"].(map[string]any); ok {
-										if queries, ok := swc["queries"].([]any); ok {
-											for _, qRaw := range queries {
-												if qm, ok := qRaw.(map[string]any); ok {
-													if qr, _ := qm["query"].(string); qr != "" && !seenThinking[qr] {
-														seenThinking[qr] = true
-														out <- pplxExtractedChunk{
-															delta:       "",
-															answer:      "",
-															thinking:    "Searching: " + qr,
-															errorMsg:    "",
-															backendUUID: backendUUID,
-															done:        false,
-														}
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-
-			if strings.Contains(usage, "markdown") {
-				if mb, ok := b["markdown_block"].(map[string]any); ok {
-					if chunks, ok := mb["chunks"].([]any); ok && len(chunks) > 0 {
-						var sb strings.Builder
-						for _, c := range chunks {
-							sb.WriteString(fmt.Sprint(c))
-						}
-
-						chunkText := sb.String()
-						prog, _ := mb["progress"].(string)
-
-						if prog == "DONE" {
-							fullAnswer = chunkText
-							if len(fullAnswer) > seenLen {
-								delta := fullAnswer[seenLen:]
-								seenLen = len(fullAnswer)
-								out <- pplxExtractedChunk{
-									delta:       delta,
-									answer:      fullAnswer,
-									thinking:    "",
-									errorMsg:    "",
-									backendUUID: backendUUID,
-									done:        false,
-								}
-							}
-						} else {
-							cumulative := fullAnswer + chunkText
-							if len(cumulative) > seenLen {
-								delta := cumulative[seenLen:]
-								fullAnswer = cumulative
-								seenLen = len(cumulative)
-								out <- pplxExtractedChunk{
-									delta:       delta,
-									answer:      fullAnswer,
-									thinking:    "",
-									errorMsg:    "",
-									backendUUID: backendUUID,
-									done:        false,
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-		if len(blocks) == 0 {
-			if txt, _ := event["text"].(string); txt != "" {
-				t := strings.TrimSpace(txt)
-				if len(t) > seenLen {
-					delta := t[seenLen:]
-					fullAnswer = t
-					seenLen = len(t)
-					out <- pplxExtractedChunk{
-						delta:       delta,
-						answer:      fullAnswer,
-						thinking:    "",
-						errorMsg:    "",
-						backendUUID: backendUUID,
-						done:        false,
-					}
-				}
-			}
-		}
-
-		if fin, _ := event["final"].(bool); fin {
-			break
-		}
-
-		if st, _ := event["status"].(string); st == "COMPLETED" {
+		if shouldBreak {
 			break
 		}
 	}
+
 	out <- pplxExtractedChunk{
 		delta:       "",
 		answer:      fullAnswer,
@@ -648,101 +736,77 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 	}
 }
 
+func sendPplxSSEChunk(pw *io.PipeWriter, cid, model string, created int64, delta map[string]any, finishReason any) {
+	b, _ := json.Marshal(map[string]any{ // nolint:errcheck
+		"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+		"system_fingerprint": nil,
+		"choices": []any{map[string]any{
+			"index": 0, "delta": delta, "finish_reason": finishReason, "logprobs": nil,
+		}},
+	})
+	_, _ = pw.Write([]byte("data: ")) // nolint:errcheck
+	_, _ = pw.Write(b)                // nolint:errcheck
+	_, _ = pw.Write([]byte("\n\n"))   // nolint:errcheck
+}
+
+func streamPplxChunks(ch <-chan pplxExtractedChunk, pw *io.PipeWriter, cid, model string, created int64) (string, string) {
+	var (
+		fullAnswer      string
+		respBackendUUID string
+	)
+
+	for chunk := range ch {
+		if chunk.backendUUID != "" {
+			respBackendUUID = chunk.backendUUID
+		}
+
+		if chunk.errorMsg != "" {
+			sendPplxSSEChunk(pw, cid, model, created, map[string]any{"content": "[Error: " + chunk.errorMsg + "]"}, nil)
+			break
+		}
+
+		if chunk.thinking != "" {
+			sendPplxSSEChunk(pw, cid, model, created, map[string]any{"reasoning_content": chunk.thinking + "\n"}, nil)
+			continue
+		}
+
+		if chunk.done {
+			if chunk.answer != "" {
+				fullAnswer = chunk.answer
+			}
+
+			break
+		}
+
+		if chunk.delta != "" {
+			if dt := cleanPplxResponse(chunk.delta, false); dt != "" {
+				sendPplxSSEChunk(pw, cid, model, created, map[string]any{"content": dt}, nil)
+			}
+		}
+
+		if chunk.answer != "" {
+			fullAnswer = chunk.answer
+		}
+	}
+
+	return fullAnswer, respBackendUUID
+}
+
 func wrapPplxStream(r io.ReadCloser, model, cid string, created int64, history []pplxHistoryItem, currentMsg string) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
-		defer r.Close()
-		defer pw.Close()
+		defer func() { _ = r.Close() }()  // nolint:errcheck
+		defer func() { _ = pw.Close() }() // nolint:errcheck
 
-		writeSSE := func(obj map[string]any) {
-			b, _ := json.Marshal(obj)
-			_, _ = pw.Write([]byte("data: "))
-			_, _ = pw.Write(b)
-			_, _ = pw.Write([]byte("\n\n"))
-		}
-
-		writeSSE(map[string]any{
-			"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-			"system_fingerprint": nil,
-			"choices": []any{map[string]any{
-				"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil, "logprobs": nil,
-			}},
-		})
+		sendPplxSSEChunk(pw, cid, model, created, map[string]any{"role": "assistant"}, nil)
 
 		ch := make(chan pplxExtractedChunk, 16)
 		go readPplxEvents(r, ch)
 
-		var fullAnswer string
+		fullAnswer, respBackendUUID := streamPplxChunks(ch, pw, cid, model, created)
 
-		var respBackendUUID string
-
-		for chunk := range ch {
-			if chunk.backendUUID != "" {
-				respBackendUUID = chunk.backendUUID
-			}
-
-			if chunk.errorMsg != "" {
-				writeSSE(map[string]any{
-					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-					"system_fingerprint": nil,
-					"choices": []any{map[string]any{
-						"index": 0, "delta": map[string]any{"content": "[Error: " + chunk.errorMsg + "]"},
-						"finish_reason": nil, "logprobs": nil,
-					}},
-				})
-
-				break
-			}
-
-			if chunk.thinking != "" {
-				writeSSE(map[string]any{
-					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-					"system_fingerprint": nil,
-					"choices": []any{map[string]any{
-						"index": 0, "delta": map[string]any{"reasoning_content": chunk.thinking + "\n"},
-						"finish_reason": nil, "logprobs": nil,
-					}},
-				})
-
-				continue
-			}
-
-			if chunk.done {
-				if chunk.answer != "" {
-					fullAnswer = chunk.answer
-				}
-
-				break
-			}
-
-			if chunk.delta != "" {
-				dt := cleanPplxResponse(chunk.delta, false)
-				if dt != "" {
-					writeSSE(map[string]any{
-						"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-						"system_fingerprint": nil,
-						"choices": []any{map[string]any{
-							"index": 0, "delta": map[string]any{"content": dt},
-							"finish_reason": nil, "logprobs": nil,
-						}},
-					})
-				}
-			}
-
-			if chunk.answer != "" {
-				fullAnswer = chunk.answer
-			}
-		}
-
-		writeSSE(map[string]any{
-			"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-			"system_fingerprint": nil,
-			"choices": []any{map[string]any{
-				"index": 0, "delta": map[string]any{}, "finish_reason": "stop", "logprobs": nil,
-			}},
-		})
-
-		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+		sendPplxSSEChunk(pw, cid, model, created, map[string]any{}, "stop")
+		_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
 
 		pplxSessionStore(history, currentMsg, cleanPplxResponse(fullAnswer, true), respBackendUUID)
 	}()
@@ -751,16 +815,16 @@ func wrapPplxStream(r io.ReadCloser, model, cid string, created int64, history [
 }
 
 func collectPplxNonStreaming(r io.ReadCloser, model, cid string, created int64, history []pplxHistoryItem, currentMsg string) ([]byte, error) {
-	defer r.Close()
+	defer func() { _ = r.Close() }() // nolint:errcheck
 
 	ch := make(chan pplxExtractedChunk, 16)
 	go readPplxEvents(r, ch)
 
-	var fullAnswer string
-
-	var respBackendUUID string
-
-	var thinkingParts []string
+	var (
+		fullAnswer      string
+		respBackendUUID string
+		thinkingParts   []string
+	)
 
 	for chunk := range ch {
 		if chunk.backendUUID != "" {
@@ -776,16 +840,12 @@ func collectPplxNonStreaming(r io.ReadCloser, model, cid string, created int64, 
 			continue
 		}
 
-		if chunk.done {
-			if chunk.answer != "" {
-				fullAnswer = chunk.answer
-			}
-
-			break
-		}
-
-		if chunk.answer != "" {
+		if chunk.done || chunk.answer != "" {
 			fullAnswer = chunk.answer
+
+			if chunk.done {
+				break
+			}
 		}
 	}
 
@@ -799,7 +859,8 @@ func collectPplxNonStreaming(r io.ReadCloser, model, cid string, created int64, 
 
 	promptTokens := (len(currentMsg) + 3) / 4
 	completionTokens := (len(fullAnswer) + 3) / 4
-	out := map[string]any{
+
+	return json.Marshal(map[string]any{
 		"id": cid, "object": "chat.completion", "created": created, "model": model,
 		"system_fingerprint": nil,
 		"choices": []any{map[string]any{
@@ -810,7 +871,5 @@ func collectPplxNonStreaming(r io.ReadCloser, model, cid string, created int64, 
 			"completion_tokens": completionTokens,
 			"total_tokens":      promptTokens + completionTokens,
 		},
-	}
-
-	return json.Marshal(out)
+	})
 }

@@ -4,6 +4,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 )
 
 // Combo represents a model fallbacks / combo configuration.
@@ -46,7 +47,9 @@ func (s *Store) ListCombos() ([]Combo, error) {
 	return out, rows.Err()
 }
 
-// GetComboByName retrieves a combo by name or returns sql.ErrNoRows if not found.
+// GetComboByName retrieves a combo by name or returns nil, nil if not found.
+//
+//nolint:nilnil // returning nil combo on ErrNoRows is by design
 func (s *Store) GetComboByName(name string) (*Combo, error) {
 	var c Combo
 
@@ -55,6 +58,10 @@ func (s *Store) GetComboByName(name string) (*Combo, error) {
 	err := s.db.QueryRow(`SELECT id, name, models FROM combos WHERE name=?`, name).
 		Scan(&c.ID, &c.Name, &modelsJSON)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+
 		return nil, err
 	}
 

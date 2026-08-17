@@ -171,7 +171,11 @@ func (s *kiroStreamState) stripThinkingTags(content string) string {
 
 	s.inThinking = true
 	beforeParts := strings.SplitN(content, "<thinking>", 2)
-	before := beforeParts[0]
+
+	var before string
+	if len(beforeParts) > 0 {
+		before = beforeParts[0]
+	}
 
 	if !strings.Contains(content, "</thinking>") {
 		return before
@@ -179,8 +183,8 @@ func (s *kiroStreamState) stripThinkingTags(content string) string {
 
 	s.inThinking = false
 	afterParts := strings.SplitN(content, "</thinking>", 2)
-	after := ""
 
+	after := ""
 	if len(afterParts) > 1 {
 		after = strings.TrimPrefix(afterParts[1], "\n")
 	}

@@ -111,7 +111,7 @@ func normalizeQoderMessages(rawMessages []any) ([]map[string]any, string) {
 
 	var systemParts []string
 
-	var out []map[string]any
+	out := make([]map[string]any, 0, len(rawMessages))
 
 	for _, item := range rawMessages {
 		msg, ok := item.(map[string]any)
@@ -119,7 +119,7 @@ func normalizeQoderMessages(rawMessages []any) ([]map[string]any, string) {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
+		role, _ := msg["role"].(string) // nolint:errcheck
 		text := extractQoderText(msg["content"])
 
 		if role == "system" {
@@ -149,8 +149,8 @@ func lastQoderUserText(messages []map[string]any) string {
 
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
-		if role, _ := m["role"].(string); role == "user" {
-			if content, _ := m["content"].(string); content != "" {
+		if role, ok := m["role"].(string); ok && role == "user" {
+			if content, ok := m["content"].(string); ok && content != "" {
 				return content
 			}
 		}
@@ -161,11 +161,11 @@ func lastQoderUserText(messages []map[string]any) string {
 
 func stableQoderHash(prefix string, parts ...string) string {
 	h := sha256.New()
-	h.Write([]byte(prefix))
+	_, _ = h.Write([]byte(prefix)) // nolint:errcheck
 
 	for _, p := range parts {
-		h.Write([]byte{0})
-		h.Write([]byte(p))
+		_, _ = h.Write([]byte{0}) // nolint:errcheck
+		_, _ = h.Write([]byte(p)) // nolint:errcheck
 	}
 
 	return hex.EncodeToString(h.Sum(nil))[:16]
@@ -278,7 +278,7 @@ func buildQoderParametersAndContext(modelConfig map[string]any, qoderKey string,
 	return maxTokens, chatCtx, business
 }
 
-func buildQoderRequestBody(model string, body map[string]any, cred Credentials) (string, map[string]any, error) {
+func buildQoderRequestBody(model string, body map[string]any, cred Credentials) (string, map[string]any) {
 	qoderKey := strings.TrimPrefix(model, "qoder/")
 	if qoderKey == "" {
 		qoderKey = "auto"
@@ -328,93 +328,112 @@ func buildQoderRequestBody(model string, body map[string]any, cred Credentials) 
 		"business":         business,
 	}
 
-	return qoderKey, payload, nil
+	return qoderKey, payload
+}
+
+type qoderEnvelope struct {
+	Body            string `json:"body"`
+	StatusCodeValue int    `json:"statusCodeValue"`
+}
+
+func handleQoderEnvelope(env qoderEnvelope, model string, pw *io.PipeWriter, doneEmitted *bool) bool {
+	statusVal := env.StatusCodeValue
+	if statusVal == 0 {
+		statusVal = 200
+	}
+
+	if statusVal != 200 {
+		msg := env.Body
+		if msg == "" {
+			msg = fmt.Sprintf("upstream status %d", statusVal)
+		}
+
+		errChunk, err := json.Marshal(map[string]any{
+			"id":      fmt.Sprintf("qoder-error-%d", time.Now().UnixMilli()),
+			"object":  "chat.completion.chunk",
+			"created": time.Now().Unix(),
+			"model":   model,
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"delta": map[string]any{
+						"content": fmt.Sprintf("\n[qoder error %d: %s]", statusVal, truncateQoderString(msg, 200)),
+					},
+					"finish_reason": "stop",
+				},
+			},
+		})
+		if err == nil {
+			_, _ = pw.Write([]byte("data: " + string(errChunk) + "\n\n")) // nolint:errcheck
+		}
+
+		if !*doneEmitted {
+			_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
+		}
+
+		return true
+	}
+
+	if env.Body == "[DONE]" {
+		if !*doneEmitted {
+			_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
+		}
+
+		return true
+	}
+
+	if env.Body != "" {
+		sanitized := strings.ReplaceAll(strings.ReplaceAll(env.Body, "\r", ""), "\n", "")
+		_, _ = pw.Write([]byte("data: " + sanitized + "\n\n")) // nolint:errcheck
+	}
+
+	return false
+}
+
+func processQoderSSELine(trimmed string, model string, pw *io.PipeWriter, doneEmitted *bool) bool {
+	if !strings.HasPrefix(trimmed, "data:") {
+		return false
+	}
+
+	data := strings.TrimSpace(trimmed[5:])
+	if data == "[DONE]" {
+		if !*doneEmitted {
+			_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
+		}
+
+		return true
+	}
+
+	var env qoderEnvelope
+	if err := json.Unmarshal([]byte(data), &env); err == nil {
+		return handleQoderEnvelope(env, model, pw, doneEmitted)
+	}
+
+	return false
 }
 
 func wrapQoderSSE(resp *http.Response, model string) *Result {
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer resp.Body.Close()
-		defer pw.Close()
+		defer func() { _ = resp.Body.Close() }() // nolint:errcheck
+		defer func() { _ = pw.Close() }()        // nolint:errcheck
 
 		reader := bufio.NewReader(resp.Body)
 		doneEmitted := false
 
 		for {
-			line, err := reader.ReadString('\n')
+			line, readErr := reader.ReadString('\n')
 			if len(line) > 0 {
 				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "data:") {
-					data := strings.TrimSpace(trimmed[5:])
-					if data == "[DONE]" {
-						if !doneEmitted {
-							_, _ = pw.Write([]byte("data: [DONE]\n\n"))
-						}
-
-						return
-					}
-
-					var env struct {
-						Body            string `json:"body"`
-						StatusCodeValue int    `json:"statusCodeValue"`
-					}
-
-					if err := json.Unmarshal([]byte(data), &env); err == nil {
-						statusVal := env.StatusCodeValue
-						if statusVal == 0 {
-							statusVal = 200
-						}
-
-						if statusVal != 200 {
-							msg := env.Body
-							if msg == "" {
-								msg = fmt.Sprintf("upstream status %d", statusVal)
-							}
-
-							errChunk, _ := json.Marshal(map[string]any{
-								"id":      fmt.Sprintf("qoder-error-%d", time.Now().UnixMilli()),
-								"object":  "chat.completion.chunk",
-								"created": time.Now().Unix(),
-								"model":   model,
-								"choices": []map[string]any{
-									{
-										"index": 0,
-										"delta": map[string]any{
-											"content": fmt.Sprintf("\n[qoder error %d: %s]", statusVal, truncateQoderString(msg, 200)),
-										},
-										"finish_reason": "stop",
-									},
-								},
-							})
-							_, _ = pw.Write([]byte("data: " + string(errChunk) + "\n\n"))
-
-							if !doneEmitted {
-								_, _ = pw.Write([]byte("data: [DONE]\n\n"))
-							}
-
-							return
-						}
-
-						if env.Body == "[DONE]" {
-							if !doneEmitted {
-								_, _ = pw.Write([]byte("data: [DONE]\n\n"))
-							}
-
-							return
-						}
-
-						if env.Body != "" {
-							sanitized := strings.ReplaceAll(strings.ReplaceAll(env.Body, "\r", ""), "\n", "")
-							_, _ = pw.Write([]byte("data: " + sanitized + "\n\n"))
-						}
-					}
+				if shouldStop := processQoderSSELine(trimmed, model, pw, &doneEmitted); shouldStop {
+					return
 				}
 			}
 
-			if err != nil {
+			if readErr != nil {
 				if !doneEmitted {
-					_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+					_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
 				}
 
 				return
@@ -433,15 +452,20 @@ func wrapQoderSSE(resp *http.Response, model string) *Result {
 	}
 }
 
-func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+func checkQoderCredentials(cred Credentials) *Result {
 	userID := strPSD(cred, "userId")
 	if userID == "" {
 		errResp := map[string]any{"error": map[string]any{"message": "qoder credential is missing userId; reconnect the account"}}
-		b, _ := json.Marshal(errResp)
+
+		b, err := json.Marshal(errResp)
+		if err != nil {
+			return nil
+		}
+
 		hdr := make(http.Header)
 		hdr.Set("Content-Type", "application/json")
 
-		return &Result{StatusCode: http.StatusUnauthorized, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}, nil
+		return &Result{StatusCode: http.StatusUnauthorized, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}
 	}
 
 	authToken := cred.AccessToken
@@ -451,23 +475,22 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 
 	if authToken == "" {
 		errResp := map[string]any{"error": map[string]any{"message": "qoder credential is missing accessToken; reconnect the account"}}
-		b, _ := json.Marshal(errResp)
+
+		b, err := json.Marshal(errResp)
+		if err != nil {
+			return nil
+		}
+
 		hdr := make(http.Header)
 		hdr.Set("Content-Type", "application/json")
 
-		return &Result{StatusCode: http.StatusUnauthorized, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}, nil
+		return &Result{StatusCode: http.StatusUnauthorized, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}
 	}
 
-	var parsedBody map[string]any
-	if err := json.Unmarshal(body, &parsedBody); err != nil {
-		return nil, err
-	}
+	return nil
+}
 
-	qoderKey, payload, err := buildQoderRequestBody(model, parsedBody, cred)
-	if err != nil {
-		return nil, err
-	}
-
+func (e *QoderExecutor) buildSignedRequest(ctx context.Context, cred Credentials, qoderKey string, payload map[string]any) (*http.Request, error) {
 	plainBody, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -475,10 +498,15 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 
 	encodedBodyStr := qoder.EncodeBody(plainBody)
 	encodedBodyBytes := []byte(encodedBodyStr)
-
 	reqURL := e.buildURL(cred)
+
+	authToken := cred.AccessToken
+	if authToken == "" {
+		authToken = cred.APIKey
+	}
+
 	cosyCreds := qoder.CosyCreds{
-		UserID:    userID,
+		UserID:    strPSD(cred, "userId"),
 		AuthToken: authToken,
 		Name:      strPSD(cred, "displayName"),
 		Email:     strPSD(cred, "email"),
@@ -487,12 +515,7 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 
 	cosyHeaders, err := qoder.BuildCosyHeaders(encodedBodyBytes, reqURL, cosyCreds)
 	if err != nil {
-		errResp := map[string]any{"error": map[string]any{"message": fmt.Sprintf("qoder cosy signing failed: %s", err.Error())}}
-		b, _ := json.Marshal(errResp)
-		hdr := make(http.Header)
-		hdr.Set("Content-Type", "application/json")
-
-		return &Result{StatusCode: http.StatusUnauthorized, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}, nil
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(encodedBodyBytes))
@@ -520,7 +543,33 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 		req.Header.Set(k, v)
 	}
 
-	resp, err := e.client().Do(req)
+	return req, nil
+}
+
+// Execute sends the request to Qoder / Cosy API backend.
+func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, _ bool) (*Result, error) {
+	if res := checkQoderCredentials(cred); res != nil {
+		return res, nil
+	}
+
+	var parsedBody map[string]any
+	if err := json.Unmarshal(body, &parsedBody); err != nil {
+		return nil, err
+	}
+
+	qoderKey, payload := buildQoderRequestBody(model, parsedBody, cred)
+
+	req, err := e.buildSignedRequest(ctx, cred, qoderKey, payload)
+	if err != nil {
+		errResp := map[string]any{"error": map[string]any{"message": fmt.Sprintf("qoder cosy signing failed: %s", err.Error())}}
+		b, _ := json.Marshal(errResp) // nolint:errcheck
+		hdr := make(http.Header)
+		hdr.Set("Content-Type", "application/json")
+
+		return &Result{StatusCode: http.StatusUnauthorized, Header: hdr, Body: io.NopCloser(bytes.NewReader(b))}, nil
+	}
+
+	resp, err := e.client().Do(req) // nolint:bodyclose
 	if err != nil {
 		return nil, err
 	}

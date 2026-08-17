@@ -18,15 +18,13 @@ func TestPerplexityWebExecutor_ExecutionAndStreaming(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotCookie = r.Header.Get("Cookie")
-		defer func() { _ = r.Body.Close() }()
+
+		defer func() { _ = r.Body.Close() }() // nolint:errcheck
+
 		_ = json.NewDecoder(r.Body).Decode(&gotPayload) // nolint:errcheck
 
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte(`data: {"blocks":[{"intended_usage":"pro_search_steps","plan_block":{"steps":[{"step_type":"SEARCH_WEB","search_web_content":{"queries":[{"query":"golang test"}]}}]}}]}
-
-data: {"backend_uuid":"uuid-12345","blocks":[{"intended_usage":"markdown","markdown_block":{"chunks":["Hello from Perplexity"],"progress":"DONE"}}],"final":true}
-
-`)) // nolint:errcheck
+		_, _ = w.Write([]byte("data: {\"blocks\":[{\"intended_usage\":\"pro_search_steps\",\"plan_block\":{\"steps\":[{\"step_type\":\"SEARCH_WEB\",\"search_web_content\":{\"queries\":[{\"query\":\"golang test\"}]}}]}}]}\n\ndata: {\"backend_uuid\":\"uuid-12345\",\"blocks\":[{\"intended_usage\":\"markdown\",\"markdown_block\":{\"chunks\":[\"Hello from Perplexity\"],\"progress\":\"DONE\"}}],\"final\":true}\n\n")) // nolint:errcheck
 	}))
 	defer srv.Close()
 
@@ -50,7 +48,8 @@ data: {"backend_uuid":"uuid-12345","blocks":[{"intended_usage":"markdown","markd
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = res.Body.Close() }()
+
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
@@ -77,10 +76,9 @@ data: {"backend_uuid":"uuid-12345","blocks":[{"intended_usage":"markdown","markd
 }
 
 func TestPerplexityWebExecutor_NonStreaming(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte(`data: {"backend_uuid":"uuid-999","blocks":[{"intended_usage":"markdown","markdown_block":{"chunks":["Direct answer"],"progress":"DONE"}}],"final":true}
-`)) // nolint:errcheck
+		_, _ = w.Write([]byte("data: {\"backend_uuid\":\"uuid-999\",\"blocks\":[{\"intended_usage\":\"markdown\",\"markdown_block\":{\"chunks\":[\"Direct answer\"],\"progress\":\"DONE\"}}],\"final\":true}\n")) // nolint:errcheck
 	}))
 	defer srv.Close()
 
@@ -100,7 +98,8 @@ func TestPerplexityWebExecutor_NonStreaming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = res.Body.Close() }()
+
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)

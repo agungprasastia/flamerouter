@@ -134,7 +134,7 @@ func ChatWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st
 	providerID, modelClean, err := resolveChatModel(modelStr, st)
 	if err != nil {
 		http.Error(w, `{"error":"model must be provider/model format"}`, http.StatusBadRequest)
-		return err
+		return nil //nolint:nilerr // HTTP 400 error already written to response
 	}
 
 	return handleWithFallback(ctx, w, body, providerID, modelClean, st, exec, fb, streamReq, sourceFormat, ts, opts.AccountStrategy, opts.StickyLimit, opts.Usage)

@@ -8,6 +8,10 @@ import (
 )
 
 func TestOpenCodeExecutorLive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live network test in short mode")
+	}
+
 	ex := GetExecutor("opencode")
 	if ex == nil {
 		t.Fatal("opencode executor not found")

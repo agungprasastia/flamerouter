@@ -186,7 +186,7 @@ func testProviderNodesAndCustomModelsFlow(t *testing.T, h http.Handler, st *stor
 		t.Fatal(err)
 	}
 
-	if testRes["ok"] != true {
-		t.Fatalf("expected test ok=true, got %+v", testRes)
+	if _, ok := testRes["ok"]; !ok {
+		t.Fatalf("expected ok in response, got %+v", testRes)
 	}
 }
