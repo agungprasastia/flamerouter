@@ -39,7 +39,8 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 `, delta)
 	}
 
-	if err := os.WriteFile(scriptName, []byte(scriptContent), 0o755); err != nil {
+	// #nosec G306 -- mock executable script created in t.TempDir() requires execution permission
+	if err := os.WriteFile(scriptName, []byte(scriptContent), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
