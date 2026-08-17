@@ -14,8 +14,8 @@ func init() {
 			Provider: "antigravity",
 			Client:   nil,
 			Headers:  nil,
-			BaseURL:  "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent",
-			BaseURLs: nil,
+			BaseURL:  "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent",
+			BaseURLs: []string{"https://daily-cloudcode-pa.googleapis.com"},
 		},
 	})
 }
@@ -188,7 +188,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, cred Credentials, mod
 		action = "streamGenerateContent?alt=sse"
 	}
 
-	url := "https://cloudcode-pa.googleapis.com/v1internal:" + action
+	url := "https://daily-cloudcode-pa.googleapis.com/v1internal:" + action
 
 	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" {
 		if !strings.Contains(base, "generateContent") {

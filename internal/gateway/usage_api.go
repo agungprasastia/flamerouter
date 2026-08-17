@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"flamerouter/internal/store"
 	"flamerouter/internal/usage"
 	"net/http"
@@ -527,14 +528,66 @@ func isAuthExpiredQuota(res *usage.QuotaResult) bool {
 	if res == nil || res.Message == "" {
 		return false
 	}
+
 	msg := strings.ToLower(res.Message)
 	patterns := []string{"expired", "authentication", "unauthorized", "401", "re-authorize", "re-auth"}
+
 	for _, p := range patterns {
 		if strings.Contains(msg, p) {
 			return true
 		}
 	}
+
 	return false
+}
+
+func (s *Server) callQuotaFetch(ctx context.Context, conn *store.Connection, force bool) *usage.QuotaResult {
+	return usage.FetchProviderUsage(ctx, usage.FetchOptions{
+		ProviderSpecificData: conn.ProviderSpecificData,
+		HTTPClient:           nil,
+		Provider:             conn.Provider,
+		AccessToken:          conn.AccessToken,
+		APIKey:               conn.APIKey,
+		BaseURL:              conn.BaseURL,
+		Force:                force,
+	})
+}
+
+func (s *Server) refreshConnection(ctx context.Context, conn *store.Connection, force bool) *store.Connection {
+	if s.credMgr == nil || conn.RefreshToken == "" {
+		return conn
+	}
+
+	var (
+		refreshed *store.Connection
+		err       error
+	)
+
+	if force {
+		refreshed, err = s.credMgr.RefreshForce(ctx, s.st, conn)
+	} else {
+		refreshed, err = s.credMgr.RefreshIfNeeded(ctx, s.st, conn)
+	}
+
+	if err == nil && refreshed != nil {
+		return refreshed
+	}
+
+	return conn
+}
+
+func (s *Server) fetchConnQuota(ctx context.Context, conn *store.Connection, force bool) *usage.QuotaResult {
+	conn = s.refreshConnection(ctx, conn, false)
+	usageRes := s.callQuotaFetch(ctx, conn, force)
+
+	if isAuthExpiredQuota(usageRes) && conn.RefreshToken != "" {
+		refreshed := s.refreshConnection(ctx, conn, true)
+		if refreshed != conn {
+			usageRes = s.callQuotaFetch(ctx, refreshed, force)
+		}
+	}
+
+	return usageRes
 }
 
 func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request) {
@@ -569,38 +622,8 @@ func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	isOAuth := conn.AuthType == "oauth" || conn.RefreshToken != ""
-	if isOAuth && s.credMgr != nil && conn.RefreshToken != "" {
-		if refreshed, err := s.credMgr.RefreshIfNeeded(r.Context(), s.st, conn); err == nil && refreshed != nil {
-			conn = refreshed
-		}
-	}
-
 	force := r.URL.Query().Get("force") == "1"
-	usageRes := usage.FetchProviderUsage(r.Context(), usage.FetchOptions{
-		ProviderSpecificData: conn.ProviderSpecificData,
-		HTTPClient:           nil,
-		Provider:             conn.Provider,
-		AccessToken:          conn.AccessToken,
-		APIKey:               conn.APIKey,
-		BaseURL:              conn.BaseURL,
-		Force:                force,
-	})
-
-	if isOAuth && s.credMgr != nil && conn.RefreshToken != "" && isAuthExpiredQuota(usageRes) {
-		if refreshed, err := s.credMgr.RefreshForce(r.Context(), s.st, conn); err == nil && refreshed != nil {
-			conn = refreshed
-			usageRes = usage.FetchProviderUsage(r.Context(), usage.FetchOptions{
-				ProviderSpecificData: conn.ProviderSpecificData,
-				HTTPClient:           nil,
-				Provider:             conn.Provider,
-				AccessToken:          conn.AccessToken,
-				APIKey:               conn.APIKey,
-				BaseURL:              conn.BaseURL,
-				Force:                force,
-			})
-		}
-	}
+	usageRes := s.fetchConnQuota(r.Context(), conn, force)
 
 	writeJSONOK(w, map[string]any{
 		"connectionId": connID,
