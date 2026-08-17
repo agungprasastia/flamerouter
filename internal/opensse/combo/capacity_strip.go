@@ -1,35 +1,34 @@
 package combo
 
-// StripHistoryForContext trims history by dropping middle turns if context window exceeds budget.
-func StripHistoryForContext(body map[string]any, contextWindow int) map[string]any {
-	if body == nil {
-		return nil
+const (
+	charsPerToken = 4
+	headKeep      = 6
+)
+
+func findMessagesKey(body map[string]any) string {
+	keys := []string{"messages", "input", "contents"}
+	for _, k := range keys {
+		if _, ok := body[k].([]any); ok {
+			return k
+		}
 	}
 
-	key := ""
-	if _, ok := body["messages"].([]any); ok {
-		key = "messages"
-	} else if _, ok := body["input"].([]any); ok {
-		key = "input"
-	} else if _, ok := body["contents"].([]any); ok {
-		key = "contents"
-	}
+	return ""
+}
 
-	if key == "" {
-		return body
-	}
+func isSystemRole(role string) bool {
+	return role == "system" || role == "developer"
+}
 
-	arr, _ := body[key].([]any)
-	if len(arr) == 0 {
-		return body
-	}
+func isAssistantRole(role string) bool {
+	return role == "assistant" || role == "model"
+}
 
-	isSystem := func(r string) bool { return r == "system" || r == "developer" }
-	isAssistant := func(r string) bool { return r == "assistant" || r == "model" }
-
-	var systemMsgs []any
-
-	var rest []any
+func splitSystemAndRest(arr []any) ([]any, []any) {
+	var (
+		sys  []any
+		rest []any
+	)
 
 	for _, item := range arr {
 		m, ok := item.(map[string]any)
@@ -37,50 +36,96 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 			continue
 		}
 
-		role, _ := m["role"].(string)
-		if isSystem(role) {
-			systemMsgs = append(systemMsgs, item)
+		role, ok := m["role"].(string)
+		if ok && isSystemRole(role) {
+			sys = append(sys, item)
 		} else {
 			rest = append(rest, item)
 		}
 	}
 
+	return sys, rest
+}
+
+func findLastAssistantIndex(rest []any) int {
+	for i := len(rest) - 1; i >= 0; i-- {
+		m, ok := rest[i].(map[string]any)
+		if !ok {
+			continue
+		}
+
+		role, ok := m["role"].(string)
+		if ok && isAssistantRole(role) {
+			return i
+		}
+	}
+
+	return -1
+}
+
+func contentOf(m any) any {
+	mp, ok := m.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	if c, ok := mp["content"]; ok {
+		return c
+	}
+
+	if p, ok := mp["parts"]; ok {
+		return p
+	}
+
+	return nil
+}
+
+func sumBlockLengths(items []any) int {
+	total := 0
+	for _, m := range items {
+		total += blockLength(contentOf(m))
+	}
+
+	return total
+}
+
+func trimHeadToBudget(head []any, total, budgetChars int) []any {
+	for total > budgetChars && len(head) > 0 {
+		dropped := head[len(head)-1]
+		head = head[:len(head)-1]
+		total -= blockLength(contentOf(dropped))
+	}
+
+	return head
+}
+
+// StripHistoryForContext trims history by dropping middle turns if context window exceeds budget.
+func StripHistoryForContext(body map[string]any, contextWindow int) map[string]any {
+	if body == nil {
+		return nil
+	}
+
+	key := findMessagesKey(body)
+	if key == "" {
+		return body
+	}
+
+	arr, ok := body[key].([]any)
+	if !ok || len(arr) == 0 {
+		return body
+	}
+
+	systemMsgs, rest := splitSystemAndRest(arr)
 	if len(rest) == 0 {
 		return body
 	}
 
-	i := len(rest) - 1
-	for i >= 0 {
-		m, ok := rest[i].(map[string]any)
-		if ok {
-			role, _ := m["role"].(string)
-			if isAssistant(role) {
-				break
-			}
-		}
+	lastIdx := findLastAssistantIndex(rest)
+	tail := rest[lastIdx+1:]
+	older := rest[:lastIdx+1]
 
-		i--
-	}
-
-	tail := rest[i+1:]
-
-	older := rest[:i+1]
 	if len(older) == 0 {
 		return body
-	}
-
-	contentOf := func(m any) any {
-		if mp, ok := m.(map[string]any); ok {
-			if c, ok := mp["content"]; ok {
-				return c
-			}
-
-			if p, ok := mp["parts"]; ok {
-				return p
-			}
-		}
-
-		return nil
 	}
 
 	cw := contextWindow
@@ -89,34 +134,12 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 	}
 
 	budgetChars := int(float64(cw) * 0.8 * float64(charsPerToken))
-
-	headKeptCount := headKeep
-	if len(older) < headKeptCount {
-		headKeptCount = len(older)
-	}
-
+	headKeptCount := min(len(older), headKeep)
 	headKept := make([]any, headKeptCount)
 	copy(headKept, older[:headKeptCount])
 
-	total := 0
-	for _, m := range systemMsgs {
-		total += blockLength(contentOf(m))
-	}
-
-	for _, m := range headKept {
-		total += blockLength(contentOf(m))
-	}
-
-	for _, m := range tail {
-		total += blockLength(contentOf(m))
-	}
-
-	head := headKept
-	for total > budgetChars && len(head) > 0 {
-		dropped := head[len(head)-1]
-		head = head[:len(head)-1]
-		total -= blockLength(contentOf(dropped))
-	}
+	total := sumBlockLengths(systemMsgs) + sumBlockLengths(headKept) + sumBlockLengths(tail)
+	head := trimHeadToBudget(headKept, total, budgetChars)
 
 	if len(head) == len(older) {
 		return body
@@ -135,11 +158,6 @@ func StripHistoryForContext(body map[string]any, contextWindow int) map[string]a
 
 	return out
 }
-
-const (
-	charsPerToken = 4
-	headKeep      = 6
-)
 
 func blockLength(content any) int {
 	switch v := content.(type) {

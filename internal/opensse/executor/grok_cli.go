@@ -14,13 +14,15 @@ import (
 func init() {
 	RegisterSpecialized("grok-cli", &GrokCliExecutor{
 		Base: Base{
-			Provider: "grok-cli",
-			BaseURL:  "https://cli-chat-proxy.grok.com/v1/responses",
+			Client:   nil,
 			Headers: map[string]string{
 				"User-Agent":               "grok-shell/0.2.99 (linux; x86_64)",
 				"x-grok-client-identifier": "grok-shell",
 				"x-grok-client-version":    "0.2.99",
 			},
+			BaseURLs: nil,
+			Provider: "grok-cli",
+			BaseURL:  "https://cli-chat-proxy.grok.com/v1/responses",
 		},
 	})
 }
@@ -158,6 +160,79 @@ func stripStoredItemReferences(body map[string]any) {
 	body["input"] = out
 }
 
+func normalizeToolFn(t map[string]any, typ string) (map[string]any, string, bool) {
+	fn, _ := t["function"].(map[string]any)
+	rawName, _ := t["name"].(string)
+
+	if rawName == "" && fn != nil {
+		rawName, _ = fn["name"].(string)
+	}
+
+	name := strings.TrimSpace(rawName)
+	if name == "" {
+		if hostedToolTypes[typ] {
+			return t, "", true
+		}
+
+		return nil, "", false
+	}
+
+	desc, _ := t["description"].(string)
+	if desc == "" && fn != nil {
+		desc, _ = fn["description"].(string)
+	}
+
+	var params any = map[string]any{"type": "object", "properties": map[string]any{}}
+	if p, ok := t["parameters"].(map[string]any); ok {
+		params = p
+	} else if fn != nil {
+		if p, ok := fn["parameters"].(map[string]any); ok {
+			params = p
+		}
+	}
+
+	if len(name) > 128 {
+		name = name[:128]
+	}
+
+	flat := map[string]any{"type": "function", "name": name, "parameters": params}
+	if desc != "" {
+		flat["description"] = desc
+	}
+
+	return flat, name, true
+}
+
+func filterGrokCliToolChoice(body map[string]any, validNames map[string]bool, hostedTypes map[string]bool) {
+	tc, ok := body["tool_choice"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	choiceType, _ := tc["type"].(string)
+	if choiceType == "function" || choiceType == "custom" {
+		rawName, _ := tc["name"].(string)
+		if rawName == "" {
+			if fn, ok := tc["function"].(map[string]any); ok {
+				rawName, _ = fn["name"].(string)
+			}
+		}
+
+		name := strings.TrimSpace(rawName)
+		if len(name) > 128 {
+			name = name[:128]
+		}
+
+		if name == "" || !validNames[name] {
+			delete(body, "tool_choice")
+		} else {
+			body["tool_choice"] = map[string]any{"type": "function", "name": name}
+		}
+	} else if !hostedTypes[choiceType] {
+		delete(body, "tool_choice")
+	}
+}
+
 func normalizeGrokCliTools(body map[string]any) {
 	tools, ok := body["tools"].([]any)
 	if !ok || len(tools) == 0 {
@@ -178,64 +253,21 @@ func normalizeGrokCliTools(body map[string]any) {
 		}
 
 		typ, _ := tool["type"].(string)
-		if typ != "function" {
-			if hostedToolTypes[typ] {
-				hostedTypes[typ] = true
-
-				out = append(out, tool)
-
-				continue
-			}
-
-			if typ != "" && tool["function"] == nil {
-				if name, _ := tool["name"].(string); name == "" {
-					continue
-				}
-			}
-		}
-
-		fn, _ := tool["function"].(map[string]any)
-		rawName, _ := tool["name"].(string)
-
-		if rawName == "" && fn != nil {
-			rawName, _ = fn["name"].(string)
-		}
-
-		name := strings.TrimSpace(rawName)
-		if name == "" {
-			if hostedToolTypes[typ] {
-				out = append(out, tool)
-			}
+		if typ != "function" && hostedToolTypes[typ] {
+			hostedTypes[typ] = true
+			out = append(out, tool)
 
 			continue
 		}
 
-		desc, _ := tool["description"].(string)
-		if desc == "" && fn != nil {
-			desc, _ = fn["description"].(string)
-		}
-
-		var params any = map[string]any{"type": "object", "properties": map[string]any{}}
-		if p, ok := tool["parameters"].(map[string]any); ok {
-			params = p
-		} else if fn != nil {
-			if p, ok := fn["parameters"].(map[string]any); ok {
-				params = p
+		flat, name, okTool := normalizeToolFn(tool, typ)
+		if okTool {
+			if name != "" {
+				validNames[name] = true
 			}
+
+			out = append(out, flat)
 		}
-
-		if len(name) > 128 {
-			name = name[:128]
-		}
-
-		flat := map[string]any{"type": "function", "name": name, "parameters": params}
-		if desc != "" {
-			flat["description"] = desc
-		}
-
-		validNames[name] = true
-
-		out = append(out, flat)
 	}
 
 	if len(out) == 0 {
@@ -246,30 +278,7 @@ func normalizeGrokCliTools(body map[string]any) {
 	}
 
 	body["tools"] = out
-	if tc, ok := body["tool_choice"].(map[string]any); ok {
-		choiceType, _ := tc["type"].(string)
-		if choiceType == "function" || choiceType == "custom" {
-			rawName, _ := tc["name"].(string)
-			if rawName == "" {
-				if fn, ok := tc["function"].(map[string]any); ok {
-					rawName, _ = fn["name"].(string)
-				}
-			}
-
-			name := strings.TrimSpace(rawName)
-			if len(name) > 128 {
-				name = name[:128]
-			}
-
-			if name == "" || !validNames[name] {
-				delete(body, "tool_choice")
-			} else {
-				body["tool_choice"] = map[string]any{"type": "function", "name": name}
-			}
-		} else if !hostedTypes[choiceType] {
-			delete(body, "tool_choice")
-		}
-	}
+	filterGrokCliToolChoice(body, validNames, hostedTypes)
 }
 
 func messagesToInput(messages []any) []any {
@@ -299,6 +308,74 @@ func messagesToInput(messages []any) []any {
 	}
 
 	return out
+}
+
+func (e *GrokCliExecutor) applyGrokReasoning(body map[string]any, model, modelEffort string) {
+	supportsEffort := supportsGrokCliReasoningEffort(model)
+
+	reasoning, ok := body["reasoning"].(map[string]any)
+	if !ok {
+		reasoning = map[string]any{"summary": "concise"}
+
+		if supportsEffort {
+			effort := modelEffort
+			if re, okEffort := body["reasoning_effort"]; okEffort {
+				effort = normalizeGrokCliEffort(re)
+			} else if effort == "" {
+				effort = "high"
+			} else {
+				effort = normalizeGrokCliEffort(effort)
+			}
+
+			reasoning["effort"] = effort
+		}
+
+		body["reasoning"] = reasoning
+	} else {
+		if supportsEffort {
+			effortSrc := reasoning["effort"]
+			if effortSrc == nil {
+				effortSrc = body["reasoning_effort"]
+			}
+
+			if effortSrc == nil && modelEffort != "" {
+				effortSrc = modelEffort
+			}
+
+			reasoning["effort"] = normalizeGrokCliEffort(effortSrc)
+		} else {
+			delete(reasoning, "effort")
+		}
+
+		if _, has := reasoning["summary"]; !has {
+			reasoning["summary"] = "concise"
+		}
+
+		body["reasoning"] = reasoning
+	}
+
+	delete(body, "reasoning_effort")
+	includeEncryptedReasoning(body, reasoning)
+}
+
+func includeEncryptedReasoning(body map[string]any, reasoning map[string]any) {
+	if reasoning == nil {
+		return
+	}
+
+	effort, _ := reasoning["effort"].(string) // nolint:errcheck
+	if effort == "none" {
+		return
+	}
+
+	include, _ := body["include"].([]any) // nolint:errcheck
+	for _, v := range include {
+		if s, ok := v.(string); ok && s == "reasoning.encrypted_content" {
+			return
+		}
+	}
+
+	body["include"] = append(include, "reasoning.encrypted_content")
 }
 
 func (e *GrokCliExecutor) transform(model string, body map[string]any) map[string]any {
@@ -343,71 +420,7 @@ func (e *GrokCliExecutor) transform(model string, body map[string]any) map[strin
 	}
 
 	body["model"] = resolved
-
-	supportsEffort := supportsGrokCliReasoningEffort(resolved)
-
-	reasoning, ok := body["reasoning"].(map[string]any)
-	if !ok {
-		reasoning = map[string]any{"summary": "concise"}
-
-		if supportsEffort {
-			effort := modelEffort
-			if re, ok := body["reasoning_effort"]; ok {
-				effort = normalizeGrokCliEffort(re)
-			} else if effort == "" {
-				effort = "high"
-			} else {
-				effort = normalizeGrokCliEffort(effort)
-			}
-
-			reasoning["effort"] = effort
-		}
-
-		body["reasoning"] = reasoning
-	} else {
-		if supportsEffort {
-			effortSrc := reasoning["effort"]
-			if effortSrc == nil {
-				effortSrc = body["reasoning_effort"]
-			}
-
-			if effortSrc == nil && modelEffort != "" {
-				effortSrc = modelEffort
-			}
-
-			reasoning["effort"] = normalizeGrokCliEffort(effortSrc)
-		} else {
-			delete(reasoning, "effort")
-		}
-
-		if _, has := reasoning["summary"]; !has {
-			reasoning["summary"] = "concise"
-		}
-
-		body["reasoning"] = reasoning
-	}
-
-	delete(body, "reasoning_effort")
-
-	if reasoning != nil {
-		if effort, _ := reasoning["effort"].(string); effort != "none" {
-			include, _ := body["include"].([]any)
-			found := false
-
-			for _, v := range include {
-				if s, _ := v.(string); s == "reasoning.encrypted_content" {
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				include = append(include, "reasoning.encrypted_content")
-			}
-
-			body["include"] = include
-		}
-	}
+	e.applyGrokReasoning(body, resolved, modelEffort)
 
 	for _, k := range []string{
 		"messages", "max_tokens", "max_completion_tokens", "n", "seed", "logprobs",

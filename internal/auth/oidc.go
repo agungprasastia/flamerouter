@@ -37,12 +37,16 @@ type OIDCHandler struct {
 	client *http.Client
 }
 
+// NewOIDCHandler creates a new OpenID Connect authentication handler.
 func NewOIDCHandler(jwt *JWTManager, st *store.Store) *OIDCHandler {
 	return &OIDCHandler{
 		jwt: jwt,
 		st:  st,
 		client: &http.Client{
-			Timeout: 15 * time.Second,
+			Transport:     nil,
+			CheckRedirect: nil,
+			Jar:           nil,
+			Timeout:       15 * time.Second,
 		},
 	}
 }
@@ -52,7 +56,7 @@ type oidcConfig struct {
 	clientID     string
 	clientSecret string
 	scopes       string
-	redirectURI  string // optional override
+	redirectURI  string
 	loginLabel   string
 }
 
@@ -63,20 +67,33 @@ type oidcDiscovery struct {
 	JWKSURI               string `json:"jwks_uri"`
 }
 
+type secretProbe struct {
+	valid   *bool
+	message string
+	tested  bool
+}
+
+type jwksDoc struct {
+	Keys []jwkKey `json:"keys"`
+}
+
+type jwkKey struct {
+	Kty string `json:"kty"`
+	Kid string `json:"kid"`
+	Alg string `json:"alg"`
+	Use string `json:"use"`
+	N   string `json:"n"`
+	E   string `json:"e"`
+	Crv string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
+}
+
 func trimSlashes(s string) string {
 	return strings.TrimRight(strings.TrimSpace(s), "/")
 }
 
-func (o *OIDCHandler) loadConfig() *oidcConfig {
-	if o.st == nil {
-		return nil
-	}
-
-	settings, err := o.st.ListSettings()
-	if err != nil {
-		return nil
-	}
-	// also accept brief keys oidc.issuer etc.
+func parseOIDCConfig(settings map[string]string) *oidcConfig {
 	issuer := firstNonEmpty(settings["oidcIssuerUrl"], settings["oidc.issuer"])
 	clientID := firstNonEmpty(settings["oidcClientId"], settings["oidc.clientId"])
 	secret := firstNonEmpty(settings["oidcClientSecret"], settings["oidc.clientSecret"])
@@ -108,6 +125,19 @@ func (o *OIDCHandler) loadConfig() *oidcConfig {
 		redirectURI:  firstNonEmpty(settings["oidcRedirectUri"], settings["oidc.redirectUri"]),
 		loginLabel:   label,
 	}
+}
+
+func (o *OIDCHandler) loadConfig() *oidcConfig {
+	if o.st == nil {
+		return nil
+	}
+
+	settings, err := o.st.ListSettings()
+	if err != nil {
+		return nil
+	}
+
+	return parseOIDCConfig(settings)
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -168,10 +198,14 @@ func (o *OIDCHandler) fetchDiscovery(issuer string) (*oidcDiscovery, error) {
 		return nil, fmt.Errorf("empty discovery response from %s", u)
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		if clErr := res.Body.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Failed to load OIDC discovery document from %s", u)
+		return nil, fmt.Errorf("failed to load OIDC discovery document from %s", u)
 	}
 
 	var d oidcDiscovery
@@ -186,15 +220,15 @@ func (o *OIDCHandler) fetchDiscovery(issuer string) (*oidcDiscovery, error) {
 	return &d, nil
 }
 
-func createPKCE() (verifier, challenge string, err error) {
+func createPKCE() (string, string, error) {
 	b := make([]byte, 32)
-	if _, err = rand.Read(b); err != nil {
+	if _, err := rand.Read(b); err != nil {
 		return "", "", err
 	}
 
-	verifier = base64.RawURLEncoding.EncodeToString(b)
+	verifier := base64.RawURLEncoding.EncodeToString(b)
 	sum := sha256.Sum256([]byte(verifier))
-	challenge = base64.RawURLEncoding.EncodeToString(sum[:])
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
 
 	return verifier, challenge, nil
 }
@@ -208,26 +242,31 @@ func randomB64(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+func newOIDCCookie(name, value string, maxAge int, secure bool) *http.Cookie {
+	return &http.Cookie{
+		Name:        name,
+		Value:       value,
+		Path:        "/",
+		Domain:      "",
+		Expires:     time.Time{},
+		RawExpires:  "",
+		MaxAge:      maxAge,
+		Secure:      secure,
+		HttpOnly:    true,
+		SameSite:    http.SameSiteLaxMode,
+		Partitioned: false,
+		Raw:         "",
+		Unparsed:    nil,
+		Quoted:      false,
+	}
+}
+
 func setOIDCCookie(w http.ResponseWriter, name, value string, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     name,
-		Value:    value,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
-		MaxAge:   oidcCookieMaxAge,
-	})
+	http.SetCookie(w, newOIDCCookie(name, value, oidcCookieMaxAge, secure))
 }
 
 func clearOIDCCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     name,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		MaxAge:   -1,
-	})
+	http.SetCookie(w, newOIDCCookie(name, "", -1, false))
 }
 
 func clearAllOIDCCookies(w http.ResponseWriter) {
@@ -270,20 +309,11 @@ func (o *OIDCHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, err := randomB64(16)
-	if err != nil {
-		redirectLogin(w, r, "oidc_start_failed")
-		return
-	}
+	state, errS := randomB64(16)
+	nonce, errN := randomB64(16)
+	verifier, challenge, errP := createPKCE()
 
-	nonce, err := randomB64(16)
-	if err != nil {
-		redirectLogin(w, r, "oidc_start_failed")
-		return
-	}
-
-	verifier, challenge, err := createPKCE()
-	if err != nil {
+	if errS != nil || errN != nil || errP != nil {
 		redirectLogin(w, r, "oidc_start_failed")
 		return
 	}
@@ -317,89 +347,20 @@ func (o *OIDCHandler) Start(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL.String(), http.StatusFound)
 }
 
-// Callback handles GET /api/auth/oidc/callback — code exchange + id_token + session JWT.
-func (o *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
-	if errParam := r.URL.Query().Get("error"); errParam != "" {
-		redirectLogin(w, r, errParam)
-		return
-	}
-
-	code := r.URL.Query().Get("code")
+func (o *OIDCHandler) validateCallbackState(r *http.Request) (string, string, bool) {
 	state := r.URL.Query().Get("state")
-
-	if code == "" || state == "" {
-		redirectLogin(w, r, "oidc_missing_code")
-		return
-	}
-
 	storedState := cookieVal(r, oidcStateCookie)
 	storedNonce := cookieVal(r, oidcNonceCookie)
 	verifier := cookieVal(r, oidcVerifierCookie)
 
-	if storedState == "" || storedNonce == "" || verifier == "" || storedState != state {
-		clearAllOIDCCookies(w)
-		redirectLogin(w, r, "oidc_invalid_state")
-
-		return
+	if state == "" || storedState == "" || storedNonce == "" || verifier == "" || storedState != state {
+		return "", "", false
 	}
 
-	cfg := o.loadConfig()
-	if cfg == nil {
-		clearAllOIDCCookies(w)
-		redirectLogin(w, r, "oidc_not_configured")
+	return storedNonce, verifier, true
+}
 
-		return
-	}
-
-	disc, err := o.fetchDiscovery(cfg.issuerURL)
-	if err != nil {
-		clearAllOIDCCookies(w)
-		redirectLogin(w, r, err.Error())
-
-		return
-	}
-
-	redirectURI := cfg.redirectURI
-	if redirectURI == "" {
-		redirectURI = publicOrigin(r) + "/api/auth/oidc/callback"
-	}
-
-	tokenData, err := o.exchangeCode(disc.TokenEndpoint, cfg, code, redirectURI, verifier)
-	if err != nil {
-		clearAllOIDCCookies(w)
-		redirectLogin(w, r, err.Error())
-
-		return
-	}
-
-	idToken, _ := tokenData["id_token"].(string)
-	if idToken == "" {
-		clearAllOIDCCookies(w)
-		redirectLogin(w, r, "OIDC provider did not return an id_token")
-
-		return
-	}
-
-	issuer := disc.Issuer
-	if issuer == "" {
-		issuer = cfg.issuerURL
-	}
-
-	payload, err := o.verifyIDToken(idToken, issuer, cfg.clientID, disc.JWKSURI, storedNonce)
-	if err != nil {
-		clearAllOIDCCookies(w)
-		redirectLogin(w, r, err.Error())
-
-		return
-	}
-
-	clearAllOIDCCookies(w)
-
+func (o *OIDCHandler) processCallbackSession(w http.ResponseWriter, r *http.Request, payload map[string]any) {
 	claims := map[string]any{
 		"sub":       "admin",
 		"oidc":      true,
@@ -414,16 +375,122 @@ func (o *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   config.AuthCookieSecure() || r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-		MaxAge:   int(sessionExpiry.Seconds()),
-	})
+	http.SetCookie(w, newOIDCCookie(cookieName, token, int(sessionExpiry.Seconds()), config.AuthCookieSecure() || r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"))
 	http.Redirect(w, r, publicOrigin(r)+"/dashboard", http.StatusFound)
+}
+
+func (o *OIDCHandler) resolveCallbackConfig(w http.ResponseWriter, r *http.Request) (*oidcConfig, *oidcDiscovery, bool) {
+	cfg := o.loadConfig()
+	if cfg == nil {
+		clearAllOIDCCookies(w)
+		redirectLogin(w, r, "oidc_not_configured")
+
+		return nil, nil, false
+	}
+
+	disc, err := o.fetchDiscovery(cfg.issuerURL)
+	if err != nil {
+		clearAllOIDCCookies(w)
+		redirectLogin(w, r, err.Error())
+
+		return nil, nil, false
+	}
+
+	return cfg, disc, true
+}
+
+func (o *OIDCHandler) resolveIDTokenPayload(w http.ResponseWriter, r *http.Request, cfg *oidcConfig, disc *oidcDiscovery, code, verifier, storedNonce string) (map[string]any, bool) {
+	redirectURI := cfg.redirectURI
+	if redirectURI == "" {
+		redirectURI = publicOrigin(r) + "/api/auth/oidc/callback"
+	}
+
+	tokenData, err := o.exchangeCode(disc.TokenEndpoint, cfg, code, redirectURI, verifier)
+	if err != nil {
+		clearAllOIDCCookies(w)
+		redirectLogin(w, r, err.Error())
+
+		return nil, false
+	}
+
+	idToken, ok := tokenData["id_token"].(string)
+	if !ok || idToken == "" {
+		clearAllOIDCCookies(w)
+		redirectLogin(w, r, "OIDC provider did not return an id_token")
+
+		return nil, false
+	}
+
+	issuer := disc.Issuer
+	if issuer == "" {
+		issuer = cfg.issuerURL
+	}
+
+	payload, err := o.verifyIDToken(idToken, issuer, cfg.clientID, disc.JWKSURI, storedNonce)
+	if err != nil {
+		clearAllOIDCCookies(w)
+		redirectLogin(w, r, err.Error())
+
+		return nil, false
+	}
+
+	return payload, true
+}
+
+// Callback handles GET /api/auth/oidc/callback — code exchange + id_token + session JWT.
+func (o *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	if errParam := r.URL.Query().Get("error"); errParam != "" {
+		redirectLogin(w, r, errParam)
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+
+	storedNonce, verifier, ok := o.validateCallbackState(r)
+	if !ok || code == "" {
+		clearAllOIDCCookies(w)
+		redirectLogin(w, r, "oidc_invalid_state")
+
+		return
+	}
+
+	cfg, disc, ok := o.resolveCallbackConfig(w, r)
+	if !ok {
+		return
+	}
+
+	payload, ok := o.resolveIDTokenPayload(w, r, cfg, disc, code, verifier, storedNonce)
+	if !ok {
+		return
+	}
+
+	clearAllOIDCCookies(w)
+	o.processCallbackSession(w, r, payload)
+}
+
+func (o *OIDCHandler) executeExchangeRequest(tokenEndpoint string, form url.Values) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	res, err := o.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if res == nil || res.Body == nil {
+		return nil, fmt.Errorf("empty response from token endpoint")
+	}
+
+	return res, nil
 }
 
 func (o *OIDCHandler) exchangeCode(tokenEndpoint string, cfg *oidcConfig, code, redirectURI, verifier string) (map[string]any, error) {
@@ -438,41 +505,105 @@ func (o *OIDCHandler) exchangeCode(tokenEndpoint string, cfg *oidcConfig, code, 
 		form.Set("client_secret", cfg.clientSecret)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
+	res, err := o.executeExchangeRequest(tokenEndpoint, form)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	defer func() {
+		if clErr := res.Body.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
-	res, err := o.client.Do(req)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
-	if res == nil || res.Body == nil {
-		return nil, fmt.Errorf("empty response from token endpoint")
-	}
-
-	defer res.Body.Close()
-	body, _ := io.ReadAll(res.Body)
 
 	var data map[string]any
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, err
+	}
 
-	_ = json.Unmarshal(body, &data)
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		msg, _ := data["error_description"].(string)
-		if msg == "" {
-			msg, _ = data["error"].(string)
-		}
-
-		if msg == "" {
-			msg = fmt.Sprintf("OIDC token exchange failed (%d)", res.StatusCode)
-		}
-
-		return nil, fmt.Errorf("%s", msg)
+		return nil, extractTokenError(res.StatusCode, data)
 	}
 
 	return data, nil
+}
+
+func extractTokenError(status int, data map[string]any) error {
+	msg, ok := data["error_description"].(string)
+	if !ok || msg == "" {
+		if errVal, ok := data["error"].(string); ok {
+			msg = errVal
+		}
+	}
+
+	if msg == "" {
+		msg = fmt.Sprintf("OIDC token exchange failed (%d)", status)
+	}
+
+	return fmt.Errorf("%s", msg)
+}
+
+func (o *OIDCHandler) extractStoreSettings() (string, string, string, string) {
+	issuer, clientID, clientSecret, scopes := "", "", "", defaultOidcScopes
+	if o.st == nil {
+		return issuer, clientID, clientSecret, scopes
+	}
+
+	settings, err := o.st.ListSettings()
+	if err != nil {
+		return issuer, clientID, clientSecret, scopes
+	}
+
+	issuer = firstNonEmpty(settings["oidcIssuerUrl"], settings["oidc.issuer"])
+	clientID = firstNonEmpty(settings["oidcClientId"], settings["oidc.clientId"])
+	clientSecret = firstNonEmpty(settings["oidcClientSecret"], settings["oidc.clientSecret"])
+
+	if s := strings.TrimSpace(settings["oidcScopes"]); s != "" {
+		scopes = s
+	}
+
+	return issuer, clientID, clientSecret, scopes
+}
+
+func parseTestPostBody(r *http.Request, curIssuer, curClientID, curSecret, curScopes string) (string, string, string, string) {
+	if r.Method != http.MethodPost {
+		return curIssuer, curClientID, curSecret, curScopes
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return curIssuer, curClientID, curSecret, curScopes
+	}
+
+	if v, ok := body["issuerUrl"].(string); ok && strings.TrimSpace(v) != "" {
+		curIssuer = strings.TrimSpace(v)
+	}
+
+	if v, ok := body["clientId"].(string); ok && strings.TrimSpace(v) != "" {
+		curClientID = strings.TrimSpace(v)
+	}
+
+	if v, ok := body["clientSecret"].(string); ok {
+		curSecret = strings.TrimSpace(v)
+	}
+
+	if v, ok := body["scopes"].(string); ok && strings.TrimSpace(v) != "" {
+		curScopes = strings.TrimSpace(v)
+	}
+
+	return curIssuer, curClientID, curSecret, curScopes
+}
+
+func (o *OIDCHandler) extractTestParams(r *http.Request) (string, string, string, string) {
+	issuer, clientID, clientSecret, scopes := o.extractStoreSettings()
+	issuer, clientID, clientSecret, scopes = parseTestPostBody(r, issuer, clientID, clientSecret, scopes)
+
+	return trimSlashes(issuer), strings.TrimSpace(clientID), strings.TrimSpace(clientSecret), scopes
 }
 
 // Test handles GET|POST /api/auth/oidc/test — validates config + discovery.
@@ -484,45 +615,7 @@ func (o *OIDCHandler) Test(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	issuer, clientID, clientSecret, scopes := "", "", "", defaultOidcScopes
-
-	if o.st != nil {
-		settings, _ := o.st.ListSettings()
-		issuer = firstNonEmpty(settings["oidcIssuerUrl"], settings["oidc.issuer"])
-		clientID = firstNonEmpty(settings["oidcClientId"], settings["oidc.clientId"])
-		clientSecret = firstNonEmpty(settings["oidcClientSecret"], settings["oidc.clientSecret"])
-
-		if s := strings.TrimSpace(settings["oidcScopes"]); s != "" {
-			scopes = s
-		}
-	}
-
-	if r.Method == http.MethodPost {
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-
-		if v, ok := body["issuerUrl"].(string); ok && strings.TrimSpace(v) != "" {
-			issuer = strings.TrimSpace(v)
-		}
-
-		if v, ok := body["clientId"].(string); ok && strings.TrimSpace(v) != "" {
-			clientID = strings.TrimSpace(v)
-		}
-
-		if _, ok := body["clientSecret"]; ok {
-			if v, ok := body["clientSecret"].(string); ok {
-				clientSecret = strings.TrimSpace(v)
-			}
-		}
-
-		if v, ok := body["scopes"].(string); ok && strings.TrimSpace(v) != "" {
-			scopes = strings.TrimSpace(v)
-		}
-	}
-
-	issuer = trimSlashes(issuer)
-	clientID = strings.TrimSpace(clientID)
-
+	issuer, clientID, clientSecret, scopes := o.extractTestParams(r)
 	if issuer == "" {
 		writeOIDCJSON(w, http.StatusBadRequest, map[string]any{"error": "Issuer URL is required"})
 		return
@@ -539,19 +632,19 @@ func (o *OIDCHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectURI := firstNonEmpty(
-		func() string {
-			if o.st != nil {
-				s, _ := o.st.GetSetting("oidcRedirectUri")
-				return s
-			}
+	redirectURI := publicOrigin(r) + "/api/auth/oidc/callback"
 
-			return ""
-		}(),
-		publicOrigin(r)+"/api/auth/oidc/callback",
-	)
+	if o.st != nil {
+		if s, err := o.st.GetSetting("oidcRedirectUri"); err == nil && s != "" {
+			redirectURI = s
+		}
+	}
+
 	probe := o.probeClientSecret(disc.TokenEndpoint, clientID, clientSecret, redirectURI)
+	o.renderTestResponse(w, disc, probe, issuer, clientID, scopes, redirectURI)
+}
 
+func (o *OIDCHandler) renderTestResponse(w http.ResponseWriter, disc *oidcDiscovery, probe secretProbe, issuer, clientID, scopes, redirectURI string) {
 	if probe.tested && probe.valid != nil && !*probe.valid {
 		writeOIDCJSON(w, http.StatusOK, map[string]any{
 			"ok": false, "discoveryOk": true,
@@ -579,15 +672,43 @@ func (o *OIDCHandler) Test(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type secretProbe struct {
-	valid   *bool
-	message string
-	tested  bool
+func isClientMismatch(errDesc string) bool {
+	descLower := strings.ToLower(errDesc)
+	if !strings.Contains(descLower, "client") {
+		return false
+	}
+
+	return strings.Contains(descLower, "invalid") || strings.Contains(descLower, "failed") || strings.Contains(descLower, "mismatch")
+}
+
+func evaluateSecretProbe(statusCode int, errCode, errDesc string) (valid *bool, message string) {
+	if statusCode >= 200 && statusCode < 300 {
+		t := true
+		return &t, "Client secret was accepted by the token endpoint."
+	}
+
+	errLower := strings.ToLower(errCode)
+	if errLower == "invalid_client" || errLower == "unauthorized_client" || isClientMismatch(errDesc) {
+		f := false
+		return &f, errDesc
+	}
+
+	descLower := strings.ToLower(errDesc)
+	if errLower == "invalid_grant" || errLower == "invalid_code" || strings.Contains(descLower, "grant") || strings.Contains(descLower, "code") {
+		t := true
+		return &t, "Client secret was accepted; the token exchange failed only because the test authorization code is invalid."
+	}
+
+	return nil, errDesc
 }
 
 func (o *OIDCHandler) probeClientSecret(tokenEndpoint, clientID, clientSecret, redirectURI string) secretProbe {
 	if clientSecret == "" {
-		return secretProbe{tested: false, message: "No client secret was provided, so secret validation was skipped."}
+		return secretProbe{
+			valid:   nil,
+			message: "No client secret was provided, so secret validation was skipped.",
+			tested:  false,
+		}
 	}
 
 	form := url.Values{}
@@ -598,59 +719,49 @@ func (o *OIDCHandler) probeClientSecret(tokenEndpoint, clientID, clientSecret, r
 	form.Set("redirect_uri", redirectURI)
 	form.Set("code_verifier", "__oidc_test_invalid_verifier__")
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
+	res, err := o.executeExchangeRequest(tokenEndpoint, form)
 	if err != nil {
-		return secretProbe{tested: true, message: err.Error()}
+		return secretProbe{valid: nil, message: err.Error(), tested: true}
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	defer func() {
+		if clErr := res.Body.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
-	res, err := o.client.Do(req)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return secretProbe{tested: true, message: err.Error()}
+		return secretProbe{valid: nil, message: err.Error(), tested: true}
 	}
-	if res == nil || res.Body == nil {
-		return secretProbe{tested: true, message: "empty response from token endpoint"}
-	}
-
-	defer res.Body.Close()
-	body, _ := io.ReadAll(res.Body)
 
 	var data map[string]any
-	_ = json.Unmarshal(body, &data)
-	errCode, _ := data["error"].(string)
-	errDesc, _ := data["error_description"].(string)
+	if err := json.Unmarshal(body, &data); err != nil {
+		return secretProbe{valid: nil, message: err.Error(), tested: true}
+	}
 
-	if errDesc == "" {
+	errCode, ok := data["error"].(string)
+	if !ok {
+		errCode = ""
+	}
+
+	errDesc, ok := data["error_description"].(string)
+	if !ok || errDesc == "" {
 		errDesc = errCode
 	}
 
-	errLower := strings.ToLower(errCode)
+	valid, msg := evaluateSecretProbe(res.StatusCode, errCode, errDesc)
 
-	if res.StatusCode >= 200 && res.StatusCode < 300 {
-		t := true
-		return secretProbe{tested: true, valid: &t, message: "Client secret was accepted by the token endpoint."}
-	}
-
-	if errLower == "invalid_client" || errLower == "unauthorized_client" ||
-		strings.Contains(strings.ToLower(errDesc), "client") && (strings.Contains(strings.ToLower(errDesc), "invalid") || strings.Contains(strings.ToLower(errDesc), "failed") || strings.Contains(strings.ToLower(errDesc), "mismatch")) {
-		f := false
-		return secretProbe{tested: true, valid: &f, message: errDesc}
-	}
-
-	if errLower == "invalid_grant" || errLower == "invalid_code" ||
-		strings.Contains(strings.ToLower(errDesc), "grant") || strings.Contains(strings.ToLower(errDesc), "code") {
-		t := true
-		return secretProbe{tested: true, valid: &t, message: "Client secret was accepted; the token exchange failed only because the test authorization code is invalid."}
-	}
-
-	return secretProbe{tested: true, message: errDesc}
+	return secretProbe{valid: valid, message: msg, tested: true}
 }
 
 func writeOIDCJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+	}
 }
 
 func pickOIDCDisplayName(payload map[string]any) string {
@@ -673,15 +784,86 @@ func pickOIDCEmail(payload map[string]any) string {
 
 // --- id_token JWT verify via JWKS (RS256/ES256, stdlib) ---
 
-func (o *OIDCHandler) verifyIDToken(idToken, issuer, audience, jwksURI, nonce string) (map[string]any, error) {
-	parts := strings.Split(idToken, ".")
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("invalid id_token format")
+func validateIDTokenClaims(claims map[string]any, issuer, audience, nonce string) error {
+	if iss, ok := claims["iss"].(string); ok && iss != "" && trimSlashes(iss) != trimSlashes(issuer) {
+		return fmt.Errorf("id_token issuer mismatch")
 	}
 
-	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return nil, fmt.Errorf("invalid id_token header")
+	if !audMatch(claims["aud"], audience) {
+		return fmt.Errorf("id_token audience mismatch")
+	}
+
+	if exp, ok := claims["exp"].(float64); ok {
+		if time.Now().Unix() > int64(exp) {
+			return fmt.Errorf("id_token expired")
+		}
+	}
+
+	if nonce != "" {
+		if n, ok := claims["nonce"].(string); !ok || n != nonce {
+			return fmt.Errorf("id_token nonce mismatch")
+		}
+	}
+
+	return nil
+}
+
+func verifyRSASig(k *rsa.PublicKey, alg string, sigInput, sig []byte) error {
+	if alg != "" && alg != "RS256" {
+		return fmt.Errorf("unsupported alg %s for RSA key", alg)
+	}
+
+	h := sha256.Sum256(sigInput)
+	if err := rsa.VerifyPKCS1v15(k, crypto.SHA256, h[:], sig); err != nil {
+		return fmt.Errorf("id_token signature invalid")
+	}
+
+	return nil
+}
+
+func verifyECSig(k *ecdsa.PublicKey, alg string, sigInput, sig []byte) error {
+	if alg != "" && alg != "ES256" {
+		return fmt.Errorf("unsupported alg %s for EC key", alg)
+	}
+
+	if len(sig) != 64 {
+		return fmt.Errorf("id_token signature invalid")
+	}
+
+	rInt := new(big.Int).SetBytes(sig[:32])
+	sInt := new(big.Int).SetBytes(sig[32:])
+	h := sha256.Sum256(sigInput)
+
+	if !ecdsa.Verify(k, h[:], rInt, sInt) {
+		return fmt.Errorf("id_token signature invalid")
+	}
+
+	return nil
+}
+
+func verifyTokenSig(key any, alg string, sigInput, sig []byte) error {
+	switch k := key.(type) {
+	case *rsa.PublicKey:
+		return verifyRSASig(k, alg, sigInput, sig)
+	case *ecdsa.PublicKey:
+		return verifyECSig(k, alg, sigInput, sig)
+	default:
+		return fmt.Errorf("unsupported jwks key type")
+	}
+}
+
+func parseTokenParts(idToken string) (headerAlg, headerKid string, payload map[string]any, sigInput, sig []byte, err error) {
+	parts := strings.Split(idToken, ".")
+	if len(parts) != 3 {
+		return "", "", nil, nil, nil, fmt.Errorf("invalid id_token format")
+	}
+
+	headerJSON, errH := base64.RawURLEncoding.DecodeString(parts[0])
+	payloadJSON, errP := base64.RawURLEncoding.DecodeString(parts[1])
+	sigBytes, errS := base64.RawURLEncoding.DecodeString(parts[2])
+
+	if errH != nil || errP != nil || errS != nil {
+		return "", "", nil, nil, nil, fmt.Errorf("invalid id_token encoding")
 	}
 
 	var header struct {
@@ -690,83 +872,38 @@ func (o *OIDCHandler) verifyIDToken(idToken, issuer, audience, jwksURI, nonce st
 	}
 
 	if err := json.Unmarshal(headerJSON, &header); err != nil {
-		return nil, fmt.Errorf("invalid id_token header")
-	}
-
-	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("invalid id_token payload")
+		return "", "", nil, nil, nil, fmt.Errorf("invalid id_token header")
 	}
 
 	var claims map[string]any
 	if err := json.Unmarshal(payloadJSON, &claims); err != nil {
-		return nil, fmt.Errorf("invalid id_token claims")
+		return "", "", nil, nil, nil, fmt.Errorf("invalid id_token claims")
 	}
 
-	if iss, _ := claims["iss"].(string); iss != "" && trimSlashes(iss) != trimSlashes(issuer) {
-		return nil, fmt.Errorf("id_token issuer mismatch")
-	}
+	return header.Alg, header.Kid, claims, []byte(parts[0] + "." + parts[1]), sigBytes, nil
+}
 
-	if !audMatch(claims["aud"], audience) {
-		return nil, fmt.Errorf("id_token audience mismatch")
-	}
-
-	if exp, ok := claims["exp"].(float64); ok {
-		if time.Now().Unix() > int64(exp) {
-			return nil, fmt.Errorf("id_token expired")
-		}
-	}
-
-	if nonce != "" {
-		if n, _ := claims["nonce"].(string); n != nonce {
-			return nil, fmt.Errorf("id_token nonce mismatch")
-		}
-	}
-
-	if jwksURI == "" {
-		return claims, nil // ponytail: skip sig if no jwks; upgrade when required
-	}
-
-	key, err := o.fetchJWKSKey(jwksURI, header.Kid, header.Alg)
+func (o *OIDCHandler) verifyIDToken(idToken, issuer, audience, jwksURI, nonce string) (map[string]any, error) {
+	alg, kid, claims, sigInput, sig, err := parseTokenParts(idToken)
 	if err != nil {
 		return nil, err
 	}
 
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return nil, fmt.Errorf("invalid id_token signature encoding")
+	if valErr := validateIDTokenClaims(claims, issuer, audience, nonce); valErr != nil {
+		return nil, valErr
 	}
 
-	sigInput := []byte(parts[0] + "." + parts[1])
+	if jwksURI == "" {
+		return claims, nil
+	}
 
-	switch k := key.(type) {
-	case *rsa.PublicKey:
-		if header.Alg != "" && header.Alg != "RS256" {
-			return nil, fmt.Errorf("unsupported alg %s for RSA key", header.Alg)
-		}
+	key, fetchErr := o.fetchJWKSKey(jwksURI, kid, alg)
+	if fetchErr != nil {
+		return nil, fetchErr
+	}
 
-		h := sha256.Sum256(sigInput)
-		if err := rsa.VerifyPKCS1v15(k, crypto.SHA256, h[:], sig); err != nil {
-			return nil, fmt.Errorf("id_token signature invalid")
-		}
-	case *ecdsa.PublicKey:
-		if header.Alg != "" && header.Alg != "ES256" {
-			return nil, fmt.Errorf("unsupported alg %s for EC key", header.Alg)
-		}
-
-		if len(sig) != 64 {
-			return nil, fmt.Errorf("id_token signature invalid")
-		}
-
-		rInt := new(big.Int).SetBytes(sig[:32])
-		sInt := new(big.Int).SetBytes(sig[32:])
-		h := sha256.Sum256(sigInput)
-
-		if !ecdsa.Verify(k, h[:], rInt, sInt) {
-			return nil, fmt.Errorf("id_token signature invalid")
-		}
-	default:
-		return nil, fmt.Errorf("unsupported jwks key type")
+	if sigErr := verifyTokenSig(key, alg, sigInput, sig); sigErr != nil {
+		return nil, sigErr
 	}
 
 	return claims, nil
@@ -787,23 +924,19 @@ func audMatch(aud any, expected string) bool {
 	return expected == ""
 }
 
-type jwksDoc struct {
-	Keys []jwkKey `json:"keys"`
+func matchJWK(k jwkKey, pub any, kid, alg string) (any, bool) {
+	if kid != "" && k.Kid == kid {
+		return pub, true
+	}
+
+	if kid == "" && (alg == "" || k.Alg == "" || k.Alg == alg) {
+		return pub, true
+	}
+
+	return nil, false
 }
 
-type jwkKey struct {
-	Kty string `json:"kty"`
-	Kid string `json:"kid"`
-	Alg string `json:"alg"`
-	Use string `json:"use"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-	Crv string `json:"crv"`
-	X   string `json:"x"`
-	Y   string `json:"y"`
-}
-
-func (o *OIDCHandler) fetchJWKSKey(jwksURI, kid, alg string) (any, error) {
+func (o *OIDCHandler) fetchJWKSDoc(jwksURI string) (*jwksDoc, error) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, jwksURI, nil)
 	if err != nil {
 		return nil, err
@@ -813,11 +946,16 @@ func (o *OIDCHandler) fetchJWKSKey(jwksURI, kid, alg string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if res == nil || res.Body == nil {
 		return nil, fmt.Errorf("failed to fetch JWKS: empty response")
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		if clErr := res.Body.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch JWKS")
@@ -825,6 +963,15 @@ func (o *OIDCHandler) fetchJWKSKey(jwksURI, kid, alg string) (any, error) {
 
 	var doc jwksDoc
 	if err := json.NewDecoder(res.Body).Decode(&doc); err != nil {
+		return nil, err
+	}
+
+	return &doc, nil
+}
+
+func (o *OIDCHandler) fetchJWKSKey(jwksURI, kid, alg string) (any, error) {
+	doc, err := o.fetchJWKSDoc(jwksURI)
+	if err != nil {
 		return nil, err
 	}
 
@@ -840,12 +987,8 @@ func (o *OIDCHandler) fetchJWKSKey(jwksURI, kid, alg string) (any, error) {
 			continue
 		}
 
-		if kid != "" && k.Kid == kid {
-			return pub, nil
-		}
-
-		if kid == "" && (alg == "" || k.Alg == "" || k.Alg == alg) {
-			return pub, nil
+		if matched, ok := matchJWK(k, pub, kid, alg); ok {
+			return matched, nil
 		}
 
 		if fallback == nil {
@@ -860,45 +1003,56 @@ func (o *OIDCHandler) fetchJWKSKey(jwksURI, kid, alg string) (any, error) {
 	return nil, fmt.Errorf("no matching JWKS key")
 }
 
+func parseRSAJWK(k jwkKey) (any, error) {
+	nb, errN := base64.RawURLEncoding.DecodeString(k.N)
+	if errN != nil {
+		return nil, fmt.Errorf("invalid RSA jwk params")
+	}
+
+	eb, errE := base64.RawURLEncoding.DecodeString(k.E)
+	if errE != nil {
+		return nil, fmt.Errorf("invalid RSA jwk params")
+	}
+
+	e := 0
+	for _, b := range eb {
+		e = e<<8 + int(b)
+	}
+
+	return &rsa.PublicKey{
+		N: new(big.Int).SetBytes(nb),
+		E: e,
+	}, nil
+}
+
+func parseECJWK(k jwkKey) (any, error) {
+	if k.Crv != "P-256" {
+		return nil, fmt.Errorf("unsupported curve")
+	}
+
+	xb, errX := base64.RawURLEncoding.DecodeString(k.X)
+	if errX != nil {
+		return nil, fmt.Errorf("invalid EC jwk params")
+	}
+
+	yb, errY := base64.RawURLEncoding.DecodeString(k.Y)
+	if errY != nil {
+		return nil, fmt.Errorf("invalid EC jwk params")
+	}
+
+	return &ecdsa.PublicKey{
+		Curve: elliptic.P256(),
+		X:     new(big.Int).SetBytes(xb),
+		Y:     new(big.Int).SetBytes(yb),
+	}, nil
+}
+
 func parseJWK(k jwkKey) (any, error) {
 	switch k.Kty {
 	case "RSA":
-		nb, err := base64.RawURLEncoding.DecodeString(k.N)
-		if err != nil {
-			return nil, err
-		}
-
-		eb, err := base64.RawURLEncoding.DecodeString(k.E)
-		if err != nil {
-			return nil, err
-		}
-
-		e := 0
-		for _, b := range eb {
-			e = e<<8 + int(b)
-		}
-
-		return &rsa.PublicKey{N: new(big.Int).SetBytes(nb), E: e}, nil
+		return parseRSAJWK(k)
 	case "EC":
-		if k.Crv != "P-256" {
-			return nil, fmt.Errorf("unsupported curve")
-		}
-
-		xb, err := base64.RawURLEncoding.DecodeString(k.X)
-		if err != nil {
-			return nil, err
-		}
-
-		yb, err := base64.RawURLEncoding.DecodeString(k.Y)
-		if err != nil {
-			return nil, err
-		}
-
-		return &ecdsa.PublicKey{
-			Curve: elliptic.P256(),
-			X:     new(big.Int).SetBytes(xb),
-			Y:     new(big.Int).SetBytes(yb),
-		}, nil
+		return parseECJWK(k)
 	default:
 		return nil, fmt.Errorf("unsupported kty")
 	}

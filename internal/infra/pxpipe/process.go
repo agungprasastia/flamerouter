@@ -1,8 +1,10 @@
+// Package pxpipe manages the lifecycle and health checking of pxpipe subprocesses.
 package pxpipe
 
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,10 +23,18 @@ type Process struct {
 	mu     sync.Mutex
 }
 
+// New returns a new Process instance with default URL.
 func New() *Process {
-	return &Process{status: "stopped", url: "http://127.0.0.1:8790"}
+	return &Process{
+		cmd:    nil,
+		url:    "http://127.0.0.1:8790",
+		status: "stopped",
+		logs:   nil,
+		mu:     sync.Mutex{},
+	}
 }
 
+// Install installs pxpipe globally via npm if not present.
 func (p *Process) Install() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -40,6 +50,7 @@ func (p *Process) Install() error {
 		return fmt.Errorf("npm not found; cannot install pxpipe")
 	}
 
+	// #nosec G204 -- npm path resolved via LookPath
 	cmd := exec.Command(npm, "install", "-g", "pxpipe")
 	out, err := cmd.CombinedOutput()
 	p.logs = append(p.logs, string(out))
@@ -54,6 +65,7 @@ func (p *Process) Install() error {
 	return nil
 }
 
+// Start launches the pxpipe process.
 func (p *Process) Start(serviceURL string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -75,6 +87,7 @@ func (p *Process) Start(serviceURL string) error {
 			return fmt.Errorf("pxpipe not installed")
 		}
 
+		// #nosec G204 -- bin is resolved via LookPath
 		cmd := exec.Command(bin, "pxpipe")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -92,6 +105,7 @@ func (p *Process) Start(serviceURL string) error {
 		return nil
 	}
 
+	// #nosec G204 -- bin is resolved via LookPath
 	cmd := exec.Command(bin)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -110,7 +124,9 @@ func (p *Process) Start(serviceURL string) error {
 }
 
 func (p *Process) wait(cmd *exec.Cmd) {
-	_ = cmd.Wait()
+	if waitErr := cmd.Wait(); waitErr != nil {
+		log.Printf("[pxpipe] process wait: %v", waitErr)
+	}
 
 	p.mu.Lock()
 	p.status = "stopped"
@@ -118,6 +134,7 @@ func (p *Process) wait(cmd *exec.Cmd) {
 	p.mu.Unlock()
 }
 
+// Stop terminates the pxpipe process.
 func (p *Process) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -134,11 +151,16 @@ func (p *Process) Stop() error {
 	return err
 }
 
+// Restart stops then starts pxpipe.
 func (p *Process) Restart(serviceURL string) error {
-	_ = p.Stop()
+	if stopErr := p.Stop(); stopErr != nil {
+		log.Printf("[pxpipe] restart stop error: %v", stopErr)
+	}
+
 	return p.Start(serviceURL)
 }
 
+// Status returns the current status string.
 func (p *Process) Status() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -146,6 +168,7 @@ func (p *Process) Status() string {
 	return p.status
 }
 
+// URL returns the service URL.
 func (p *Process) URL() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -153,6 +176,7 @@ func (p *Process) URL() string {
 	return p.url
 }
 
+// Health checks if pxpipe service is responding.
 func (p *Process) Health() bool {
 	p.mu.Lock()
 	u := p.url
@@ -162,7 +186,12 @@ func (p *Process) Health() bool {
 		return false
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Transport:     nil,
+		CheckRedirect: nil,
+		Jar:           nil,
+		Timeout:       2 * time.Second,
+	}
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, strings.TrimRight(u, "/")+"/health", nil)
 	if err != nil {
@@ -173,15 +202,21 @@ func (p *Process) Health() bool {
 	if err != nil {
 		return false
 	}
+
 	if resp == nil || resp.Body == nil {
 		return false
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("[pxpipe] close response body: %v", closeErr)
+		}
+	}()
 
 	return resp.StatusCode < 500
 }
 
+// Stats returns status and URL dictionary.
 func (p *Process) Stats() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -192,6 +227,7 @@ func (p *Process) Stats() map[string]any {
 	}
 }
 
+// Logs returns a copy of captured log entries.
 func (p *Process) Logs() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()

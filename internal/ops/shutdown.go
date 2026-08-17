@@ -1,3 +1,4 @@
+// Package ops provides operational utilities such as logging, updater, and shutdown handlers.
 package ops
 
 import (

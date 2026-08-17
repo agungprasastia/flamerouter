@@ -80,8 +80,7 @@ func FilterDedupLog(text string) string {
 // FilterGitDiff keeps file headers + hunks capped.
 func FilterGitDiff(text string) string {
 	lines := strings.Split(text, "\n")
-
-	var out []string
+	out := make([]string, 0, len(lines))
 
 	hunkLines := 0
 	inHunk := false
@@ -127,31 +126,36 @@ func FilterGitDiff(text string) string {
 	return strings.Join(out, "\n")
 }
 
+func updateGitStatusSection(line string, currentSection string) (string, bool) {
+	if strings.HasPrefix(line, "Untracked files:") {
+		return "untracked", true
+	}
+
+	if strings.HasPrefix(line, "Changes ") || strings.HasPrefix(line, "On branch") || strings.HasPrefix(line, "nothing to commit") {
+		return "other", true
+	}
+
+	return currentSection, false
+}
+
 // FilterGitStatus caps file lists.
 func FilterGitStatus(text string) string {
 	lines := strings.Split(text, "\n")
-
-	var out []string
+	out := make([]string, 0, len(lines))
 
 	section := ""
 	count := 0
 	max := StatusMaxFiles
 
 	for _, l := range lines {
-		if strings.HasPrefix(l, "Untracked files:") {
-			section = "untracked"
-			count = 0
-			max = StatusMaxUntracked
-
-			out = append(out, l)
-
-			continue
-		}
-
-		if strings.HasPrefix(l, "Changes ") || strings.HasPrefix(l, "On branch") || strings.HasPrefix(l, "nothing to commit") {
-			section = "other"
+		if nextSec, changed := updateGitStatusSection(l, section); changed {
+			section = nextSec
 			count = 0
 			max = StatusMaxFiles
+
+			if section == "untracked" {
+				max = StatusMaxUntracked
+			}
 
 			out = append(out, l)
 
@@ -189,8 +193,7 @@ func FilterGitLog(text string) string {
 func FilterGrep(text string) string {
 	lines := strings.Split(text, "\n")
 	perFile := map[string]int{}
-
-	var out []string
+	out := make([]string, 0, len(lines))
 
 	for _, l := range lines {
 		if !isGrepLine(l) {
@@ -198,7 +201,13 @@ func FilterGrep(text string) string {
 			continue
 		}
 
-		file := l[:strings.Index(l, ":")]
+		idx := strings.Index(l, ":")
+		if idx == -1 {
+			out = append(out, l)
+			continue
+		}
+
+		file := l[:idx]
 		perFile[file]++
 
 		if perFile[file] > GrepPerFileMax {
@@ -220,8 +229,7 @@ func FilterFind(text string) string {
 	lines := strings.Split(text, "\n")
 	perDir := map[string]int{}
 	dirs := 0
-
-	var out []string
+	out := make([]string, 0, len(lines))
 
 	for _, l := range lines {
 		l = strings.TrimSpace(l)
@@ -261,8 +269,7 @@ func FilterLs(text string) string {
 		noise[d] = true
 	}
 
-	var out []string
-
+	out := make([]string, 0, len(lines))
 	skipped := 0
 
 	for _, l := range lines {
@@ -308,8 +315,7 @@ func FilterReadNumbered(text string) string {
 // FilterBuildOutput keeps errors/warnings, drops noise.
 func FilterBuildOutput(text string) string {
 	lines := strings.Split(text, "\n")
-
-	var out []string
+	out := make([]string, 0, len(lines))
 
 	for _, l := range lines {
 		lower := strings.ToLower(l)

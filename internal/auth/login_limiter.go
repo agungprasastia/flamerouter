@@ -97,7 +97,12 @@ func RecordFail(ip string) (remainingBeforeLock int) {
 
 	e := getEntry(ip)
 	if e == nil {
-		e = &loginEntry{}
+		e = &loginEntry{
+			lockUntil:  time.Time{},
+			lastFailAt: time.Time{},
+			fails:      0,
+			lockLevel:  0,
+		}
 	}
 
 	e.fails++

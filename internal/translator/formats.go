@@ -1,5 +1,9 @@
+// Package translator provides core translator registries, types, and format detection logic.
 package translator
 
+import "strings"
+
+// Supported translator format identifiers.
 const (
 	FormatOpenAI          = "openai"
 	FormatOpenAIResponses = "openai-responses"
@@ -17,16 +21,17 @@ const (
 	FormatResponses       = "responses"
 )
 
+// DetectFormatByEndpoint detects the API format based on request pathname and body.
 func DetectFormatByEndpoint(pathname string, body map[string]any) string {
-	if contains(pathname, "/v1/responses") {
+	if strings.Contains(pathname, "/v1/responses") {
 		return FormatOpenAIResponses
 	}
 
-	if contains(pathname, "/v1/messages") {
+	if strings.Contains(pathname, "/v1/messages") {
 		return FormatClaude
 	}
 
-	if contains(pathname, "/v1/chat/completions") {
+	if strings.Contains(pathname, "/v1/chat/completions") {
 		if _, ok := body["input"]; ok {
 			if _, isArray := body["input"].([]any); isArray {
 				return FormatOpenAI
@@ -37,6 +42,7 @@ func DetectFormatByEndpoint(pathname string, body map[string]any) string {
 	return ""
 }
 
+// DetectSourceFormat inspects the request body payload to determine its source format.
 func DetectSourceFormat(body map[string]any) string {
 	if _, ok := body["thinking"]; ok {
 		return FormatClaude
@@ -59,18 +65,4 @@ func DetectSourceFormat(body map[string]any) string {
 	}
 
 	return FormatOpenAI
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsSubstr(s, sub))
-}
-
-func containsSubstr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-
-	return false
 }

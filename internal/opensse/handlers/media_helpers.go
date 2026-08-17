@@ -22,7 +22,7 @@ func resolveProviderConn(st *store.Store, fb *fallback.Fallback, modelStr string
 
 	providerID = model.ResolveProviderAlias(mref.Provider, nil)
 
-	aliases, _ := st.ListAliases()
+	aliases, _ := st.ListAliases() //nolint:errcheck // optional alias list
 	if mref.IsAlias {
 		if resolved, ok := model.ResolveModelAlias(mref.Model, aliases); ok {
 			mref = resolved
@@ -30,7 +30,7 @@ func resolveProviderConn(st *store.Store, fb *fallback.Fallback, modelStr string
 		}
 	}
 
-	conn, _ = fb.SelectAccountExcluding(providerID, make(map[string]bool))
+	conn, _ = fb.SelectAccountExcluding(providerID, make(map[string]bool)) //nolint:errcheck // error handled by nil check
 	if conn == nil {
 		return providerID, mref.Model, nil, "no active connection for provider " + providerID
 	}
@@ -40,35 +40,29 @@ func resolveProviderConn(st *store.Store, fb *fallback.Fallback, modelStr string
 
 func mediaCredentials(conn *store.Connection) executor.Credentials {
 	if conn == nil {
-		return executor.Credentials{}
+		return executor.Credentials{
+			ProviderSpecificData: nil,
+			APIKey:               "",
+			AccessToken:          "",
+			RefreshToken:         "",
+			BaseURL:              "",
+			ProjectID:            "",
+		}
 	}
+
 	return executor.Credentials{
+		ProviderSpecificData: conn.ProviderSpecificData,
 		APIKey:               conn.APIKey,
 		AccessToken:          firstNonEmpty(conn.AccessToken, conn.APIKey),
 		RefreshToken:         conn.RefreshToken,
 		BaseURL:              conn.BaseURL,
-		ProviderSpecificData: conn.ProviderSpecificData,
+		ProjectID:            "",
 	}
 }
 
 // postOpenAIPath posts JSON to {base}/{path} with bearer auth (images/audio/embeddings).
 func postOpenAIPath(ctx context.Context, cred executor.Credentials, path string, payload []byte) (*executor.Result, error) {
-	base := strings.TrimRight(cred.BaseURL, "/")
-	if base == "" {
-		base = "https://api.openai.com/v1"
-	}
-	// ensure /v1 prefix style
-	url := base
-
-	if !strings.HasSuffix(base, path) {
-		if strings.HasSuffix(base, "/v1") {
-			url = base + path
-		} else if strings.Contains(base, "/v1/") {
-			url = base[:strings.Index(base, "/v1/")+3] + path
-		} else {
-			url = base + path
-		}
-	}
+	url := resolveOpenAIEndpoint(cred.BaseURL, path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
@@ -90,53 +84,53 @@ func postOpenAIPath(ctx context.Context, cred executor.Credentials, path string,
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close() //nolint:errcheck // best-effort body close
+		}
+
 		return nil, fmt.Errorf("nil response from upstream")
 	}
 
 	return &executor.Result{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }
 
-// postMultipart posts multipart form (STT).
-func postMultipart(ctx context.Context, cred executor.Credentials, path string, fields map[string]string, fileField, fileName string, fileData []byte, contentType string) (*executor.Result, error) {
-	var buf bytes.Buffer
-
-	w := multipart.NewWriter(&buf)
-	for k, v := range fields {
-		_ = w.WriteField(k, v)
-	}
-
-	if fileData != nil {
-		part, err := w.CreateFormFile(fileField, fileName)
-		if err != nil {
-			return nil, err
-		}
-
-		if _, err := part.Write(fileData); err != nil {
-			return nil, err
-		}
-	}
-
-	_ = w.Close()
-
-	base := strings.TrimRight(cred.BaseURL, "/")
+func resolveOpenAIEndpoint(baseURL, path string) string {
+	base := strings.TrimRight(baseURL, "/")
 	if base == "" {
 		base = "https://api.openai.com/v1"
 	}
 
-	url := base + path
-	if strings.HasSuffix(base, "/v1") {
-		url = base + path
-	} else if !strings.Contains(base, path) {
-		url = base + path
+	if strings.HasSuffix(base, path) {
+		return base
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
+	switch {
+	case strings.HasSuffix(base, "/v1"):
+		return base + path
+	case strings.Contains(base, "/v1/"):
+		return base[:strings.Index(base, "/v1/")+3] + path
+	default:
+		return base + path
+	}
+}
+
+// postMultipart posts multipart form (STT).
+func postMultipart(ctx context.Context, cred executor.Credentials, path string, fields map[string]string, fileField, fileName string, fileData []byte, contentType string) (*executor.Result, error) {
+	buf, formCT, err := buildMultipartBuffer(fields, fileField, fileName, fileData)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Content-Type", w.FormDataContentType())
+	url := resolveOpenAIEndpoint(cred.BaseURL, path)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, buf)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", formCT)
 
 	tok := cred.AccessToken
 	if tok == "" {
@@ -153,15 +147,44 @@ func postMultipart(ctx context.Context, cred executor.Credentials, path string, 
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close() //nolint:errcheck // best-effort body close
+		}
+
 		return nil, fmt.Errorf("nil response from upstream")
 	}
 
 	return &executor.Result{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 }
 
-func writeResult(w http.ResponseWriter, res *executor.Result, forceJSON bool) error {
-	defer res.Body.Close()
+func buildMultipartBuffer(fields map[string]string, fileField, fileName string, fileData []byte) (*bytes.Buffer, string, error) {
+	var buf bytes.Buffer
+
+	w := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		_ = w.WriteField(k, v) //nolint:errcheck // buffer write
+	}
+
+	if fileData != nil {
+		part, err := w.CreateFormFile(fileField, fileName)
+		if err != nil {
+			return nil, "", err
+		}
+
+		if _, err := part.Write(fileData); err != nil {
+			return nil, "", err
+		}
+	}
+
+	_ = w.Close() //nolint:errcheck // buffer close
+
+	return &buf, w.FormDataContentType(), nil
+}
+
+func writeResult(w http.ResponseWriter, res *executor.Result) error {
+	defer res.Body.Close() //nolint:errcheck // best-effort body close
 
 	respBody, err := io.ReadAll(res.Body)
 	if err != nil {
@@ -169,13 +192,13 @@ func writeResult(w http.ResponseWriter, res *executor.Result, forceJSON bool) er
 	}
 
 	ct := res.Header.Get("Content-Type")
-	if forceJSON || ct == "" {
+	if ct == "" {
 		ct = "application/json"
 	}
 
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(res.StatusCode)
-	_, _ = w.Write(respBody)
+	_, _ = w.Write(respBody) //nolint:errcheck // handler write
 
 	return nil
 }

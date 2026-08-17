@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+
+	/* #nosec G501 -- MD5 required for testing COSY compatibility */
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
@@ -12,20 +14,20 @@ import (
 )
 
 func TestConstants(t *testing.T) {
-	if QODER_OPENAPI_BASE != "https://openapi.qoder.sh" {
-		t.Errorf("unexpected QODER_OPENAPI_BASE: %s", QODER_OPENAPI_BASE)
+	if OpenAPIBase != "https://openapi.qoder.sh" {
+		t.Errorf("unexpected OpenAPIBase: %s", OpenAPIBase)
 	}
 
-	if QODER_CHAT_SIG_PATH != "/api/v2/service/pro/sse/agent_chat_generation" {
-		t.Errorf("unexpected QODER_CHAT_SIG_PATH: %s", QODER_CHAT_SIG_PATH)
+	if ChatSigPath != "/api/v2/service/pro/sse/agent_chat_generation" {
+		t.Errorf("unexpected ChatSigPath: %s", ChatSigPath)
 	}
 
-	if len(QODER_MODEL_MAP) == 0 {
-		t.Error("QODER_MODEL_MAP is empty")
+	if len(ModelMap) == 0 {
+		t.Error("ModelMap is empty")
 	}
 
-	if QODER_MODEL_MAP["auto"] != "auto" {
-		t.Error("missing auto in QODER_MODEL_MAP")
+	if ModelMap["auto"] != "auto" {
+		t.Error("missing auto in ModelMap")
 	}
 }
 
@@ -50,7 +52,7 @@ func TestQoderEncodeBody(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := QoderEncodeBody([]byte(tt.input))
+			got := EncodeBody([]byte(tt.input))
 			if tt.input == "" {
 				if got != "" {
 					t.Fatalf("expected empty, got %q", got)
@@ -73,7 +75,7 @@ func TestQoderEncodeBody(t *testing.T) {
 
 func TestQoderEncodeBodyDeterministicVector(t *testing.T) {
 	input := []byte("test")
-	got := QoderEncodeBody(input)
+	got := EncodeBody(input)
 	expected := "$$F^J_JH"
 
 	if got != expected {
@@ -168,42 +170,15 @@ func TestComputeSigPath(t *testing.T) {
 	}
 }
 
-func TestBuildCosyHeaders(t *testing.T) {
-	body := []byte(`{"prompt":"hello"}`)
-	requestURL := "https://api3.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common"
-	creds := CosyCreds{
-		UserID:    "user_12345",
-		AuthToken: "dt-token-abcde",
-		Name:      "Test User",
-		Email:     "test@example.com",
-		MachineID: "fixed-machine-id",
-	}
-
-	headers, err := BuildCosyHeaders(body, requestURL, creds)
-	if err != nil {
-		t.Fatalf("BuildCosyHeaders failed: %v", err)
-	}
+func assertRequiredHeaders(t *testing.T, headers map[string]string) {
+	t.Helper()
 
 	requiredHeaders := []string{
-		"Authorization",
-		"Cosy-Key",
-		"Cosy-User",
-		"Cosy-Date",
-		"Cosy-Version",
-		"Cosy-Machineid",
-		"Cosy-Machinetoken",
-		"Cosy-Machinetype",
-		"Cosy-Machineos",
-		"Cosy-Clienttype",
-		"Cosy-Clientip",
-		"Cosy-Bodyhash",
-		"Cosy-Bodylength",
-		"Cosy-Sigpath",
-		"Cosy-Data-Policy",
-		"Cosy-Organization-Id",
-		"Cosy-Organization-Tags",
-		"Login-Version",
-		"X-Request-Id",
+		"Authorization", "Cosy-Key", "Cosy-User", "Cosy-Date", "Cosy-Version",
+		"Cosy-Machineid", "Cosy-Machinetoken", "Cosy-Machinetype", "Cosy-Machineos",
+		"Cosy-Clienttype", "Cosy-Clientip", "Cosy-Bodyhash", "Cosy-Bodylength",
+		"Cosy-Sigpath", "Cosy-Data-Policy", "Cosy-Organization-Id", "Cosy-Organization-Tags",
+		"Login-Version", "X-Request-Id",
 	}
 
 	for _, h := range requiredHeaders {
@@ -216,6 +191,10 @@ func TestBuildCosyHeaders(t *testing.T) {
 			t.Errorf("header %q should not be empty", h)
 		}
 	}
+}
+
+func assertCosyHeaderValues(t *testing.T, headers map[string]string) {
+	t.Helper()
 
 	if headers["Cosy-User"] != "user_12345" {
 		t.Errorf("Cosy-User mismatch: got %q", headers["Cosy-User"])
@@ -232,8 +211,11 @@ func TestBuildCosyHeaders(t *testing.T) {
 	if headers["Cosy-Bodylength"] != "18" {
 		t.Errorf("Cosy-Bodylength mismatch: got %q", headers["Cosy-Bodylength"])
 	}
+}
 
-	// Verify Authorization format
+func assertCosySignature(t *testing.T, headers map[string]string, body []byte) {
+	t.Helper()
+
 	auth := headers["Authorization"]
 	if !strings.HasPrefix(auth, "Bearer COSY.") {
 		t.Fatalf("invalid Authorization header prefix: %q", auth)
@@ -247,7 +229,6 @@ func TestBuildCosyHeaders(t *testing.T) {
 	payloadB64 := parts[0]
 	sig := parts[1]
 
-	// Verify payload can be base64 decoded and unmarshalled
 	payloadBytes, err := base64.StdEncoding.DecodeString(payloadB64)
 	if err != nil {
 		t.Fatalf("failed to decode payloadB64: %v", err)
@@ -257,12 +238,12 @@ func TestBuildCosyHeaders(t *testing.T) {
 		t.Errorf("payload missing version: %s", string(payloadBytes))
 	}
 
-	// Verify signature MD5 hash calculation
 	cosyKey := headers["Cosy-Key"]
 	timestamp := headers["Cosy-Date"]
 	sigPath := headers["Cosy-Sigpath"]
 
 	sigInput := payloadB64 + "\n" + cosyKey + "\n" + timestamp + "\n" + string(body) + "\n" + sigPath
+	/* #nosec G401 -- MD5 required for testing COSY compatibility */
 	expectedSigMD5 := md5.Sum([]byte(sigInput))
 	expectedSig := hex.EncodeToString(expectedSigMD5[:])
 
@@ -271,13 +252,46 @@ func TestBuildCosyHeaders(t *testing.T) {
 	}
 }
 
+func TestBuildCosyHeaders(t *testing.T) {
+	body := []byte(`{"prompt":"hello"}`)
+	requestURL := "https://api3.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common"
+	creds := CosyCreds{
+		UserID:    "user_12345",
+		AuthToken: "dt-token-abcde",
+		Name:      "Test User",
+		Email:     "test@example.com",
+		MachineID: "fixed-machine-id",
+	}
+
+	headers, err := BuildCosyHeaders(body, requestURL, creds)
+	if err != nil {
+		t.Fatalf("BuildCosyHeaders failed: %v", err)
+	}
+
+	assertRequiredHeaders(t, headers)
+	assertCosyHeaderValues(t, headers)
+	assertCosySignature(t, headers, body)
+}
+
 func TestBuildCosyHeadersValidation(t *testing.T) {
-	_, err := BuildCosyHeaders([]byte(""), "http://localhost", CosyCreds{})
+	_, err := BuildCosyHeaders([]byte(""), "http://localhost", CosyCreds{
+		UserID:    "",
+		AuthToken: "",
+		Name:      "",
+		Email:     "",
+		MachineID: "",
+	})
 	if err == nil {
 		t.Error("expected error for empty UserID")
 	}
 
-	_, err = BuildCosyHeaders([]byte(""), "http://localhost", CosyCreds{UserID: "u1"})
+	_, err = BuildCosyHeaders([]byte(""), "http://localhost", CosyCreds{
+		UserID:    "u1",
+		AuthToken: "",
+		Name:      "",
+		Email:     "",
+		MachineID: "",
+	})
 	if err == nil {
 		t.Error("expected error for empty AuthToken")
 	}

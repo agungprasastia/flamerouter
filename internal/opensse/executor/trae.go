@@ -18,12 +18,18 @@ func init() {
 		Base: Base{
 			Provider: "trae",
 			BaseURL:  "https://core-normal.trae.ai/api/remote/v1",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 	RegisterSpecialized("tr", &TraeExecutor{
 		Base: Base{
 			Provider: "trae",
 			BaseURL:  "https://core-normal.trae.ai/api/remote/v1",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 }
@@ -334,6 +340,7 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 	if err != nil {
 		return nil, err
 	}
+
 	if res == nil || res.Body == nil {
 		return nil, fmt.Errorf("nil response from upstream")
 	}
@@ -341,6 +348,7 @@ func (e *TraeExecutor) Execute(ctx context.Context, cred Credentials, model stri
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		DrainBody(res.Body)
 		_ = res.Body.Close()
+
 		return jsonErr(res.StatusCode, fmt.Sprintf("events stream HTTP %d", res.StatusCode), "api_error", ""), nil
 	}
 
@@ -434,7 +442,11 @@ func wrapTraeEventStream(r io.ReadCloser, model, cid string, created int64) io.R
 
 		var currentEvent string
 
-		state := &traePlanState{thoughts: make(map[string]string)}
+		state := &traePlanState{
+			thoughts: make(map[string]string),
+			order:    nil,
+			sent:     0,
+		}
 
 		var usage map[string]any
 
@@ -522,7 +534,11 @@ func collectTraeNonStreaming(r io.ReadCloser, model, cid string, created int64) 
 
 	var currentEvent string
 
-	state := &traePlanState{thoughts: make(map[string]string)}
+	state := &traePlanState{
+		thoughts: make(map[string]string),
+		order:    nil,
+		sent:     0,
+	}
 
 	var usage map[string]any
 

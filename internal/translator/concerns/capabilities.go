@@ -2,11 +2,13 @@ package concerns
 
 import "strings"
 
+// ThinkingRange defines min and max values for thinking.
 type ThinkingRange struct {
 	Min int
 	Max int
 }
 
+// Capabilities defines the features and limits supported by a model.
 type Capabilities struct {
 	ThinkingRange      *ThinkingRange
 	ThinkingFormat     string
@@ -26,62 +28,72 @@ type Capabilities struct {
 
 func defaultCaps() *Capabilities {
 	return &Capabilities{
-		Tools:              true,
-		ThinkingCanDisable: true,
-		ContextWindow:      200000,
+		ThinkingRange:      nil,
+		ThinkingFormat:     "",
 		MaxOutput:          64000,
+		ContextWindow:      200000,
+		PDF:                false,
+		VideoInput:         false,
+		Tools:              true,
+		Reasoning:          false,
+		Search:             false,
+		ImageOutput:        false,
+		ThinkingCanDisable: true,
+		Vision:             false,
+		AudioOutput:        false,
+		AudioInput:         false,
 	}
 }
 
 var modelCapabilities = map[string]*Capabilities{
-	"claude-opus-4.6":   {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-adaptive", ContextWindow: 1000000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-opus-4.7":   {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-adaptive", ContextWindow: 1000000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-opus-4-7":   {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-adaptive", ContextWindow: 1000000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-opus-4.8":   {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-adaptive", ContextWindow: 1000000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-opus-4-6":   {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-adaptive", ContextWindow: 1000000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-opus-4-8":   {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-adaptive", ContextWindow: 1000000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-sonnet-4.6": {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-adaptive", ContextWindow: 1000000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-sonnet-4-6": {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-adaptive", ContextWindow: 1000000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-sonnet-5":   {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-adaptive", ContextWindow: 1000000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-3-7-sonnet": {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"claude-3-5-sonnet": {Vision: true, Tools: true, ContextWindow: 200000, MaxOutput: 8192, ThinkingCanDisable: true},
-	"gpt-5":             {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "openai", ContextWindow: 256000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true},
-	"gpt-5-mini":        {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "openai", ContextWindow: 128000, MaxOutput: 65536, ThinkingCanDisable: true, Tools: true},
-	"gpt-4o":            {Vision: true, Tools: true, ContextWindow: 128000, MaxOutput: 16384, ThinkingCanDisable: true},
-	"o3":                {Vision: true, Reasoning: true, ThinkingFormat: "openai", ContextWindow: 200000, MaxOutput: 100000, ThinkingCanDisable: true, Tools: true},
-	"o3-mini":           {Vision: true, Reasoning: true, ThinkingFormat: "openai", ContextWindow: 200000, MaxOutput: 100000, ThinkingCanDisable: true, Tools: true},
-	"o1":                {Vision: true, Reasoning: true, ThinkingFormat: "openai", ContextWindow: 200000, MaxOutput: 100000, ThinkingCanDisable: true, Tools: true},
-	"gemini-2.5-pro":    {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "gemini-budget", ContextWindow: 1048576, MaxOutput: 65536, ThinkingCanDisable: true, Tools: true},
-	"gemini-2.5-flash":  {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "gemini-budget", ContextWindow: 1048576, MaxOutput: 65536, ThinkingCanDisable: true, Tools: true},
-	"gemini-2.0-flash":  {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "gemini-budget", ContextWindow: 1048576, MaxOutput: 8192, ThinkingCanDisable: true, Tools: true},
-	"deepseek-r1":       {Reasoning: true, ThinkingFormat: "deepseek", ContextWindow: 128000, MaxOutput: 8192, ThinkingCanDisable: true, Tools: true},
-	"deepseek-v3":       {Tools: true, ContextWindow: 128000, MaxOutput: 8192, ThinkingCanDisable: true},
-	"kimi-k3":           {Vision: true, VideoInput: true, Reasoning: true, ThinkingFormat: "kimi", ThinkingCanDisable: false, ContextWindow: 1048576, MaxOutput: 131072, Tools: true},
-	"k3":                {Vision: true, VideoInput: true, Reasoning: true, ThinkingFormat: "kimi", ThinkingCanDisable: false, ContextWindow: 1048576, MaxOutput: 131072, Tools: true},
-	"kimi-for-coding":   {Vision: true, VideoInput: true, Reasoning: true, ThinkingFormat: "kimi", ThinkingCanDisable: false, ContextWindow: 262144, MaxOutput: 65536, Tools: true},
-	"glm-4.6v":          {Vision: true, Reasoning: true, ThinkingFormat: "zai", ContextWindow: 128000, ThinkingCanDisable: true, Tools: true},
-	"vision-model":      {Vision: true, Reasoning: true, ThinkingFormat: "qwen", ContextWindow: 1000000, ThinkingCanDisable: true, Tools: true},
-	"coder-model":       {Reasoning: true, ThinkingFormat: "qwen", ContextWindow: 1000000, ThinkingCanDisable: true, Tools: true},
-	"grok-3":            {Vision: true, Reasoning: true, Search: true, ThinkingFormat: "openai", ContextWindow: 131072, MaxOutput: 16384, ThinkingCanDisable: true, Tools: true},
-	"grok-3-mini":       {Vision: true, Reasoning: true, ThinkingFormat: "openai", ContextWindow: 131072, MaxOutput: 16384, ThinkingCanDisable: true, Tools: true},
+	"claude-opus-4.6":   {ThinkingRange: nil, ThinkingFormat: "claude-adaptive", MaxOutput: 128000, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-opus-4.7":   {ThinkingRange: nil, ThinkingFormat: "claude-adaptive", MaxOutput: 128000, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-opus-4-7":   {ThinkingRange: nil, ThinkingFormat: "claude-adaptive", MaxOutput: 128000, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-opus-4.8":   {ThinkingRange: nil, ThinkingFormat: "claude-adaptive", MaxOutput: 128000, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-opus-4-6":   {ThinkingRange: nil, ThinkingFormat: "claude-adaptive", MaxOutput: 128000, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-opus-4-8":   {ThinkingRange: nil, ThinkingFormat: "claude-adaptive", MaxOutput: 128000, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-sonnet-4.6": {ThinkingRange: nil, ThinkingFormat: "claude-adaptive", MaxOutput: 128000, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-sonnet-4-6": {ThinkingRange: nil, ThinkingFormat: "claude-adaptive", MaxOutput: 128000, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-sonnet-5":   {ThinkingRange: nil, ThinkingFormat: "claude-adaptive", MaxOutput: 128000, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-3-7-sonnet": {ThinkingRange: nil, ThinkingFormat: "claude-budget", MaxOutput: 128000, ContextWindow: 200000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"claude-3-5-sonnet": {ThinkingRange: nil, ThinkingFormat: "", MaxOutput: 8192, ContextWindow: 200000, PDF: false, VideoInput: false, Tools: true, Reasoning: false, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"gpt-5":             {ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 128000, ContextWindow: 256000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"gpt-5-mini":        {ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 65536, ContextWindow: 128000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"gpt-4o":            {ThinkingRange: nil, ThinkingFormat: "", MaxOutput: 16384, ContextWindow: 128000, PDF: false, VideoInput: false, Tools: true, Reasoning: false, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"o3":                {ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 100000, ContextWindow: 200000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"o3-mini":           {ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 100000, ContextWindow: 200000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"o1":                {ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 100000, ContextWindow: 200000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"gemini-2.5-pro":    {ThinkingRange: nil, ThinkingFormat: "gemini-budget", MaxOutput: 65536, ContextWindow: 1048576, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"gemini-2.5-flash":  {ThinkingRange: nil, ThinkingFormat: "gemini-budget", MaxOutput: 65536, ContextWindow: 1048576, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"gemini-2.0-flash":  {ThinkingRange: nil, ThinkingFormat: "gemini-budget", MaxOutput: 8192, ContextWindow: 1048576, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"deepseek-r1":       {ThinkingRange: nil, ThinkingFormat: "deepseek", MaxOutput: 8192, ContextWindow: 128000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: false, AudioOutput: false, AudioInput: false},
+	"deepseek-v3":       {ThinkingRange: nil, ThinkingFormat: "", MaxOutput: 8192, ContextWindow: 128000, PDF: false, VideoInput: false, Tools: true, Reasoning: false, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: false, AudioOutput: false, AudioInput: false},
+	"kimi-k3":           {ThinkingRange: nil, ThinkingFormat: "kimi", MaxOutput: 131072, ContextWindow: 1048576, PDF: false, VideoInput: true, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: false, Vision: true, AudioOutput: false, AudioInput: false},
+	"k3":                {ThinkingRange: nil, ThinkingFormat: "kimi", MaxOutput: 131072, ContextWindow: 1048576, PDF: false, VideoInput: true, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: false, Vision: true, AudioOutput: false, AudioInput: false},
+	"kimi-for-coding":   {ThinkingRange: nil, ThinkingFormat: "kimi", MaxOutput: 65536, ContextWindow: 262144, PDF: false, VideoInput: true, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: false, Vision: true, AudioOutput: false, AudioInput: false},
+	"glm-4.6v":          {ThinkingRange: nil, ThinkingFormat: "zai", MaxOutput: 0, ContextWindow: 128000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"vision-model":      {ThinkingRange: nil, ThinkingFormat: "qwen", MaxOutput: 0, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"coder-model":       {ThinkingRange: nil, ThinkingFormat: "qwen", MaxOutput: 0, ContextWindow: 1000000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: false, AudioOutput: false, AudioInput: false},
+	"grok-3":            {ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 16384, ContextWindow: 131072, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
+	"grok-3-mini":       {ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 16384, ContextWindow: 131072, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false},
 }
 
 var patternCapabilities = []struct {
-	prefix string
 	caps   *Capabilities
+	prefix string
 }{
-	{"claude-", &Capabilities{Vision: true, Tools: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 8192, ThinkingCanDisable: true}},
-	{"gpt-5", &Capabilities{Vision: true, Reasoning: true, Search: true, ThinkingFormat: "openai", ContextWindow: 256000, MaxOutput: 128000, ThinkingCanDisable: true, Tools: true}},
-	{"gpt-4", &Capabilities{Vision: true, Tools: true, ContextWindow: 128000, MaxOutput: 4096, ThinkingCanDisable: true}},
-	{"o1", &Capabilities{Vision: true, Reasoning: true, ThinkingFormat: "openai", ContextWindow: 200000, MaxOutput: 100000, ThinkingCanDisable: true, Tools: true}},
-	{"o3", &Capabilities{Vision: true, Reasoning: true, ThinkingFormat: "openai", ContextWindow: 200000, MaxOutput: 100000, ThinkingCanDisable: true, Tools: true}},
-	{"gemini-", &Capabilities{Vision: true, Tools: true, Reasoning: true, ThinkingFormat: "gemini-budget", ContextWindow: 1048576, MaxOutput: 65536, ThinkingCanDisable: true}},
-	{"deepseek-", &Capabilities{Tools: true, ThinkingFormat: "deepseek", ContextWindow: 128000, MaxOutput: 8192, ThinkingCanDisable: true}},
-	{"kimi-", &Capabilities{Vision: true, Reasoning: true, ThinkingFormat: "kimi", ThinkingCanDisable: false, ContextWindow: 262144, MaxOutput: 65536, Tools: true}},
-	{"glm-", &Capabilities{Reasoning: true, ThinkingFormat: "zai", ContextWindow: 200000, MaxOutput: 48000, ThinkingCanDisable: true, Tools: true}},
-	{"qwen-", &Capabilities{Tools: true, ThinkingFormat: "qwen", ContextWindow: 128000, MaxOutput: 8192, ThinkingCanDisable: true}},
-	{"minimax-", &Capabilities{Vision: true, Reasoning: true, ThinkingFormat: "minimax", ThinkingCanDisable: false, ContextWindow: 512000, MaxOutput: 48000, Tools: true}},
-	{"grok-", &Capabilities{Vision: true, Tools: true, Search: true, ThinkingFormat: "openai", ContextWindow: 131072, MaxOutput: 16384, ThinkingCanDisable: true}},
+	{prefix: "claude-", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "claude-budget", MaxOutput: 8192, ContextWindow: 200000, PDF: false, VideoInput: false, Tools: true, Reasoning: false, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false}},
+	{prefix: "gpt-5", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 128000, ContextWindow: 256000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false}},
+	{prefix: "gpt-4", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "", MaxOutput: 4096, ContextWindow: 128000, PDF: false, VideoInput: false, Tools: true, Reasoning: false, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false}},
+	{prefix: "o1", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 100000, ContextWindow: 200000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false}},
+	{prefix: "o3", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 100000, ContextWindow: 200000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false}},
+	{prefix: "gemini-", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "gemini-budget", MaxOutput: 65536, ContextWindow: 1048576, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false}},
+	{prefix: "deepseek-", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "deepseek", MaxOutput: 8192, ContextWindow: 128000, PDF: false, VideoInput: false, Tools: true, Reasoning: false, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: false, AudioOutput: false, AudioInput: false}},
+	{prefix: "kimi-", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "kimi", MaxOutput: 65536, ContextWindow: 262144, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: false, Vision: true, AudioOutput: false, AudioInput: false}},
+	{prefix: "glm-", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "zai", MaxOutput: 48000, ContextWindow: 200000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: false, AudioOutput: false, AudioInput: false}},
+	{prefix: "qwen-", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "qwen", MaxOutput: 8192, ContextWindow: 128000, PDF: false, VideoInput: false, Tools: true, Reasoning: false, Search: false, ImageOutput: false, ThinkingCanDisable: true, Vision: false, AudioOutput: false, AudioInput: false}},
+	{prefix: "minimax-", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "minimax", MaxOutput: 48000, ContextWindow: 512000, PDF: false, VideoInput: false, Tools: true, Reasoning: true, Search: false, ImageOutput: false, ThinkingCanDisable: false, Vision: true, AudioOutput: false, AudioInput: false}},
+	{prefix: "grok-", caps: &Capabilities{ThinkingRange: nil, ThinkingFormat: "openai", MaxOutput: 16384, ContextWindow: 131072, PDF: false, VideoInput: false, Tools: true, Reasoning: false, Search: true, ImageOutput: false, ThinkingCanDisable: true, Vision: true, AudioOutput: false, AudioInput: false}},
 }
 
 // ProviderThinkingFormats maps provider id → default thinking wire format.
@@ -106,7 +118,8 @@ var ProviderThinkingFormats = map[string]string{
 	"stepfun":              "step",
 }
 
-func GetCapabilitiesForModel(provider, model string) *Capabilities {
+// GetCapabilitiesForModel resolves capabilities for a given model.
+func GetCapabilitiesForModel(_ /* provider */, model string) *Capabilities {
 	clean, _ := ParseSuffix(model)
 	if clean == "" {
 		clean = model

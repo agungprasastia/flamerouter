@@ -1,3 +1,4 @@
+// Package proxy manages outbound proxy rotation and transport configuration.
 package proxy
 
 import (
@@ -15,8 +16,9 @@ type Pool struct {
 	current int
 }
 
+// New creates a new proxy Pool instance.
 func New(st *store.Store) *Pool {
-	return &Pool{st: st}
+	return &Pool{st: st, mu: sync.Mutex{}, current: 0}
 }
 
 // Next returns the next active proxy URL from the pool, or nil for direct.
@@ -58,7 +60,19 @@ func poolToURL(pl store.ProxyPool) *url.URL {
 	}
 
 	host := fmt.Sprintf("%s:%d", pl.Host, pl.Port)
-	u := &url.URL{Scheme: scheme, Host: host}
+	u := &url.URL{
+		Scheme:      scheme,
+		Host:        host,
+		Opaque:      "",
+		User:        nil,
+		Path:        "",
+		RawPath:     "",
+		OmitHost:    false,
+		ForceQuery:  false,
+		RawQuery:    "",
+		Fragment:    "",
+		RawFragment: "",
+	}
 
 	if pl.Username != "" {
 		if pl.Password != "" {
@@ -74,13 +88,16 @@ func poolToURL(pl store.ProxyPool) *url.URL {
 // Transport returns an http.Transport using the pool's next proxy.
 func (p *Pool) Transport() *http.Transport {
 	proxy := p.Next()
-	if proxy == nil {
-		if t, ok := http.DefaultTransport.(*http.Transport); ok {
-			return t.Clone()
-		}
 
-		return &http.Transport{}
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil
 	}
 
-	return &http.Transport{Proxy: http.ProxyURL(proxy)}
+	tr := t.Clone()
+	if proxy != nil {
+		tr.Proxy = http.ProxyURL(proxy)
+	}
+
+	return tr
 }

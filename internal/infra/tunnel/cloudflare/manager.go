@@ -1,3 +1,4 @@
+// Package cloudflare manages local Cloudflare tunnel processes.
 package cloudflare
 
 import (
@@ -30,10 +31,22 @@ type Manager struct {
 	wantRun   bool
 }
 
+// New creates a new cloudflare Manager instance.
 func New() *Manager {
-	return &Manager{status: "stopped"}
+	return &Manager{
+		cmd:       nil,
+		stopWatch: nil,
+		url:       "",
+		status:    "stopped",
+		bin:       "",
+		port:      0,
+		mu:        sync.Mutex{},
+		watching:  false,
+		wantRun:   false,
+	}
 }
 
+// Enable starts the cloudflared tunnel on the specified port.
 func (m *Manager) Enable(port int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -55,6 +68,7 @@ func (m *Manager) startLocked() error {
 		return fmt.Errorf("cloudflared not found")
 	}
 
+	// #nosec G204 -- bin is resolved from validated local binary path or PATH lookup
 	cmd := exec.Command(bin, "tunnel", "--url", fmt.Sprintf("http://localhost:%d", m.port))
 
 	stdout, err := cmd.StdoutPipe()
@@ -80,7 +94,9 @@ func (m *Manager) startLocked() error {
 
 	go m.scrapeURL(io.MultiReader(stdout, stderr))
 	go func() {
-		_ = cmd.Wait()
+		if waitErr := cmd.Wait(); waitErr != nil {
+			log.Printf("[cloudflare] process wait: %v", waitErr)
+		}
 
 		m.mu.Lock()
 		m.status = "stopped"
@@ -126,6 +142,60 @@ func (m *Manager) ensureWatchdogLocked() {
 	go m.watchdog(ch)
 }
 
+func (m *Manager) pingHealthURL(u string) {
+	client := &http.Client{
+		Transport:     nil,
+		CheckRedirect: nil,
+		Jar:           nil,
+		Timeout:       5 * time.Second,
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
+	if err != nil {
+		return
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+
+	if resp != nil && resp.Body != nil {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("[cloudflare] close health response body: %v", closeErr)
+		}
+	}
+}
+
+func (m *Manager) checkHealth() {
+	m.mu.Lock()
+	want := m.wantRun
+	alive := m.cmd != nil && m.cmd.Process != nil
+	u := m.url
+	m.mu.Unlock()
+
+	if !want {
+		return
+	}
+
+	if !alive {
+		log.Printf("[cloudflare] watchdog: restarting (dead)")
+		m.mu.Lock()
+		if m.wantRun && (m.cmd == nil || m.cmd.Process == nil) {
+			if startErr := m.startLocked(); startErr != nil {
+				log.Printf("[cloudflare] watchdog restart failed: %v", startErr)
+			}
+		}
+		m.mu.Unlock()
+
+		return
+	}
+
+	if u != "" {
+		m.pingHealthURL(u)
+	}
+}
+
 func (m *Manager) watchdog(stop <-chan struct{}) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -135,48 +205,12 @@ func (m *Manager) watchdog(stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-t.C:
-			m.mu.Lock()
-			want := m.wantRun
-			alive := m.cmd != nil && m.cmd.Process != nil
-			port := m.port
-			m.mu.Unlock()
-
-			if !want {
-				continue
-			}
-			// health: process alive; optional URL HEAD
-			if !alive {
-				log.Printf("[cloudflare] watchdog: restarting (dead)")
-				m.mu.Lock()
-				if m.wantRun && (m.cmd == nil || m.cmd.Process == nil) {
-					_ = m.startLocked()
-				}
-				m.mu.Unlock()
-
-				continue
-			}
-			// if we have URL, soft-check; ignore errors
-			m.mu.Lock()
-			u := m.url
-			m.mu.Unlock()
-
-			if u != "" {
-				client := &http.Client{Timeout: 5 * time.Second}
-
-				req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
-				if err == nil {
-					resp, err := client.Do(req)
-					if err == nil && resp != nil && resp.Body != nil {
-						_ = resp.Body.Close()
-					}
-				}
-			}
-
-			_ = port
+			m.checkHealth()
 		}
 	}
 }
 
+// Disable stops the running cloudflared tunnel process.
 func (m *Manager) Disable() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -201,6 +235,7 @@ func (m *Manager) Disable() error {
 	return err
 }
 
+// Status returns current status of the tunnel.
 func (m *Manager) Status() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -208,6 +243,7 @@ func (m *Manager) Status() string {
 	return m.status
 }
 
+// URL returns the scraped trycloudflare URL if active.
 func (m *Manager) URL() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()

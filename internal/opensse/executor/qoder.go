@@ -23,8 +23,8 @@ func init() {
 }
 
 var (
-	catalogMu      sync.RWMutex
-	modelConfigs   = map[string]map[string]any{
+	catalogMu    sync.RWMutex
+	modelConfigs = map[string]map[string]any{
 		"auto":          {"key": "auto", "is_reasoning": false, "max_output_tokens": 32768, "source": "system"},
 		"ultimate":      {"key": "ultimate", "is_reasoning": true, "max_output_tokens": 32768, "source": "system"},
 		"performance":   {"key": "performance", "is_reasoning": false, "max_output_tokens": 32768, "source": "system"},
@@ -40,10 +40,12 @@ var (
 	}
 )
 
+// QoderExecutor handles requests to Alibaba Qoder / Cosy API.
 type QoderExecutor struct {
 	Base
 }
 
+// NewQoderExecutor creates a new QoderExecutor.
 func NewQoderExecutor(client *http.Client) *QoderExecutor {
 	if client == nil {
 		client = http.DefaultClient
@@ -53,7 +55,9 @@ func NewQoderExecutor(client *http.Client) *QoderExecutor {
 		Base: Base{
 			Provider: "qoder",
 			Client:   client,
-			BaseURL:  qoder.QODER_CHAT_URL_ENCODED,
+			BaseURL:  qoder.ChatURLEncoded,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	}
 }
@@ -69,10 +73,10 @@ func (e *QoderExecutor) buildURL(cred Credentials) string {
 	}
 
 	if !strings.HasPrefix(raw, "pt-") && (strings.HasPrefix(raw, "jt-") || strings.HasPrefix(cred.AccessToken, "jt-")) {
-		return fmt.Sprintf("%s/algo%s?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1", qoder.QODER_CHAT_BASE_ALT, qoder.QODER_CHAT_SIG_PATH)
+		return fmt.Sprintf("%s/algo%s?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1", qoder.ChatBaseAlt, qoder.ChatSigPath)
 	}
 
-	return qoder.QODER_CHAT_URL_ENCODED
+	return qoder.ChatURLEncoded
 }
 
 func extractQoderText(content any) string {
@@ -142,6 +146,7 @@ func lastQoderUserText(messages []map[string]any) string {
 	if len(messages) == 0 {
 		return ""
 	}
+
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
 		if role, _ := m["role"].(string); role == "user" {
@@ -225,19 +230,8 @@ func getQoderModelConfig(qoderKey string) map[string]any {
 	}
 }
 
-func buildQoderRequestBody(model string, body map[string]any, cred Credentials) (string, map[string]any, error) {
-	qoderKey := strings.TrimPrefix(model, "qoder/")
-	if qoderKey == "" {
-		qoderKey = "auto"
-	}
-
-	modelConfig := getQoderModelConfig(qoderKey)
-
-	rawMessages, _ := body["messages"].([]any)
-	messages, systemText := normalizeQoderMessages(rawMessages)
-	tools := body["tools"]
-
-	isReasoning, _ := modelConfig["is_reasoning"].(bool)
+func buildQoderParametersAndContext(modelConfig map[string]any, qoderKey string, body map[string]any, messages []map[string]any) (int, map[string]any, map[string]any) {
+	isReasoning, _ := modelConfig["is_reasoning"].(bool) // nolint:errcheck
 
 	maxOutputTokens := 0
 	if mot, ok := modelConfig["max_output_tokens"].(int); ok {
@@ -258,11 +252,51 @@ func buildQoderRequestBody(model string, body map[string]any, cred Credentials) 
 	}
 
 	lastUser := lastQoderUserText(messages)
+
+	chatCtx := map[string]any{
+		"chatPrompt": "",
+		"imageUrls":  nil,
+		"extra": map[string]any{
+			"context":         []any{},
+			"modelConfig":     map[string]any{"key": qoderKey, "is_reasoning": isReasoning},
+			"originalContent": lastUser,
+		},
+		"features": []any{},
+		"text":     lastUser,
+	}
+
+	business := map[string]any{
+		"product":  "cli",
+		"version":  "1.0.0",
+		"type":     "agent",
+		"stage":    "start",
+		"id":       uuid.New().String(),
+		"name":     truncateQoderString(lastUser, 30),
+		"begin_at": time.Now().UnixMilli(),
+	}
+
+	return maxTokens, chatCtx, business
+}
+
+func buildQoderRequestBody(model string, body map[string]any, cred Credentials) (string, map[string]any, error) {
+	qoderKey := strings.TrimPrefix(model, "qoder/")
+	if qoderKey == "" {
+		qoderKey = "auto"
+	}
+
+	modelConfig := getQoderModelConfig(qoderKey)
+
+	rawMessages, _ := body["messages"].([]any) // nolint:errcheck
+	messages, systemText := normalizeQoderMessages(rawMessages)
+	tools := body["tools"]
+
+	maxTokens, chatCtx, business := buildQoderParametersAndContext(modelConfig, qoderKey, body, messages)
+
 	userID := strPSD(cred, "userId")
 	sessionID := stableQoderHash("qoder-session", userID, qoderKey)
 	recordID := stableQoderChatRecordID(qoderKey, messages, tools, maxTokens)
 
-	toolsArr, _ := tools.([]any)
+	toolsArr, _ := tools.([]any) // nolint:errcheck
 	if toolsArr == nil {
 		toolsArr = []any{}
 	}
@@ -289,27 +323,9 @@ func buildQoderRequestBody(model string, body map[string]any, cred Credentials) 
 		"messages":         messages,
 		"tools":            toolsArr,
 		"parameters":       map[string]any{"max_tokens": maxTokens},
-		"chat_context": map[string]any{
-			"chatPrompt": "",
-			"imageUrls":  nil,
-			"extra": map[string]any{
-				"context":         []any{},
-				"modelConfig":     map[string]any{"key": qoderKey, "is_reasoning": isReasoning},
-				"originalContent": lastUser,
-			},
-			"features": []any{},
-			"text":     lastUser,
-		},
-		"model_config": modelConfig,
-		"business": map[string]any{
-			"product":  "cli",
-			"version":  "1.0.0",
-			"type":     "agent",
-			"stage":    "start",
-			"id":       uuid.New().String(),
-			"name":     truncateQoderString(lastUser, 30),
-			"begin_at": time.Now().UnixMilli(),
-		},
+		"chat_context":     chatCtx,
+		"model_config":     modelConfig,
+		"business":         business,
 	}
 
 	return qoderKey, payload, nil
@@ -457,7 +473,7 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 		return nil, err
 	}
 
-	encodedBodyStr := qoder.QoderEncodeBody(plainBody)
+	encodedBodyStr := qoder.EncodeBody(plainBody)
 	encodedBodyBytes := []byte(encodedBodyStr)
 
 	reqURL := e.buildURL(cred)
@@ -508,6 +524,7 @@ func (e *QoderExecutor) Execute(ctx context.Context, cred Credentials, model str
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return nil, fmt.Errorf("nil response from upstream")
 	}

@@ -50,6 +50,7 @@ func TestGeminiV1BetaGenerateContentConvert(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-gemini-1","choices":[{"message":{"role":"assistant","content":"gemini answer"}}]}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
@@ -93,6 +94,7 @@ func TestVercelAIChatNonStreamTransformsToOllama(t *testing.T) {
 			"choices":[{"message":{"role":"assistant","content":"vercel result"}}],
 			"usage":{"prompt_tokens":12,"completion_tokens":8}
 		}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
@@ -137,6 +139,7 @@ func TestVercelAIChatStreamingPassesThrough(t *testing.T) {
 	fake := testutil.NewFakeExecutor(testutil.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       nil,
 		StreamBody: []byte(streamData),
 	})
 	fb := fallback.New(st)

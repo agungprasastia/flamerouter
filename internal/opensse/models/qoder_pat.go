@@ -20,7 +20,7 @@ const (
 type patCacheItem struct {
 	expiresAt   time.Time
 	accessToken string
-	userId      string
+	userID      string
 }
 
 var (
@@ -35,13 +35,32 @@ type jobTokenExchangeResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
+func parseJobTokenExpiry(data jobTokenExchangeResponse) time.Time {
+	expiresAt := time.Now().Add(patDefaultTTL)
+
+	if data.ExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, data.ExpiresAt); err == nil {
+			return t
+		}
+	}
+
+	if data.ExpiresIn > 0 {
+		return time.Now().Add(time.Duration(data.ExpiresIn) * time.Second)
+	}
+
+	return expiresAt
+}
+
 func exchangeJobToken(ctx context.Context, client *http.Client, pat string) (string, time.Time, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	payload, _ := json.Marshal(map[string]string{"personal_token": pat})
+	payload, err := json.Marshal(map[string]string{"personal_token": pat})
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("marshal pat payload: %w", err)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, qoder.QODER_JOB_TOKEN_EXCHANGE_URL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, qoder.JobTokenExchangeURL, bytes.NewReader(payload))
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -49,20 +68,29 @@ func exchangeJobToken(ctx context.Context, client *http.Client, pat string) (str
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "qodercli/1.0.0")
-	req.Header.Set("Cosy-Version", qoder.QODER_IDE_VERSION)
-	req.Header.Set("Cosy-ClientType", qoder.QODER_CLIENT_TYPE)
+	req.Header.Set("Cosy-Version", qoder.IDEVersion)
+	req.Header.Set("Cosy-ClientType", qoder.ClientType)
 
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", time.Time{}, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return "", time.Time{}, fmt.Errorf("nil response from upstream")
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		//nolint:errcheck // best effort close
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", time.Time{}, fmt.Errorf("read qoder pat error response: %w", err)
+		}
+
 		return "", time.Time{}, fmt.Errorf("qoder PAT exchange failed with status %d: %s", resp.StatusCode, string(b))
 	}
 
@@ -75,24 +103,14 @@ func exchangeJobToken(ctx context.Context, client *http.Client, pat string) (str
 		return "", time.Time{}, fmt.Errorf("qoder PAT exchange returned empty job token")
 	}
 
-	expiresAt := time.Now().Add(patDefaultTTL)
-
-	if data.ExpiresAt != "" {
-		if t, err := time.Parse(time.RFC3339, data.ExpiresAt); err == nil {
-			expiresAt = t
-		}
-	} else if data.ExpiresIn > 0 {
-		expiresAt = time.Now().Add(time.Duration(data.ExpiresIn) * time.Second)
-	}
-
-	return data.Token, expiresAt, nil
+	return data.Token, parseJobTokenExpiry(data), nil
 }
 
 func fetchUserIDForJobToken(ctx context.Context, client *http.Client, jobToken string) string {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, qoder.QODER_USERINFO_URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, qoder.UserInfoURL, nil)
 	if err != nil {
 		return ""
 	}
@@ -105,10 +123,15 @@ func fetchUserIDForJobToken(ctx context.Context, client *http.Client, jobToken s
 	if err != nil {
 		return ""
 	}
+
 	if resp == nil || resp.Body == nil {
 		return ""
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		//nolint:errcheck // best effort close
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return ""
@@ -135,7 +158,7 @@ func ResolvePatCredential(ctx context.Context, client *http.Client, pat string) 
 	patMu.RUnlock()
 
 	if ok && time.Until(cached.expiresAt) > patRefreshBuffer {
-		return cached.accessToken, cached.userId, nil
+		return cached.accessToken, cached.userID, nil
 	}
 
 	if client == nil {
@@ -152,7 +175,7 @@ func ResolvePatCredential(ctx context.Context, client *http.Client, pat string) 
 	patMu.Lock()
 	patCache[pat] = patCacheItem{
 		accessToken: jobToken,
-		userId:      userID,
+		userID:      userID,
 		expiresAt:   expiresAt,
 	}
 	patMu.Unlock()

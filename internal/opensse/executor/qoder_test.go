@@ -43,10 +43,12 @@ func TestQoder_NormalizeMessages(t *testing.T) {
 
 func TestQoder_BuildRequestBody(t *testing.T) {
 	cred := Credentials{
-		AccessToken: "acc-token-123",
-		ProviderSpecificData: map[string]any{
-			"userId": "user-456",
-		},
+		APIKey:               "",
+		AccessToken:          "acc-token-123",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProviderSpecificData: map[string]any{"userId": "user-456"},
+		ProjectID:            "",
 	}
 	body := map[string]any{
 		"messages": []any{
@@ -69,13 +71,13 @@ func TestQoder_BuildRequestBody(t *testing.T) {
 		t.Fatalf("expected system text hoisted, got %v", payload["system"])
 	}
 
-	msgs := payload["messages"].([]map[string]any)
-	if len(msgs) != 1 || msgs[0]["role"] != "user" {
+	msgs, ok := payload["messages"].([]map[string]any)
+	if !ok || len(msgs) != 1 || msgs[0]["role"] != "user" {
 		t.Fatalf("expected 1 user message, got %v", msgs)
 	}
 
-	params := payload["parameters"].(map[string]any)
-	if params["max_tokens"] != 1024 {
+	params, ok := payload["parameters"].(map[string]any)
+	if !ok || params["max_tokens"] != 1024 {
 		t.Fatalf("expected max_tokens 1024, got %v", params["max_tokens"])
 	}
 }
@@ -83,7 +85,14 @@ func TestQoder_BuildRequestBody(t *testing.T) {
 func TestQoder_ExecuteMissingCredentials(t *testing.T) {
 	ex := NewQoderExecutor(nil)
 
-	res, err := ex.Execute(context.Background(), Credentials{}, "qoder/auto", []byte(`{}`), true)
+	res, err := ex.Execute(context.Background(), Credentials{
+		APIKey:               "",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProviderSpecificData: nil,
+		ProjectID:            "",
+	}, "qoder/auto", []byte(`{}`), true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,10 +131,12 @@ func TestQoder_ExecuteSuccessAndWrapSSE(t *testing.T) {
 	ex := NewQoderExecutor(srv.Client())
 	ex.BaseURL = srv.URL
 	cred := Credentials{
-		AccessToken: "token-abc",
-		ProviderSpecificData: map[string]any{
-			"userId": "u123",
-		},
+		APIKey:               "",
+		AccessToken:          "token-abc",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProviderSpecificData: map[string]any{"userId": "u123"},
+		ProjectID:            "",
 	}
 	body, _ := json.Marshal(map[string]any{
 		"messages": []any{

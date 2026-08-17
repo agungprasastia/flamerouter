@@ -9,7 +9,7 @@ func init() {
 	translator.Register(translator.FormatCursor, translator.FormatOpenAI, nil, cursorToOpenAIResponse)
 }
 
-func cursorToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) []map[string]any {
+func cursorToOpenAIResponse(chunk map[string]any, _ *concerns.ResponseState) []map[string]any {
 	if chunk == nil {
 		return nil
 	}

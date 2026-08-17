@@ -1,3 +1,4 @@
+// Package store provides SQLite persistent storage for flamerouter state.
 package store
 
 import (
@@ -35,45 +36,62 @@ func migrate(db *sql.DB) error {
 	sort.Strings(names)
 
 	for _, name := range names {
-		var exists int
-		if err := db.QueryRow(`SELECT COUNT(1) FROM schema_migrations WHERE name=?`, name).Scan(&exists); err != nil {
+		if err := applyMigration(db, name); err != nil {
 			return err
 		}
+	}
 
-		if exists > 0 {
-			continue
-		}
+	return nil
+}
 
-		body, err := migrationFS.ReadFile("migrations/" + name)
-		if err != nil {
-			return err
-		}
+func applyMigration(db *sql.DB, name string) error {
+	var exists int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM schema_migrations WHERE name=?`, name).Scan(&exists); err != nil {
+		return err
+	}
 
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
+	if exists > 0 {
+		return nil
+	}
 
-		for _, stmt := range splitSQL(string(body)) {
-			if _, err := tx.Exec(stmt); err != nil {
-				if isDuplicateColumn(err) {
-					continue
-				}
+	body, err := migrationFS.ReadFile("migrations/" + name)
+	if err != nil {
+		return err
+	}
 
-				_ = tx.Rollback()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
 
-				return fmt.Errorf("migration %s: %w", name, err)
+	if err := executeMigrationStatements(tx, name, string(body)); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func executeMigrationStatements(tx *sql.Tx, name, sqlContent string) error {
+	for _, stmt := range splitSQL(sqlContent) {
+		if _, err := tx.Exec(stmt); err != nil {
+			if isDuplicateColumn(err) {
+				continue
 			}
+
+			if rbErr := tx.Rollback(); rbErr != nil {
+				_ = rbErr
+			}
+
+			return fmt.Errorf("migration %s: %w", name, err)
+		}
+	}
+
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(name, applied_at) VALUES(?, datetime('now'))`, name); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			_ = rbErr
 		}
 
-		if _, err := tx.Exec(`INSERT INTO schema_migrations(name, applied_at) VALUES(?, datetime('now'))`, name); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-
-		if err := tx.Commit(); err != nil {
-			return err
-		}
+		return err
 	}
 
 	return nil
@@ -85,21 +103,7 @@ func splitSQL(body string) []string {
 	for _, part := range strings.Split(body, ";") {
 		s := strings.TrimSpace(part)
 		if s == "" || strings.HasPrefix(s, "--") {
-			// drop pure-comment chunks; keep statements that start with SQL
-			lines := strings.Split(s, "\n")
-
-			var kept []string
-
-			for _, ln := range lines {
-				t := strings.TrimSpace(ln)
-				if t == "" || strings.HasPrefix(t, "--") {
-					continue
-				}
-
-				kept = append(kept, ln)
-			}
-
-			s = strings.TrimSpace(strings.Join(kept, "\n"))
+			s = filterComments(s)
 		}
 
 		if s != "" {
@@ -108,6 +112,23 @@ func splitSQL(body string) []string {
 	}
 
 	return out
+}
+
+func filterComments(s string) string {
+	lines := strings.Split(s, "\n")
+
+	kept := make([]string, 0, len(lines))
+
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if t == "" || strings.HasPrefix(t, "--") {
+			continue
+		}
+
+		kept = append(kept, ln)
+	}
+
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 func isDuplicateColumn(err error) bool {

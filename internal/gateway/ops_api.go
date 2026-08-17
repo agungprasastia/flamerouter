@@ -29,7 +29,7 @@ func getHTTPServer() *http.Server {
 }
 
 // GET /api/version.
-func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 	current, latest, available, err := ops.CheckVersion()
 	out := map[string]any{
 		"version": ops.Version,
@@ -51,7 +51,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/version/update.
-func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleUpdate(w http.ResponseWriter, _ *http.Request) {
 	if err := ops.SelfUpdate(); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -74,6 +74,8 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]string{"status": "shutting down"})
 
 	go func() {
-		_ = ops.Shutdown(getHTTPServer())
+		if err := ops.Shutdown(getHTTPServer()); err != nil {
+			_ = err
+		}
 	}()
 }

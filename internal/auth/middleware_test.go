@@ -9,9 +9,12 @@ import (
 
 func TestDashboardGuardRequireLoginPublicGET(t *testing.T) {
 	jwt := NewJWTManager("test-secret-long-enough-for-hs256")
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"requireLogin":true}`))
+
+		if _, err := w.Write([]byte(`{"requireLogin":true}`)); err != nil {
+			t.Errorf("write response error: %v", err)
+		}
 	})
 	h := DashboardGuard(jwt, (*store.Store)(nil), inner)
 

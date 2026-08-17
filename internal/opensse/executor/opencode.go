@@ -10,18 +10,45 @@ import (
 )
 
 func init() {
-	RegisterSpecialized("opencode", &OpenCodeExecutor{Base: Base{Provider: "opencode", BaseURL: "https://opencode.ai/zen/v1/chat/completions"}})
+	RegisterSpecialized("opencode", &OpenCodeExecutor{
+		Base: Base{
+			Provider: "opencode",
+			Client:   nil,
+			Headers:  nil,
+			BaseURL:  "https://opencode.ai/zen/v1/chat/completions",
+			BaseURLs: nil,
+		},
+	})
 }
 
+// OpenCodeExecutor handles OpenCode completions.
 type OpenCodeExecutor struct{ Base }
 
 func ocRandomUUID() string {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		_ = err
+	}
 
 	return hex.EncodeToString(b)
 }
 
+func resolveOpenCodeURL(baseURL, credBase string) string {
+	if credBase == "" {
+		return baseURL
+	}
+
+	switch {
+	case !strings.Contains(credBase, "/zen/v1") && !strings.Contains(credBase, "/chat/completions"):
+		return credBase + "/zen/v1/chat/completions"
+	case !strings.Contains(credBase, "/chat/completions"):
+		return credBase + "/chat/completions"
+	default:
+		return credBase
+	}
+}
+
+// Execute executes OpenCode chat requests.
 func (e *OpenCodeExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
@@ -36,17 +63,8 @@ func (e *OpenCodeExecutor) Execute(ctx context.Context, cred Credentials, model 
 		return nil, err
 	}
 
-	url := e.BaseURL
-
-	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" {
-		if !strings.Contains(base, "/zen/v1") && !strings.Contains(base, "/chat/completions") {
-			url = base + "/zen/v1/chat/completions"
-		} else if !strings.Contains(base, "/chat/completions") {
-			url = base + "/chat/completions"
-		} else {
-			url = base
-		}
-	}
+	base := strings.TrimRight(cred.BaseURL, "/")
+	url := resolveOpenCodeURL(e.BaseURL, base)
 
 	h := make(http.Header)
 	h.Set("Content-Type", "application/json")

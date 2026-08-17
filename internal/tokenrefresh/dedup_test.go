@@ -17,7 +17,7 @@ type mockRefresher struct {
 	mu           sync.Mutex
 }
 
-func (m *mockRefresher) Refresh(ctx context.Context, refreshToken string) (*tokenrefresh.RefreshResult, error) {
+func (m *mockRefresher) Refresh(_ context.Context, refreshToken string) (*tokenrefresh.RefreshResult, error) {
 	atomic.AddInt64(&m.refreshCount, 1)
 
 	if m.delay > 0 {
@@ -35,13 +35,17 @@ func (m *mockRefresher) Refresh(ctx context.Context, refreshToken string) (*toke
 		AccessToken:  "new-access-token",
 		RefreshToken: refreshToken,
 		ExpiresAt:    time.Now().Add(1 * time.Hour),
+		Error:        "",
 	}, nil
 }
 
 func TestConcurrentCallsSingleFlight(t *testing.T) {
 	rm := tokenrefresh.NewRefreshManager()
 	mock := &mockRefresher{
-		delay: 50 * time.Millisecond,
+		resultFn:     nil,
+		refreshCount: 0,
+		delay:        50 * time.Millisecond,
+		mu:           sync.Mutex{},
 	}
 	rm.Register("testprovider", mock)
 
@@ -85,7 +89,12 @@ func TestConcurrentCallsSingleFlight(t *testing.T) {
 
 func TestCacheHitWithinTTL(t *testing.T) {
 	rm := tokenrefresh.NewRefreshManager()
-	mock := &mockRefresher{}
+	mock := &mockRefresher{
+		resultFn:     nil,
+		refreshCount: 0,
+		delay:        0,
+		mu:           sync.Mutex{},
+	}
 	rm.Register("testprovider", mock)
 
 	// First call
@@ -119,7 +128,12 @@ func TestCacheHitWithinTTL(t *testing.T) {
 
 func TestCacheExpiryTriggersNewRefresh(t *testing.T) {
 	rm := tokenrefresh.NewRefreshManagerWithTTL(50 * time.Millisecond)
-	mock := &mockRefresher{}
+	mock := &mockRefresher{
+		resultFn:     nil,
+		refreshCount: 0,
+		delay:        0,
+		mu:           sync.Mutex{},
+	}
 	rm.Register("testprovider", mock)
 
 	// Call 1
@@ -158,9 +172,15 @@ func TestConcurrentCallsFailedRefreshDoesNotCacheError(t *testing.T) {
 				return nil, errors.New("temporary error")
 			}
 			return &tokenrefresh.RefreshResult{
-				AccessToken: "recovered-token",
+				AccessToken:  "recovered-token",
+				RefreshToken: "",
+				ExpiresAt:    time.Time{},
+				Error:        "",
 			}, nil
 		},
+		refreshCount: 0,
+		delay:        0,
+		mu:           sync.Mutex{},
 	}
 	rm.Register("testprovider", mock)
 

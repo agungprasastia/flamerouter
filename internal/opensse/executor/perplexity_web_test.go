@@ -18,15 +18,15 @@ func TestPerplexityWebExecutor_ExecutionAndStreaming(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotCookie = r.Header.Get("Cookie")
-		defer r.Body.Close()
-		_ = json.NewDecoder(r.Body).Decode(&gotPayload)
+		defer func() { _ = r.Body.Close() }()
+		_ = json.NewDecoder(r.Body).Decode(&gotPayload) // nolint:errcheck
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(`data: {"blocks":[{"intended_usage":"pro_search_steps","plan_block":{"steps":[{"step_type":"SEARCH_WEB","search_web_content":{"queries":[{"query":"golang test"}]}}]}}]}
 
 data: {"backend_uuid":"uuid-12345","blocks":[{"intended_usage":"markdown","markdown_block":{"chunks":["Hello from Perplexity"],"progress":"DONE"}}],"final":true}
 
-`))
+`)) // nolint:errcheck
 	}))
 	defer srv.Close()
 
@@ -35,18 +35,22 @@ data: {"backend_uuid":"uuid-12345","blocks":[{"intended_usage":"markdown","markd
 		t.Fatal("perplexity-web executor not registered")
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
 		"messages": []map[string]string{{"role": "user", "content": "test question"}},
 	})
 
 	res, err := ex.Execute(context.Background(), executor.Credentials{
-		APIKey:  "session-token-xyz",
-		BaseURL: srv.URL,
+		APIKey:               "session-token-xyz",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              srv.URL,
+		ProviderSpecificData: nil,
+		ProjectID:            "",
 	}, "pplx-sonar", body, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
@@ -56,7 +60,7 @@ data: {"backend_uuid":"uuid-12345","blocks":[{"intended_usage":"markdown","markd
 		t.Errorf("got cookie %q, want session token", gotCookie)
 	}
 
-	outBytes, _ := io.ReadAll(res.Body)
+	outBytes, _ := io.ReadAll(res.Body) // nolint:errcheck
 	outStr := string(outBytes)
 
 	if !strings.Contains(outStr, "Searching: golang test") {
@@ -76,23 +80,27 @@ func TestPerplexityWebExecutor_NonStreaming(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(`data: {"backend_uuid":"uuid-999","blocks":[{"intended_usage":"markdown","markdown_block":{"chunks":["Direct answer"],"progress":"DONE"}}],"final":true}
-`))
+`)) // nolint:errcheck
 	}))
 	defer srv.Close()
 
 	ex := executor.GetExecutor("perplexity-web")
-	body, _ := json.Marshal(map[string]any{
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
 		"messages": []map[string]string{{"role": "user", "content": "direct query"}},
 	})
 
 	res, err := ex.Execute(context.Background(), executor.Credentials{
-		AccessToken: "jwt-token-123",
-		BaseURL:     srv.URL,
+		APIKey:               "",
+		AccessToken:          "jwt-token-123",
+		RefreshToken:         "",
+		BaseURL:              srv.URL,
+		ProviderSpecificData: nil,
+		ProjectID:            "",
 	}, "pplx-gpt", body, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
@@ -103,15 +111,18 @@ func TestPerplexityWebExecutor_NonStreaming(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	choices, _ := respObj["choices"].([]any)
-	if len(choices) == 0 {
+	choices, ok := respObj["choices"].([]any)
+	if !ok || len(choices) == 0 {
 		t.Fatal("empty choices")
 	}
 
-	first, _ := choices[0].(map[string]any)
+	first, ok := choices[0].(map[string]any)
+	if !ok {
+		t.Fatal("first choice not map")
+	}
 
-	msg, _ := first["message"].(map[string]any)
-	if msg["content"] != "Direct answer" {
+	msg, ok := first["message"].(map[string]any)
+	if !ok || msg["content"] != "Direct answer" {
 		t.Errorf("content = %v, want Direct answer", msg["content"])
 	}
 }

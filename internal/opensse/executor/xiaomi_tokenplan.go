@@ -18,10 +18,12 @@ var xiaomiTokenplanRegions = map[string]string{
 
 const xiaomiTokenplanDefaultRegion = "sgp"
 
+// XiaomiTokenplanExecutor handles Xiaomi Tokenplan execution.
 type XiaomiTokenplanExecutor struct {
 	DefaultExecutor
 }
 
+// NewXiaomiTokenplanExecutor constructs a XiaomiTokenplanExecutor.
 func NewXiaomiTokenplanExecutor(client *http.Client) *XiaomiTokenplanExecutor {
 	if client == nil {
 		client = http.DefaultClient
@@ -47,31 +49,35 @@ func resolveXiaomiTokenplanBaseURL(cred Credentials) string {
 	return xiaomiTokenplanRegions[xiaomiTokenplanDefaultRegion]
 }
 
-func buildXiaomiTokenplanURL(model string, stream bool, cred Credentials) string {
+func isClaudeFormat(cred Credentials, model string) bool {
+	if strings.HasSuffix(model, "-claude") {
+		return true
+	}
+
+	if cred.ProviderSpecificData == nil {
+		return false
+	}
+
+	if rt, ok := cred.ProviderSpecificData["runtimeTransport"].(map[string]any); ok {
+		if fmtVal, okFmt := rt["format"].(string); okFmt && fmtVal == "claude" {
+			return true
+		}
+	}
+
+	if fmtVal, okFmt := cred.ProviderSpecificData["format"].(string); okFmt && fmtVal == "claude" {
+		return true
+	}
+
+	return false
+}
+
+func buildXiaomiTokenplanURL(model string, _ bool, cred Credentials) string {
 	baseURL := resolveXiaomiTokenplanBaseURL(cred)
 	if strings.Contains(baseURL, "/anthropic/v1/messages") || strings.Contains(baseURL, "/chat/completions") {
 		return baseURL
 	}
 
-	isClaude := false
-
-	if cred.ProviderSpecificData != nil {
-		if rt, ok := cred.ProviderSpecificData["runtimeTransport"].(map[string]any); ok {
-			if fmt, ok := rt["format"].(string); ok && fmt == "claude" {
-				isClaude = true
-			}
-		}
-
-		if fmt, ok := cred.ProviderSpecificData["format"].(string); ok && fmt == "claude" {
-			isClaude = true
-		}
-	}
-
-	if strings.HasSuffix(model, "-claude") {
-		isClaude = true
-	}
-
-	if isClaude {
+	if isClaudeFormat(cred, model) {
 		trimmed := strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
 		return trimmed + "/anthropic/v1/messages"
 	}
@@ -84,6 +90,7 @@ func buildXiaomiTokenplanURL(model string, stream bool, cred Credentials) string
 	return trimmed + "/chat/completions"
 }
 
+// Execute executes Xiaomi Tokenplan requests.
 func (e *XiaomiTokenplanExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	// Temporarily override or let DefaultExecutor build URL using custom logic
 	url := buildXiaomiTokenplanURL(model, stream, cred)

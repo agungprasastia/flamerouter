@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	sessionTtlMs             = 2 * 60 * 60 * 1000
+	sessionTTLMs             = 2 * 60 * 60 * 1000
 	sessionCleanupIntervalMs = 30 * 60 * 1000
 	assistantMinLen          = 50
 	assistantCapLen          = 50
@@ -22,12 +22,12 @@ const (
 )
 
 type sessionEntry struct {
-	sessionId string
+	sessionID string
 	lastUsed  int64
 }
 
 type continuationEntry struct {
-	continuationId string
+	continuationID string
 	lastUsed       int64
 }
 
@@ -46,19 +46,19 @@ func init() {
 
 			sessionMu.Lock()
 			for k, e := range runtimeSessionStore {
-				if now-e.lastUsed > sessionTtlMs {
+				if now-e.lastUsed > sessionTTLMs {
 					delete(runtimeSessionStore, k)
 				}
 			}
 
 			for k, e := range assistantSessionStore {
-				if now-e.lastUsed > sessionTtlMs {
+				if now-e.lastUsed > sessionTTLMs {
 					delete(assistantSessionStore, k)
 				}
 			}
 
 			for k, e := range continuationStore {
-				if now-e.lastUsed > sessionTtlMs {
+				if now-e.lastUsed > sessionTTLMs {
 					delete(continuationStore, k)
 				}
 			}
@@ -67,39 +67,44 @@ func init() {
 	}()
 }
 
-func GenerateBinaryStyleId() string {
+// GenerateBinaryStyleID generates a unique binary style session ID.
+func GenerateBinaryStyleID() string {
 	return randomUUID() + fmt.Sprintf("%d", time.Now().UnixMilli())
 }
 
 func randomUUID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+	}
+
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-func DeriveSessionId(connectionId string) string {
-	if connectionId == "" {
-		return GenerateBinaryStyleId()
+// DeriveSessionID derives or recovers a session ID from a connection ID.
+func DeriveSessionID(connectionID string) string {
+	if connectionID == "" {
+		return GenerateBinaryStyleID()
 	}
 
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
-	if existing, ok := runtimeSessionStore[connectionId]; ok {
+	if existing, ok := runtimeSessionStore[connectionID]; ok {
 		existing.lastUsed = time.Now().UnixMilli()
-		return existing.sessionId
+		return existing.sessionID
 	}
 
 	if len(runtimeSessionStore) >= maxSessions {
 		var oldestKey string
 
-		var oldestTs int64 = 1<<63 - 1
+		var oldestTS int64 = 1<<63 - 1
 		for k, e := range runtimeSessionStore {
-			if e.lastUsed < oldestTs {
-				oldestTs = e.lastUsed
+			if e.lastUsed < oldestTS {
+				oldestTS = e.lastUsed
 				oldestKey = k
 			}
 		}
@@ -109,12 +114,13 @@ func DeriveSessionId(connectionId string) string {
 		}
 	}
 
-	sid := GenerateBinaryStyleId()
-	runtimeSessionStore[connectionId] = &sessionEntry{sessionId: sid, lastUsed: time.Now().UnixMilli()}
+	sid := GenerateBinaryStyleID()
+	runtimeSessionStore[connectionID] = &sessionEntry{sessionID: sid, lastUsed: time.Now().UnixMilli()}
 
 	return sid
 }
 
+// ClearSessionStore clears all in-memory session mappings.
 func ClearSessionStore() {
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
@@ -129,7 +135,7 @@ func sha16(text string) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 
-func normalizeSessionId(value any) string {
+func normalizeSessionID(value any) string {
 	s, ok := value.(string)
 	if !ok {
 		return ""
@@ -143,23 +149,23 @@ func normalizeSessionId(value any) string {
 	return v
 }
 
-func extractClaudeCodeSession(userId string) string {
-	if userId == "" {
+func extractClaudeCodeSession(userID string) string {
+	if userID == "" {
 		return ""
 	}
 
-	if idx := strings.LastIndex(userId, "_session_"); idx >= 0 {
-		rest := userId[idx+len("_session_"):]
+	if idx := strings.LastIndex(userID, "_session_"); idx >= 0 {
+		rest := userID[idx+len("_session_"):]
 		// uuid-ish
 		if len(rest) >= 8 {
 			return rest
 		}
 	}
 
-	if len(userId) > 0 && userId[0] == '{' {
+	if len(userID) > 0 && userID[0] == '{' {
 		var m map[string]any
-		if json.Unmarshal([]byte(userId), &m) == nil {
-			return normalizeSessionId(m["session_id"])
+		if json.Unmarshal([]byte(userID), &m) == nil {
+			return normalizeSessionID(m["session_id"])
 		}
 	}
 
@@ -172,7 +178,7 @@ func extractAntigravitySession(body map[string]any) string {
 	}
 
 	if req, ok := body["request"].(map[string]any); ok {
-		if sid := normalizeSessionId(req["sessionId"]); sid != "" {
+		if sid := normalizeSessionID(req["sessionId"]); sid != "" {
 			return sid
 		}
 	}
@@ -181,7 +187,7 @@ func extractAntigravitySession(body map[string]any) string {
 		// agent/uuid/...
 		parts := strings.Split(rid, "/")
 		if len(parts) >= 2 {
-			return normalizeSessionId(parts[1])
+			return normalizeSessionID(parts[1])
 		}
 	}
 
@@ -193,24 +199,40 @@ func headerValue(headers map[string]any, key string) string {
 		return ""
 	}
 
-	if v := normalizeSessionId(headers[key]); v != "" {
+	if v := normalizeSessionID(headers[key]); v != "" {
 		return v
 	}
 
-	return normalizeSessionId(headers[strings.ToLower(key)])
+	return normalizeSessionID(headers[strings.ToLower(key)])
 }
 
 var sessionHeaderKeys = []string{"x-session-id", "session-id", "session_id", "x-amp-thread-id"}
 
-func extractClientSessionId(headers map[string]any, body map[string]any, scope string) string {
-	if body != nil {
-		if meta, ok := body["metadata"].(map[string]any); ok {
-			if uid, ok := meta["user_id"].(string); ok {
-				if claude := extractClaudeCodeSession(uid); claude != "" {
-					return "claude:" + claude
-				}
-			}
-		}
+func extractClaudeUserSession(body map[string]any) string {
+	if body == nil {
+		return ""
+	}
+
+	meta, ok := body["metadata"].(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	uid, ok := meta["user_id"].(string)
+	if !ok {
+		return ""
+	}
+
+	if claude := extractClaudeCodeSession(uid); claude != "" {
+		return "claude:" + claude
+	}
+
+	return ""
+}
+
+func extractClientSessionID(headers map[string]any, body map[string]any, scope string) string {
+	if s := extractClaudeUserSession(body); s != "" {
+		return s
 	}
 
 	if ag := extractAntigravitySession(body); ag != "" {
@@ -229,24 +251,30 @@ func extractClientSessionId(headers map[string]any, body map[string]any, scope s
 		}
 	}
 
-	if body != nil {
-		if v := normalizeSessionId(body["prompt_cache_key"]); v != "" {
-			return v
-		}
+	return extractBodySessionID(body, scope)
+}
 
-		if v := normalizeSessionId(body["session_id"]); v != "" {
-			return v
-		}
+func extractBodySessionID(body map[string]any, scope string) string {
+	if body == nil {
+		return ""
+	}
 
-		if v := normalizeSessionId(body["conversation_id"]); v != "" {
-			return v
-		}
+	if v := normalizeSessionID(body["prompt_cache_key"]); v != "" {
+		return v
+	}
 
-		if scope != "kiro" {
-			if meta, ok := body["metadata"].(map[string]any); ok {
-				if v := normalizeSessionId(meta["user_id"]); v != "" {
-					return v
-				}
+	if v := normalizeSessionID(body["session_id"]); v != "" {
+		return v
+	}
+
+	if v := normalizeSessionID(body["conversation_id"]); v != "" {
+		return v
+	}
+
+	if scope != "kiro" {
+		if meta, ok := body["metadata"].(map[string]any); ok {
+			if v := normalizeSessionID(meta["user_id"]); v != "" {
+				return v
 			}
 		}
 	}
@@ -270,10 +298,28 @@ func requestMessages(body map[string]any) []any {
 	return nil
 }
 
+func extractBlockAssistantText(blocks []any) string {
+	var text string
+
+	for _, b := range blocks {
+		block, ok := b.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if t, ok := block["text"].(string); ok {
+			text += t
+		} else if o, ok := block["output"].(string); ok {
+			text += o
+		}
+	}
+
+	return text
+}
+
 func accumulateAssistantText(body map[string]any) string {
 	items := requestMessages(body)
-
-	var text string
+	text := ""
 
 	for _, itemRaw := range items {
 		item, ok := itemRaw.(map[string]any)
@@ -281,7 +327,7 @@ func accumulateAssistantText(body map[string]any) string {
 			continue
 		}
 
-		if role, _ := item["role"].(string); role != "assistant" {
+		if role, ok := item["role"].(string); !ok || role != "assistant" {
 			continue
 		}
 
@@ -289,18 +335,7 @@ func accumulateAssistantText(body map[string]any) string {
 		case string:
 			text += c
 		case []any:
-			for _, b := range c {
-				block, ok := b.(map[string]any)
-				if !ok {
-					continue
-				}
-
-				if t, ok := block["text"].(string); ok {
-					text += t
-				} else if o, ok := block["output"].(string); ok {
-					text += o
-				}
-			}
+			text += extractBlockAssistantText(c)
 		}
 
 		if len(text) >= assistantCapLen {
@@ -311,7 +346,7 @@ func accumulateAssistantText(body map[string]any) string {
 	return text
 }
 
-func assistantTextSessionId(scope string, body map[string]any) string {
+func assistantTextSessionID(scope string, body map[string]any) string {
 	text := accumulateAssistantText(body)
 	if len(text) < assistantMinLen {
 		return ""
@@ -329,16 +364,16 @@ func assistantTextSessionId(scope string, body map[string]any) string {
 
 	if existing, ok := assistantSessionStore[hash]; ok {
 		existing.lastUsed = time.Now().UnixMilli()
-		return existing.sessionId
+		return existing.sessionID
 	}
 
 	if len(assistantSessionStore) >= maxAssistantSessions {
 		var oldestKey string
 
-		var oldestTs int64 = 1<<63 - 1
+		var oldestTS int64 = 1<<63 - 1
 		for k, e := range assistantSessionStore {
-			if e.lastUsed < oldestTs {
-				oldestTs = e.lastUsed
+			if e.lastUsed < oldestTS {
+				oldestTS = e.lastUsed
 				oldestKey = k
 			}
 		}
@@ -348,56 +383,60 @@ func assistantTextSessionId(scope string, body map[string]any) string {
 		}
 	}
 
-	sid := GenerateBinaryStyleId()
-	assistantSessionStore[hash] = &sessionEntry{sessionId: sid, lastUsed: time.Now().UnixMilli()}
+	sid := GenerateBinaryStyleID()
+	assistantSessionStore[hash] = &sessionEntry{sessionID: sid, lastUsed: time.Now().UnixMilli()}
 
 	return sid
 }
 
+// SessionIdentity represents the resolved session and its persistence state.
 type SessionIdentity struct {
-	SessionId string
+	SessionID string
 	Ephemeral bool
 }
 
-func ResolveSessionIdentity(headers map[string]any, body map[string]any, connectionId, workspaceId, scope string) SessionIdentity {
-	if client := extractClientSessionId(headers, body, scope); client != "" {
-		return SessionIdentity{SessionId: client, Ephemeral: false}
+// ResolveSessionIdentity determines the appropriate session identifier.
+func ResolveSessionIdentity(headers map[string]any, body map[string]any, connectionID, workspaceID, scope string) SessionIdentity {
+	if client := extractClientSessionID(headers, body, scope); client != "" {
+		return SessionIdentity{SessionID: client, Ephemeral: false}
 	}
 
 	if scope != "kiro" {
-		if fromAssistant := assistantTextSessionId(scope+":"+connectionId, body); fromAssistant != "" {
-			return SessionIdentity{SessionId: fromAssistant, Ephemeral: false}
+		if fromAssistant := assistantTextSessionID(scope+":"+connectionID, body); fromAssistant != "" {
+			return SessionIdentity{SessionID: fromAssistant, Ephemeral: false}
 		}
 	}
 
-	if ws := normalizeSessionId(workspaceId); ws != "" {
-		return SessionIdentity{SessionId: ws, Ephemeral: false}
+	if ws := normalizeSessionID(workspaceID); ws != "" {
+		return SessionIdentity{SessionID: ws, Ephemeral: false}
 	}
 
 	if scope == "kiro" {
-		return SessionIdentity{SessionId: GenerateBinaryStyleId(), Ephemeral: true}
+		return SessionIdentity{SessionID: GenerateBinaryStyleID(), Ephemeral: true}
 	}
 
-	return SessionIdentity{SessionId: DeriveSessionId(connectionId), Ephemeral: false}
+	return SessionIdentity{SessionID: DeriveSessionID(connectionID), Ephemeral: false}
 }
 
-func ResolveSessionId(headers map[string]any, body map[string]any, connectionId, workspaceId, scope string) string {
-	return ResolveSessionIdentity(headers, body, connectionId, workspaceId, scope).SessionId
+// ResolveSessionID resolves a session ID from headers, body, or connection info.
+func ResolveSessionID(headers map[string]any, body map[string]any, connectionID, workspaceID, scope string) string {
+	return ResolveSessionIdentity(headers, body, connectionID, workspaceID, scope).SessionID
 }
 
-func ResolveContinuationId(sessionId, connectionId, scope string, ephemeral bool) string {
+// ResolveContinuationID resolves or creates a continuation ID for session context.
+func ResolveContinuationID(sessionID, connectionID, scope string, ephemeral bool) string {
 	if ephemeral {
 		return randomUUID()
 	}
 
-	key := scope + ":" + connectionId + ":" + sessionId
+	key := scope + ":" + connectionID + ":" + sessionID
 
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
 	if existing, ok := continuationStore[key]; ok {
 		existing.lastUsed = time.Now().UnixMilli()
-		return existing.continuationId
+		return existing.continuationID
 	}
 
 	cid := randomUUID()
@@ -405,10 +444,10 @@ func ResolveContinuationId(sessionId, connectionId, scope string, ephemeral bool
 	if len(continuationStore) >= maxContinuationSessions {
 		var oldestKey string
 
-		var oldestTs int64 = 1<<63 - 1
+		var oldestTS int64 = 1<<63 - 1
 		for k, e := range continuationStore {
-			if e.lastUsed < oldestTs {
-				oldestTs = e.lastUsed
+			if e.lastUsed < oldestTS {
+				oldestTS = e.lastUsed
 				oldestKey = k
 			}
 		}
@@ -418,13 +457,13 @@ func ResolveContinuationId(sessionId, connectionId, scope string, ephemeral bool
 		}
 	}
 
-	continuationStore[key] = &continuationEntry{continuationId: cid, lastUsed: time.Now().UnixMilli()}
+	continuationStore[key] = &continuationEntry{continuationID: cid, lastUsed: time.Now().UnixMilli()}
 
 	return cid
 }
 
-// CaptureSessionId matches 9router captureSessionId.
-func CaptureSessionId(body map[string]any, credentials map[string]any, connectionId, scope string) string {
+// CaptureSessionID matches 9router captureSessionId.
+func CaptureSessionID(body map[string]any, credentials map[string]any, connectionID, scope string) string {
 	var headers map[string]any
 
 	if credentials != nil {
@@ -433,7 +472,127 @@ func CaptureSessionId(body map[string]any, credentials map[string]any, connectio
 		}
 	}
 
-	return ResolveSessionId(headers, body, connectionId, "", scope)
+	return ResolveSessionID(headers, body, connectionID, "", scope)
+}
+
+func extractEffortThinking(effort string) map[string]any {
+	e := strings.ToLower(effort)
+	if e == "none" || e == "off" {
+		return map[string]any{"mode": "none"}
+	}
+
+	if e == "auto" {
+		return map[string]any{"mode": "auto"}
+	}
+
+	return map[string]any{"mode": "level", "level": e}
+}
+
+func extractClaudeThinking(t map[string]any) map[string]any {
+	ttype, ok := t["type"].(string)
+	if !ok {
+		return nil
+	}
+
+	if ttype == "disabled" {
+		return map[string]any{"mode": "none"}
+	}
+
+	if ttype == "adaptive" || ttype == "enabled" {
+		if bt, ok := t["budget_tokens"].(float64); ok && bt > 0 {
+			return map[string]any{"mode": "budget", "budget": int(bt)}
+		}
+
+		if bt, ok := t["budget_tokens"].(int); ok && bt > 0 {
+			return map[string]any{"mode": "budget", "budget": bt}
+		}
+
+		return map[string]any{"mode": "auto"}
+	}
+
+	return nil
+}
+
+func extractGeminiThinkingConfig(body map[string]any) map[string]any {
+	if t, ok := body["thinkingConfig"].(map[string]any); ok {
+		return t
+	}
+
+	if gc, ok := body["generationConfig"].(map[string]any); ok {
+		if t, ok := gc["thinkingConfig"].(map[string]any); ok {
+			return t
+		}
+	}
+
+	if req, ok := body["request"].(map[string]any); ok {
+		if gc, ok := req["generationConfig"].(map[string]any); ok {
+			if t, ok := gc["thinkingConfig"].(map[string]any); ok {
+				return t
+			}
+		}
+	}
+
+	return nil
+}
+
+func extractGeminiThinking(body map[string]any) map[string]any {
+	tc := extractGeminiThinkingConfig(body)
+	if tc == nil {
+		return nil
+	}
+
+	if tl, ok := tc["thinkingLevel"].(string); ok {
+		return map[string]any{"mode": "level", "level": strings.ToLower(tl)}
+	}
+
+	var tb float64
+	switch v := tc["thinkingBudget"].(type) {
+	case float64:
+		tb = v
+	case int:
+		tb = float64(v)
+	default:
+		tb = -999
+	}
+
+	if tb != -999 {
+		if tb == 0 {
+			return map[string]any{"mode": "none"}
+		}
+
+		if tb < 0 {
+			return map[string]any{"mode": "auto"}
+		}
+
+		return map[string]any{"mode": "budget", "budget": int(tb)}
+	}
+
+	return nil
+}
+
+func extractEnableThinking(body map[string]any) map[string]any {
+	et, ok := body["enable_thinking"]
+	if !ok {
+		return nil
+	}
+
+	if et == false {
+		return map[string]any{"mode": "none"}
+	}
+
+	if et == true {
+		if tb, ok := body["thinking_budget"].(float64); ok && tb > 0 {
+			return map[string]any{"mode": "budget", "budget": int(tb)}
+		}
+
+		if tb, ok := body["thinking_budget"].(int); ok && tb > 0 {
+			return map[string]any{"mode": "budget", "budget": tb}
+		}
+
+		return map[string]any{"mode": "auto"}
+	}
+
+	return nil
 }
 
 // CaptureThinking extracts unified thinking intent (alias of extractThinking).
@@ -442,136 +601,50 @@ func CaptureThinking(body map[string]any) map[string]any {
 		return nil
 	}
 
+	if res := extractThinkingConfigModes(body); res != nil {
+		return res
+	}
+
+	if res := extractGeminiThinking(body); res != nil {
+		return res
+	}
+
+	return extractEnableThinking(body)
+}
+
+func extractThinkingConfigModes(body map[string]any) map[string]any {
 	if oc, ok := body["output_config"].(map[string]any); ok {
 		if effort, ok := oc["effort"].(string); ok && effort != "" {
-			e := strings.ToLower(effort)
-			if e == "none" || e == "off" {
-				return map[string]any{"mode": "none"}
-			}
-
-			if e == "auto" {
-				return map[string]any{"mode": "auto"}
-			}
-
-			return map[string]any{"mode": "level", "level": e}
+			return extractEffortThinking(effort)
 		}
 	}
 
 	if t, ok := body["thinking"].(map[string]any); ok {
-		ttype, _ := t["type"].(string)
-		if ttype == "disabled" {
-			return map[string]any{"mode": "none"}
-		}
-
-		if ttype == "adaptive" || ttype == "enabled" {
-			if bt, ok := t["budget_tokens"].(float64); ok && bt > 0 {
-				return map[string]any{"mode": "budget", "budget": int(bt)}
-			}
-
-			if bt, ok := t["budget_tokens"].(int); ok && bt > 0 {
-				return map[string]any{"mode": "budget", "budget": bt}
-			}
-
-			return map[string]any{"mode": "auto"}
+		if res := extractClaudeThinking(t); res != nil {
+			return res
 		}
 	}
 
+	return extractReasoningEffortModes(body)
+}
+
+func extractReasoningEffortModes(body map[string]any) map[string]any {
 	if effort, ok := body["reasoning_effort"].(string); ok && effort != "" {
-		e := strings.ToLower(effort)
-		if e == "none" || e == "off" {
-			return map[string]any{"mode": "none"}
-		}
-
-		if e == "auto" {
-			return map[string]any{"mode": "auto"}
-		}
-
-		return map[string]any{"mode": "level", "level": e}
+		return extractEffortThinking(effort)
 	}
 
 	if r, ok := body["reasoning"].(map[string]any); ok {
 		if effort, ok := r["effort"].(string); ok && effort != "" {
-			e := strings.ToLower(effort)
-			if e == "none" || e == "off" {
-				return map[string]any{"mode": "none"}
-			}
-
-			if e == "auto" {
-				return map[string]any{"mode": "auto"}
-			}
-
-			return map[string]any{"mode": "level", "level": e}
-		}
-	}
-
-	// Gemini shapes
-	var tc map[string]any
-	if t, ok := body["thinkingConfig"].(map[string]any); ok {
-		tc = t
-	} else if gc, ok := body["generationConfig"].(map[string]any); ok {
-		if t, ok := gc["thinkingConfig"].(map[string]any); ok {
-			tc = t
-		}
-	} else if req, ok := body["request"].(map[string]any); ok {
-		if gc, ok := req["generationConfig"].(map[string]any); ok {
-			if t, ok := gc["thinkingConfig"].(map[string]any); ok {
-				tc = t
-			}
-		}
-	}
-
-	if tc != nil {
-		if tl, ok := tc["thinkingLevel"].(string); ok {
-			return map[string]any{"mode": "level", "level": strings.ToLower(tl)}
-		}
-
-		var tb float64
-		switch v := tc["thinkingBudget"].(type) {
-		case float64:
-			tb = v
-		case int:
-			tb = float64(v)
-		default:
-			tb = -999
-		}
-
-		if tb != -999 {
-			if tb == 0 {
-				return map[string]any{"mode": "none"}
-			}
-
-			if tb < 0 {
-				return map[string]any{"mode": "auto"}
-			}
-
-			return map[string]any{"mode": "budget", "budget": int(tb)}
-		}
-	}
-
-	if et, ok := body["enable_thinking"]; ok {
-		if et == false {
-			return map[string]any{"mode": "none"}
-		}
-
-		if et == true {
-			if tb, ok := body["thinking_budget"].(float64); ok && tb > 0 {
-				return map[string]any{"mode": "budget", "budget": int(tb)}
-			}
-
-			if tb, ok := body["thinking_budget"].(int); ok && tb > 0 {
-				return map[string]any{"mode": "budget", "budget": tb}
-			}
-
-			return map[string]any{"mode": "auto"}
+			return extractEffortThinking(effort)
 		}
 	}
 
 	return nil
 }
 
-// ToNumericSessionId converts any session id to Antigravity numeric format "-<int64>".
-func ToNumericSessionId(sessionId string) string {
-	v := normalizeSessionId(sessionId)
+// ToNumericSessionID converts any session id to Antigravity numeric format "-<int64>".
+func ToNumericSessionID(sessionID string) string {
+	v := normalizeSessionID(sessionID)
 	if v == "" {
 		return ""
 	}

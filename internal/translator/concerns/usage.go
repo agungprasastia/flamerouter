@@ -47,6 +47,77 @@ func nInt(v any) int {
 	}
 }
 
+func parseClaudeUsage(raw map[string]any) map[string]any {
+	input := nInt(raw["input_tokens"])
+	output := nInt(raw["output_tokens"])
+	cacheRead := nInt(raw["cache_read_input_tokens"])
+	cacheCreate := nInt(raw["cache_creation_input_tokens"])
+	prompt := input + cacheRead + cacheCreate
+
+	return BuildUsage(prompt, output, prompt+output, cacheRead, cacheCreate, 0)
+}
+
+func parseGeminiUsage(raw map[string]any) map[string]any {
+	cached := nInt(raw["cachedContentTokenCount"])
+	prompt := nInt(raw["promptTokenCount"])
+	thoughts := nInt(raw["thoughtsTokenCount"])
+	total := nInt(raw["totalTokenCount"])
+	candidates := nInt(raw["candidatesTokenCount"])
+
+	if candidates == 0 && total > 0 {
+		candidates = total - prompt - thoughts
+		if candidates < 0 {
+			candidates = 0
+		}
+	}
+
+	return BuildUsage(prompt, candidates+thoughts, total, cached, 0, thoughts)
+}
+
+func parseKiroUsage(raw map[string]any) map[string]any {
+	input := nInt(raw["inputTokens"])
+	if input == 0 {
+		input = nInt(raw["prompt_tokens"])
+	}
+
+	output := nInt(raw["outputTokens"])
+	if output == 0 {
+		output = nInt(raw["completion_tokens"])
+	}
+
+	cached := nInt(raw["cache_read_input_tokens"])
+	if cached == 0 {
+		cached = nInt(raw["cachedTokens"])
+	}
+
+	if cached == 0 {
+		cached = nInt(raw["cached_tokens"])
+	}
+
+	cacheCreate := nInt(raw["cache_creation_input_tokens"])
+
+	return BuildUsage(input, output, input+output, cached, cacheCreate, 0)
+}
+
+func parseCommandCodeUsage(raw map[string]any) map[string]any {
+	input := nInt(raw["inputTokens"])
+	if input == 0 {
+		input = nInt(raw["prompt_tokens"])
+	}
+
+	output := nInt(raw["outputTokens"])
+	if output == 0 {
+		output = nInt(raw["completion_tokens"])
+	}
+
+	total := nInt(raw["totalTokens"])
+	if total == 0 {
+		total = input + output
+	}
+
+	return BuildUsage(input, output, total, 0, 0, 0)
+}
+
 // ToOpenAIUsage converts provider-native usage → OpenAI usage.
 func ToOpenAIUsage(raw map[string]any, kind string) map[string]any {
 	if raw == nil {
@@ -55,73 +126,18 @@ func ToOpenAIUsage(raw map[string]any, kind string) map[string]any {
 
 	switch kind {
 	case "claude":
-		input := nInt(raw["input_tokens"])
-		output := nInt(raw["output_tokens"])
-		cacheRead := nInt(raw["cache_read_input_tokens"])
-		cacheCreate := nInt(raw["cache_creation_input_tokens"])
-		prompt := input + cacheRead + cacheCreate
-
-		return BuildUsage(prompt, output, prompt+output, cacheRead, cacheCreate, 0)
+		return parseClaudeUsage(raw)
 	case "gemini":
-		cached := nInt(raw["cachedContentTokenCount"])
-		prompt := nInt(raw["promptTokenCount"])
-		thoughts := nInt(raw["thoughtsTokenCount"])
-		total := nInt(raw["totalTokenCount"])
-		candidates := nInt(raw["candidatesTokenCount"])
-
-		if candidates == 0 && total > 0 {
-			candidates = total - prompt - thoughts
-			if candidates < 0 {
-				candidates = 0
-			}
-		}
-
-		return BuildUsage(prompt, candidates+thoughts, total, cached, 0, thoughts)
+		return parseGeminiUsage(raw)
 	case "kiro":
-		input := nInt(raw["inputTokens"])
-		if input == 0 {
-			input = nInt(raw["prompt_tokens"])
-		}
-
-		output := nInt(raw["outputTokens"])
-		if output == 0 {
-			output = nInt(raw["completion_tokens"])
-		}
-
-		cached := nInt(raw["cache_read_input_tokens"])
-		if cached == 0 {
-			cached = nInt(raw["cachedTokens"])
-		}
-
-		if cached == 0 {
-			cached = nInt(raw["cached_tokens"])
-		}
-
-		cacheCreate := nInt(raw["cache_creation_input_tokens"])
-
-		return BuildUsage(input, output, input+output, cached, cacheCreate, 0)
+		return parseKiroUsage(raw)
 	case "ollama":
 		input := nInt(raw["prompt_eval_count"])
 		output := nInt(raw["eval_count"])
 
 		return BuildUsage(input, output, input+output, 0, 0, 0)
 	case "commandcode":
-		input := nInt(raw["inputTokens"])
-		if input == 0 {
-			input = nInt(raw["prompt_tokens"])
-		}
-
-		output := nInt(raw["outputTokens"])
-		if output == 0 {
-			output = nInt(raw["completion_tokens"])
-		}
-
-		total := nInt(raw["totalTokens"])
-		if total == 0 {
-			total = input + output
-		}
-
-		return BuildUsage(input, output, total, 0, 0, 0)
+		return parseCommandCodeUsage(raw)
 	default:
 		return raw
 	}

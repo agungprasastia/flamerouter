@@ -20,7 +20,9 @@ func TestAntigravityMitmAndAliasKV(t *testing.T) {
 	}
 
 	var st map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &st)
+	if err := json.Unmarshal(rr.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, ok := st["running"]; !ok {
 		t.Fatalf("status: %+v", st)

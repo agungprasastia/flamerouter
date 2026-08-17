@@ -42,7 +42,10 @@ func TestNormalizePoolConfig(t *testing.T) {
 
 func TestGetPoolConfig_EmptyEnabledFallsBack(t *testing.T) {
 	cfg := CapacityAdapterConfig{
-		Vision: ModalityPoolConfig{Enabled: true, Models: nil},
+		Vision:     ModalityPoolConfig{Enabled: true, RoundRobin: false, Models: nil},
+		PDF:        ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
+		AudioInput: ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
+		VideoInput: ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
 	}
 
 	pool := GetPoolConfig("vision", cfg)
@@ -53,9 +56,10 @@ func TestGetPoolConfig_EmptyEnabledFallsBack(t *testing.T) {
 
 func TestGetCapacityAdapterModels_Deduplication(t *testing.T) {
 	cfg := CapacityAdapterConfig{
-		Vision:     ModalityPoolConfig{Enabled: true, Models: []string{"openai/gpt-4o", "gemini/gemini-2.5-flash"}},
-		AudioInput: ModalityPoolConfig{Enabled: true, Models: []string{"openai/gpt-4o", "whisper-large"}},
-		PDF:        ModalityPoolConfig{Enabled: false, Models: []string{"ignored/pdf"}},
+		Vision:     ModalityPoolConfig{Enabled: true, RoundRobin: false, Models: []string{"openai/gpt-4o", "gemini/gemini-2.5-flash"}},
+		AudioInput: ModalityPoolConfig{Enabled: true, RoundRobin: false, Models: []string{"openai/gpt-4o", "whisper-large"}},
+		PDF:        ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: []string{"ignored/pdf"}},
+		VideoInput: ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
 	}
 	models := GetCapacityAdapterModels(cfg)
 	want := []string{"openai/gpt-4o", "gemini/gemini-2.5-flash", "whisper-large"}
@@ -68,9 +72,13 @@ func TestGetCapacityAdapterModels_Deduplication(t *testing.T) {
 func TestAugmentModelsWithCapacityAdapter_PrependWhenIncapable(t *testing.T) {
 	cfg := CapacityAdapterConfig{
 		Vision: ModalityPoolConfig{
-			Enabled: true,
-			Models:  []string{"openai/gpt-4o"},
+			Enabled:    true,
+			RoundRobin: false,
+			Models:     []string{"openai/gpt-4o"},
 		},
+		PDF:        ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
+		AudioInput: ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
+		VideoInput: ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
 	}
 	models := []string{"deepseek/deepseek-v3"}
 	reqCaps := map[string]bool{"vision": true}
@@ -86,9 +94,13 @@ func TestAugmentModelsWithCapacityAdapter_PrependWhenIncapable(t *testing.T) {
 func TestAugmentModelsWithCapacityAdapter_UntouchedWhenCapable(t *testing.T) {
 	cfg := CapacityAdapterConfig{
 		Vision: ModalityPoolConfig{
-			Enabled: true,
-			Models:  []string{"openai/gpt-4o"},
+			Enabled:    true,
+			RoundRobin: false,
+			Models:     []string{"openai/gpt-4o"},
 		},
+		PDF:        ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
+		AudioInput: ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
+		VideoInput: ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
 	}
 	models := []string{"openai/gpt-4o", "deepseek/deepseek-v3"}
 	reqCaps := map[string]bool{"vision": true}
@@ -102,9 +114,13 @@ func TestAugmentModelsWithCapacityAdapter_UntouchedWhenCapable(t *testing.T) {
 func TestAdaptModelForCapabilities(t *testing.T) {
 	cfg := CapacityAdapterConfig{
 		Vision: ModalityPoolConfig{
-			Enabled: true,
-			Models:  []string{"openai/gpt-4o"},
+			Enabled:    true,
+			RoundRobin: false,
+			Models:     []string{"openai/gpt-4o"},
 		},
+		PDF:        ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
+		AudioInput: ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
+		VideoInput: ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil},
 	}
 
 	ctx := context.Background()
@@ -140,6 +156,35 @@ func TestAdaptModelForCapabilities(t *testing.T) {
 	}
 }
 
+func verifyStrippedMessages(t *testing.T, msgs []any) {
+	t.Helper()
+
+	m0, ok0 := msgs[0].(map[string]any)
+	if !ok0 {
+		t.Fatalf("expected first message map")
+	}
+
+	mLast, okLast := msgs[len(msgs)-1].(map[string]any)
+	if !okLast {
+		t.Fatalf("expected last message map")
+	}
+
+	firstRole, ok := m0["role"].(string)
+	if !ok || firstRole != "system" {
+		t.Fatalf("expected system preserved, got %s", firstRole)
+	}
+
+	lastRole, ok := mLast["role"].(string)
+	if !ok {
+		t.Fatalf("expected lastRole string")
+	}
+
+	lastContent, ok := mLast["content"].(string)
+	if !ok || lastRole != "user" || lastContent != "turn 3 with image" {
+		t.Fatalf("expected tail preserved, got %s: %s", lastRole, lastContent)
+	}
+}
+
 func TestStripHistoryForContext(t *testing.T) {
 	// Create messages with system, older turns, and tail user turn
 	body := map[string]any{
@@ -157,21 +202,11 @@ func TestStripHistoryForContext(t *testing.T) {
 	stripped := StripHistoryForContext(body, 10)
 
 	msgs, ok := stripped["messages"].([]any)
-	if !ok {
+	if !ok || len(msgs) == 0 {
 		t.Fatalf("expected messages array")
 	}
-	// System message and tail user turn should be preserved
-	firstRole := msgs[0].(map[string]any)["role"].(string)
-	lastRole := msgs[len(msgs)-1].(map[string]any)["role"].(string)
-	lastContent := msgs[len(msgs)-1].(map[string]any)["content"].(string)
 
-	if firstRole != "system" {
-		t.Fatalf("expected system preserved, got %s", firstRole)
-	}
-
-	if lastRole != "user" || lastContent != "turn 3 with image" {
-		t.Fatalf("expected tail preserved, got %s: %s", lastRole, lastContent)
-	}
+	verifyStrippedMessages(t, msgs)
 }
 
 func TestLoadCapacityAdapterConfig(t *testing.T) {
@@ -179,9 +214,16 @@ func TestLoadCapacityAdapterConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
 
-	_ = st.SetSetting("capacityAdapter", `{"vision":{"enabled":true,"roundRobin":true,"models":["m1","m2"]}}`)
+	defer func() {
+		if err := st.Close(); err != nil {
+			_ = err
+		}
+	}()
+
+	if err := st.SetSetting("capacityAdapter", `{"vision":{"enabled":true,"roundRobin":true,"models":["m1","m2"]}}`); err != nil {
+		_ = err
+	}
 
 	cfg := LoadCapacityAdapterConfig(st)
 	if !cfg.Vision.Enabled || !cfg.Vision.RoundRobin || len(cfg.Vision.Models) != 2 {

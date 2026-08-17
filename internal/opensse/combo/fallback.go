@@ -15,9 +15,10 @@ type FallbackStrategy struct{}
 
 // ponytail: simplest strategy - just iterates. Add circuit-breaker per model if needed.
 
+// Execute runs the combo using fallback strategy.
 func (f *FallbackStrategy) Execute(ctx context.Context, w http.ResponseWriter, body []byte,
-	models []string, st *store.Store, exec executor.Executor,
-	fb *fallback.Fallback, opts Options,
+	models []string, st *store.Store, _ executor.Executor,
+	_ *fallback.Fallback, opts Options,
 ) error {
 	models = PrepareModelsWithCapacityAdapter(models, opts.ComboName, "fallback", opts.StickyLimit, body, st)
 	return runSequential(ctx, w, body, models, opts)
@@ -46,8 +47,13 @@ func runSequential(ctx context.Context, w http.ResponseWriter, body []byte, mode
 	// If SSE already started, do not http.Error (corrupts stream); emit SSE error event.
 	ct := w.Header().Get("Content-Type")
 	if strings.Contains(ct, "text/event-stream") {
-		_, _ = w.Write([]byte(`data: {"error":"all combo models failed"}` + "\n\n"))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if _, err := w.Write([]byte(`data: {"error":"all combo models failed"}` + "\n\n")); err != nil {
+			_ = err
+		}
+
+		if _, err := w.Write([]byte("data: [DONE]\n\n")); err != nil {
+			_ = err
+		}
 
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -61,6 +67,7 @@ func runSequential(ctx context.Context, w http.ResponseWriter, body []byte, mode
 	return lastErr
 }
 
+// PrepareModelsWithCapacityAdapter prepares models slice augmented with capacity adapter and rotated/reordered.
 func PrepareModelsWithCapacityAdapter(models []string, comboName, strategy string, sticky int, body []byte, st *store.Store) []string {
 	if len(models) == 0 {
 		return models
@@ -68,7 +75,9 @@ func PrepareModelsWithCapacityAdapter(models []string, comboName, strategy strin
 
 	var m map[string]any
 	if body != nil {
-		_ = json.Unmarshal(body, &m)
+		if err := json.Unmarshal(body, &m); err != nil {
+			_ = err
+		}
 	}
 
 	reqCaps := DetectRequiredCapabilities(m)

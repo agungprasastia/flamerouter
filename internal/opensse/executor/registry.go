@@ -13,7 +13,12 @@ var (
 )
 
 func init() {
-	sharedClient = &http.Client{}
+	sharedClient = &http.Client{
+		Transport:     nil,
+		CheckRedirect: nil,
+		Jar:           nil,
+		Timeout:       0,
+	}
 }
 
 // RegisterSpecialized registers a provider-specific executor.

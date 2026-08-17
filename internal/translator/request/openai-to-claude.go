@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flamerouter/internal/translator"
 	"flamerouter/internal/translator/concerns"
+	"flamerouter/internal/translator/schema"
 	"strings"
 )
 
@@ -11,7 +12,116 @@ func init() {
 	translator.Register(translator.FormatOpenAI, translator.FormatClaude, openaiToClaudeRequest, nil)
 }
 
-func openaiToClaudeRequest(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any {
+func parseResponseFormatSystem(body map[string]any, systemParts []string) []string {
+	respFormat, ok := body["response_format"].(map[string]any)
+	if !ok || respFormat == nil {
+		return systemParts
+	}
+
+	ftype, ok := respFormat["type"].(string)
+	if !ok {
+		return systemParts
+	}
+
+	if ftype == "json_object" {
+		return append(systemParts, "You must respond with valid JSON. Respond ONLY with a JSON object, no other text.")
+	}
+
+	if ftype != "json_schema" {
+		return systemParts
+	}
+
+	rs, ok := respFormat["json_schema"].(map[string]any)
+	if !ok || rs == nil {
+		return systemParts
+	}
+
+	sc, ok := rs["schema"]
+	if !ok {
+		return systemParts
+	}
+
+	b, err := json.MarshalIndent(sc, "", "  ")
+	if err != nil {
+		return systemParts
+	}
+
+	return append(systemParts, "You must respond with valid JSON that strictly follows this JSON schema:\n```json\n"+string(b)+"\n```\nRespond ONLY with the JSON object, no other text.")
+}
+
+func parseOpenAITools(tools []any) []any {
+	claudeTools := make([]any, 0, len(tools))
+
+	for _, toolRaw := range tools {
+		tool, ok := toolRaw.(map[string]any)
+		if !ok || tool == nil {
+			continue
+		}
+
+		ttype, ok := tool["type"].(string)
+		if ok && ttype != "" && ttype != schema.OpenaiBlockFunction {
+			claudeTools = append(claudeTools, tool)
+			continue
+		}
+
+		fn, ok := tool["function"].(map[string]any)
+		if !ok || fn == nil {
+			fn = tool
+		}
+
+		originalName, ok := fn["name"].(string)
+		if !ok {
+			originalName = ""
+		}
+
+		claudeTools = append(claudeTools, map[string]any{
+			"name":         originalName,
+			"description":  fn["description"],
+			"input_schema": fn["parameters"],
+		})
+	}
+
+	return claudeTools
+}
+
+func parseOpenAIMessages(bodyMessages []any, toolNameMap map[string]string) ([]string, []any) {
+	var systemParts []string
+
+	messages := make([]any, 0, len(bodyMessages))
+
+	for _, msgRaw := range bodyMessages {
+		msg, ok := msgRaw.(map[string]any)
+		if !ok || msg == nil {
+			continue
+		}
+
+		role, ok := msg["role"].(string)
+		if !ok {
+			role = ""
+		}
+
+		if role == schema.RoleSystem {
+			text := extractOpenAITextContent(msg["content"])
+			if text != "" {
+				systemParts = append(systemParts, text)
+			}
+
+			continue
+		}
+
+		blocks := getContentBlocksFromOpenAIMessage(msg, toolNameMap)
+		if len(blocks) > 0 {
+			messages = append(messages, map[string]any{
+				"role":    role,
+				"content": blocks,
+			})
+		}
+	}
+
+	return systemParts, messages
+}
+
+func openaiToClaudeRequest(model string, body map[string]any, stream bool, _ map[string]any) map[string]any {
 	result := map[string]any{
 		"model":  model,
 		"stream": stream,
@@ -27,84 +137,25 @@ func openaiToClaudeRequest(model string, body map[string]any, stream bool, crede
 		result["temperature"] = temp
 	}
 
-	var systemParts []string
-
-	var messages []any
-
 	toolNameMap := make(map[string]string)
 
-	if bodyMessages, ok := body["messages"].([]any); ok {
-		for _, msgRaw := range bodyMessages {
-			msg, _ := msgRaw.(map[string]any)
-			if msg == nil {
-				continue
-			}
-
-			role, _ := msg["role"].(string)
-			if role == "system" {
-				text := extractOpenAITextContent(msg["content"])
-				if text != "" {
-					systemParts = append(systemParts, text)
-				}
-
-				continue
-			}
-
-			blocks := getContentBlocksFromOpenAIMessage(msg, toolNameMap)
-			messages = append(messages, blocks...)
-		}
+	bodyMessages, ok := body["messages"].([]any)
+	if !ok {
+		bodyMessages = nil
 	}
+
+	systemParts, messages := parseOpenAIMessages(bodyMessages, toolNameMap)
 
 	if len(messages) > 0 {
 		addCacheControlToLastAssistant(messages)
 	}
 
 	result["messages"] = messages
-
-	if respFormat, ok := body["response_format"].(map[string]any); ok {
-		ftype, _ := respFormat["type"].(string)
-		if ftype == "json_schema" {
-			if rs, ok := respFormat["json_schema"].(map[string]any); ok {
-				if schema, ok := rs["schema"]; ok {
-					b, _ := json.MarshalIndent(schema, "", "  ")
-					systemParts = append(systemParts, "You must respond with valid JSON that strictly follows this JSON schema:\n```json\n"+string(b)+"\n```\nRespond ONLY with the JSON object, no other text.")
-				}
-			}
-		} else if ftype == "json_object" {
-			systemParts = append(systemParts, "You must respond with valid JSON. Respond ONLY with a JSON object, no other text.")
-		}
-	}
-
+	systemParts = parseResponseFormatSystem(body, systemParts)
 	result["system"] = systemParts
 
 	if tools, ok := body["tools"].([]any); ok {
-		var claudeTools []any
-
-		for _, toolRaw := range tools {
-			tool, _ := toolRaw.(map[string]any)
-			if tool == nil {
-				continue
-			}
-
-			ttype, _ := tool["type"].(string)
-			if ttype != "" && ttype != "function" {
-				claudeTools = append(claudeTools, tool)
-				continue
-			}
-
-			fn, _ := tool["function"].(map[string]any)
-			if fn == nil {
-				fn = tool
-			}
-
-			originalName, _ := fn["name"].(string)
-			claudeTools = append(claudeTools, map[string]any{
-				"name":         originalName,
-				"description":  fn["description"],
-				"input_schema": fn["parameters"],
-			})
-		}
-
+		claudeTools := parseOpenAITools(tools)
 		if len(claudeTools) > 0 {
 			result["tools"] = claudeTools
 		}
@@ -122,39 +173,121 @@ func openaiToClaudeRequest(model string, body map[string]any, stream bool, crede
 }
 
 func getContentBlocksFromOpenAIMessage(msg map[string]any, toolNameMap map[string]string) []any {
-	role, _ := msg["role"].(string)
-	if role == "tool" {
-		content, _ := msg["content"].(string)
-		tcid, _ := msg["tool_call_id"].(string)
+	role, ok := msg["role"].(string)
+	if !ok {
+		role = ""
+	}
+
+	if role == schema.RoleTool {
+		content, ok := msg["content"].(string)
+		if !ok {
+			content = ""
+		}
+
+		tcid, ok := msg["tool_call_id"].(string)
+		if !ok {
+			tcid = ""
+		}
 
 		return []any{map[string]any{
-			"type":        "tool_result",
+			"type":        schema.ClaudeBlockToolResult,
 			"tool_use_id": tcid,
 			"content":     content,
 		}}
 	}
 
-	if role == "user" {
+	if role == schema.RoleUser {
 		return getBlocksFromUserMessage(msg, toolNameMap)
 	}
 
-	if role == "assistant" {
+	if role == schema.RoleAssistant {
 		return getBlocksFromAssistantMessage(msg, toolNameMap)
 	}
 
 	return nil
 }
 
-func getBlocksFromUserMessage(msg map[string]any, toolNameMap map[string]string) []any {
-	var blocks []any
+func parseImageURLBlock(iu map[string]any) map[string]any {
+	url, ok := iu["url"].(string)
+	if !ok || url == "" {
+		return nil
+	}
 
+	mimeType, base64Data, err := concerns.ParseDataURI(url)
+	if err == nil && mimeType != "" && len(base64Data) > 0 {
+		return map[string]any{
+			"type": schema.ClaudeBlockImage,
+			"source": map[string]any{
+				"type":       "base64",
+				"media_type": mimeType,
+				"data":       string(base64Data),
+			},
+		}
+	}
+
+	if strings.HasPrefix(url, "http") {
+		return map[string]any{
+			"type": schema.ClaudeBlockImage,
+			"source": map[string]any{
+				"type": "url",
+				"url":  url,
+			},
+		}
+	}
+
+	return nil
+}
+
+func parseUserToolResultBlock(part map[string]any) map[string]any {
+	block := map[string]any{
+		"type":        schema.ClaudeBlockToolResult,
+		"tool_use_id": part["tool_use_id"],
+		"content":     part["content"],
+	}
+	if ie, ok := part["is_error"]; ok {
+		block["is_error"] = ie
+	}
+
+	return block
+}
+
+func parseUserPartBlock(part map[string]any) (any, bool) {
+	ptype, ok := part["type"].(string)
+	if !ok {
+		return nil, false
+	}
+
+	if ptype == schema.OpenaiBlockText {
+		if t, ok := part["text"].(string); ok && t != "" {
+			return map[string]any{"type": schema.ClaudeBlockText, "text": t}, true
+		}
+
+		return nil, false
+	}
+
+	if ptype == schema.ClaudeBlockToolResult {
+		return parseUserToolResultBlock(part), true
+	}
+
+	if ptype == schema.OpenaiBlockImageURL {
+		if iu, ok := part["image_url"].(map[string]any); ok && iu != nil {
+			if imgBlock := parseImageURLBlock(iu); imgBlock != nil {
+				return imgBlock, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+func getBlocksFromUserMessage(msg map[string]any, _ map[string]string) []any {
 	content, ok := msg["content"].(string)
 	if ok {
 		if content != "" {
-			blocks = append(blocks, map[string]any{"type": "text", "text": content})
+			return []any{map[string]any{"type": schema.ClaudeBlockText, "text": content}}
 		}
 
-		return blocks
+		return nil
 	}
 
 	contentArr, ok := msg["content"].([]any)
@@ -162,129 +295,157 @@ func getBlocksFromUserMessage(msg map[string]any, toolNameMap map[string]string)
 		return nil
 	}
 
+	blocks := make([]any, 0, len(contentArr))
+
 	for _, partRaw := range contentArr {
-		part, _ := partRaw.(map[string]any)
-		if part == nil {
+		part, ok := partRaw.(map[string]any)
+		if !ok || part == nil {
 			continue
 		}
 
-		ptype, _ := part["type"].(string)
-		switch ptype {
-		case "text":
-			if t, ok := part["text"].(string); ok && t != "" {
-				blocks = append(blocks, map[string]any{"type": "text", "text": t})
-			}
-		case "tool_result":
-			block := map[string]any{
-				"type":        "tool_result",
-				"tool_use_id": part["tool_use_id"],
-				"content":     part["content"],
-			}
-			if ie, ok := part["is_error"]; ok {
-				block["is_error"] = ie
-			}
-
+		if block, ok := parseUserPartBlock(part); ok {
 			blocks = append(blocks, block)
-		case "image_url":
-			if iu, ok := part["image_url"].(map[string]any); ok {
-				if url, ok := iu["url"].(string); ok {
-					mimeType, base64Data, err := concerns.ParseDataUri(url)
-					if err == nil && mimeType != "" && len(base64Data) > 0 {
-						blocks = append(blocks, map[string]any{
-							"type": "image",
-							"source": map[string]any{
-								"type":       "base64",
-								"media_type": mimeType,
-								"data":       string(base64Data),
-							},
-						})
-					} else if strings.HasPrefix(url, "http") {
-						blocks = append(blocks, map[string]any{
-							"type": "image",
-							"source": map[string]any{
-								"type": "url",
-								"url":  url,
-							},
-						})
-					}
-				}
-			}
 		}
 	}
 
 	return blocks
 }
 
-func getBlocksFromAssistantMessage(msg map[string]any, toolNameMap map[string]string) []any {
-	var blocks []any
-
-	contentArr, ok := msg["content"].([]any)
-	if ok {
-		for _, partRaw := range contentArr {
-			part, _ := partRaw.(map[string]any)
-			if part == nil {
-				continue
-			}
-
-			ptype, _ := part["type"].(string)
-			if ptype == "text" {
-				if t, ok := part["text"].(string); ok && t != "" {
-					blocks = append(blocks, map[string]any{"type": "text", "text": t})
-				}
-			} else if ptype == "thinking" {
-				blocks = append(blocks, part)
-			}
-		}
-	} else if c, ok := msg["content"].(string); ok && c != "" {
-		blocks = append(blocks, map[string]any{"type": "text", "text": c})
+func parseSingleAssistantToolCall(tcRaw any) (map[string]any, bool) {
+	tc, ok := tcRaw.(map[string]any)
+	if !ok || tc == nil {
+		return nil, false
 	}
 
-	if toolCalls, ok := msg["tool_calls"].([]any); ok {
-		for _, tcRaw := range toolCalls {
-			tc, _ := tcRaw.(map[string]any)
-			if tc == nil {
-				continue
-			}
+	fn, ok := tc["function"].(map[string]any)
+	if !ok || fn == nil {
+		return nil, false
+	}
 
-			fn, _ := tc["function"].(map[string]any)
-			if fn == nil {
-				continue
-			}
+	name, ok := fn["name"].(string)
+	if !ok {
+		name = ""
+	}
 
-			name, _ := fn["name"].(string)
-			argsStr, _ := fn["arguments"].(string)
+	argsStr, ok := fn["arguments"].(string)
+	if !ok {
+		argsStr = ""
+	}
 
-			var args map[string]any
+	var args map[string]any
+	if argsStr != "" {
+		if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+			args = nil
+		}
+	}
 
-			if argsStr != "" {
-				json.Unmarshal([]byte(argsStr), &args)
-			}
+	if args == nil {
+		args = make(map[string]any)
+	}
 
-			if args == nil {
-				args = make(map[string]any)
-			}
+	return map[string]any{
+		"type":  schema.ClaudeBlockToolUse,
+		"id":    tc["id"],
+		"name":  name,
+		"input": args,
+	}, true
+}
 
-			blocks = append(blocks, map[string]any{
-				"type":  "tool_use",
-				"id":    tc["id"],
-				"name":  name,
-				"input": args,
-			})
+func extractAssistantToolCalls(msg map[string]any) []any {
+	toolCalls, ok := msg["tool_calls"].([]any)
+	if !ok {
+		return nil
+	}
+
+	blocks := make([]any, 0, len(toolCalls))
+
+	for _, tcRaw := range toolCalls {
+		if block, ok := parseSingleAssistantToolCall(tcRaw); ok {
+			blocks = append(blocks, block)
 		}
 	}
 
 	return blocks
+}
+
+func parseAssistantContentParts(contentArr []any) []any {
+	blocks := make([]any, 0, len(contentArr))
+
+	for _, partRaw := range contentArr {
+		part, ok := partRaw.(map[string]any)
+		if !ok || part == nil {
+			continue
+		}
+
+		ptype, ok := part["type"].(string)
+		if !ok {
+			continue
+		}
+
+		if ptype == schema.ClaudeBlockText {
+			if t, ok := part["text"].(string); ok && t != "" {
+				blocks = append(blocks, map[string]any{"type": schema.ClaudeBlockText, "text": t})
+			}
+		} else if ptype == "thinking" {
+			blocks = append(blocks, part)
+		}
+	}
+
+	return blocks
+}
+
+func getBlocksFromAssistantMessage(msg map[string]any, _ map[string]string) []any {
+	var blocks []any
+
+	if contentArr, ok := msg["content"].([]any); ok {
+		blocks = parseAssistantContentParts(contentArr)
+	} else if c, ok := msg["content"].(string); ok && c != "" {
+		blocks = append(blocks, map[string]any{"type": schema.ClaudeBlockText, "text": c})
+	}
+
+	blocks = append(blocks, extractAssistantToolCalls(msg)...)
+
+	return blocks
+}
+
+func markEphemeralBlock(block map[string]any) bool {
+	btype, ok := block["type"].(string)
+	if !ok {
+		return false
+	}
+
+	if btype == schema.ClaudeBlockText || btype == schema.ClaudeBlockToolUse || btype == schema.ClaudeBlockToolResult || btype == schema.ClaudeBlockImage {
+		block["cache_control"] = map[string]any{"type": "ephemeral"}
+		return true
+	}
+
+	return false
+}
+
+func addCacheControlToBlocks(contentArr []any) bool {
+	for j := len(contentArr) - 1; j >= 0; j-- {
+		block, ok := contentArr[j].(map[string]any)
+		if !ok || block == nil {
+			continue
+		}
+
+		if markEphemeralBlock(block) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func addCacheControlToLastAssistant(messages []any) {
 	for i := len(messages) - 1; i >= 0; i-- {
-		msg, _ := messages[i].(map[string]any)
-		if msg == nil {
+		msg, ok := messages[i].(map[string]any)
+		if !ok || msg == nil {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
-		if role != "assistant" {
+		role, ok := msg["role"].(string)
+		if !ok || role != schema.RoleAssistant {
 			continue
 		}
 
@@ -293,21 +454,29 @@ func addCacheControlToLastAssistant(messages []any) {
 			continue
 		}
 
-		for j := len(contentArr) - 1; j >= 0; j-- {
-			block, _ := contentArr[j].(map[string]any)
-			if block == nil {
-				continue
-			}
-
-			btype, _ := block["type"].(string)
-			if btype == "text" || btype == "tool_use" || btype == "tool_result" || btype == "image" {
-				block["cache_control"] = map[string]any{"type": "ephemeral"}
-				return
-			}
+		if addCacheControlToBlocks(contentArr) {
+			return
 		}
 
 		return
 	}
+}
+
+func convertOpenAIMapToolChoice(m map[string]any) any {
+	if fn, ok := m["function"].(map[string]any); ok && fn != nil {
+		if name, ok := fn["name"].(string); ok {
+			return map[string]any{"type": "tool", "name": name}
+		}
+	}
+
+	validTypes := map[string]bool{"auto": true, "any": true, "tool": true, "none": true}
+
+	ttype, ok := m["type"].(string)
+	if ok && validTypes[ttype] {
+		return m
+	}
+
+	return map[string]any{"type": "auto"}
 }
 
 func convertOpenAIToolChoice(choice any) any {
@@ -324,24 +493,11 @@ func convertOpenAIToolChoice(choice any) any {
 	}
 
 	m, ok := choice.(map[string]any)
-	if !ok {
+	if !ok || m == nil {
 		return map[string]any{"type": "auto"}
 	}
 
-	if fn, ok := m["function"].(map[string]any); ok {
-		if name, ok := fn["name"].(string); ok {
-			return map[string]any{"type": "tool", "name": name}
-		}
-	}
-
-	validTypes := map[string]bool{"auto": true, "any": true, "tool": true, "none": true}
-	ttype, _ := m["type"].(string)
-
-	if validTypes[ttype] {
-		return m
-	}
-
-	return map[string]any{"type": "auto"}
+	return convertOpenAIMapToolChoice(m)
 }
 
 func extractOpenAITextContent(content any) string {
@@ -353,7 +509,7 @@ func extractOpenAITextContent(content any) string {
 		var texts []string
 
 		for _, item := range arr {
-			if m, ok := item.(map[string]any); ok {
+			if m, ok := item.(map[string]any); ok && m != nil {
 				if t, ok := m["text"].(string); ok {
 					texts = append(texts, t)
 				}

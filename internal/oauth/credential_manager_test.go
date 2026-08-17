@@ -76,6 +76,39 @@ func TestShouldRefresh_ZeroExpiresNoMaxAge(t *testing.T) {
 	}
 }
 
+func checkMergedTokens(t *testing.T, out map[string]any) {
+	t.Helper()
+
+	if out["accessToken"] != "new" {
+		t.Fatalf("accessToken=%v", out["accessToken"])
+	}
+
+	if out["refreshToken"] != "rt-old" {
+		t.Fatalf("refreshToken kept=%v", out["refreshToken"])
+	}
+
+	if out["idToken"] != "id-old" {
+		t.Fatalf("idToken kept=%v", out["idToken"])
+	}
+
+	if out["expiresAt"] == nil || out["expiresAt"] == "" {
+		t.Fatal("expiresAt from expiresIn")
+	}
+}
+
+func checkMergedPSD(t *testing.T, out map[string]any) {
+	t.Helper()
+
+	psd, ok := out["providerSpecificData"].(map[string]any)
+	if !ok || psd["projectId"] != "p1" || psd["region"] != "us" {
+		t.Fatalf("psd merge=%v", psd)
+	}
+
+	if out["lastRefreshAt"] == nil || out["lastRefreshAt"] == "" {
+		t.Fatal("lastRefreshAt stamped")
+	}
+}
+
 func TestMergeRefreshed(t *testing.T) {
 	cur := map[string]any{
 		"accessToken":  "old",
@@ -94,28 +127,6 @@ func TestMergeRefreshed(t *testing.T) {
 	}
 
 	out := MergeRefreshed(cur, next)
-	if out["accessToken"] != "new" {
-		t.Fatalf("accessToken=%v", out["accessToken"])
-	}
-
-	if out["refreshToken"] != "rt-old" {
-		t.Fatalf("refreshToken kept=%v", out["refreshToken"])
-	}
-
-	if out["idToken"] != "id-old" {
-		t.Fatalf("idToken kept=%v", out["idToken"])
-	}
-
-	if out["expiresAt"] == nil || out["expiresAt"] == "" {
-		t.Fatal("expiresAt from expiresIn")
-	}
-
-	psd, _ := out["providerSpecificData"].(map[string]any)
-	if psd["projectId"] != "p1" || psd["region"] != "us" {
-		t.Fatalf("psd merge=%v", psd)
-	}
-
-	if out["lastRefreshAt"] == nil || out["lastRefreshAt"] == "" {
-		t.Fatal("lastRefreshAt stamped")
-	}
+	checkMergedTokens(t, out)
+	checkMergedPSD(t, out)
 }

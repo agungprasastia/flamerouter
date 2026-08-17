@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -17,12 +18,18 @@ func init() {
 		Base: Base{
 			Provider: "windsurf",
 			BaseURL:  "https://server.codeium.com/exa.language_server_pb.LanguageServerService/GetChatMessage",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 	RegisterSpecialized("ws", &WindsurfExecutor{
 		Base: Base{
 			Provider: "windsurf",
 			BaseURL:  "https://server.codeium.com/exa.language_server_pb.LanguageServerService/GetChatMessage",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 }
@@ -117,10 +124,12 @@ var windsurfModelAliasMap = map[string]string{
 	"glm-5.1":                       "glm-5-1",
 }
 
+// WindsurfExecutor implements Codeium Windsurf gRPC-web protocol proxying.
 type WindsurfExecutor struct {
 	Base
 }
 
+// ResolveWsModelID maps user model strings to Codeium internal model identifiers.
 func ResolveWsModelID(model string) string {
 	if mapped, ok := windsurfModelAliasMap[model]; ok {
 		return mapped
@@ -129,35 +138,36 @@ func ResolveWsModelID(model string) string {
 	return model
 }
 
+// BuildWindsurfGetChatMessageRequest constructs the gRPC protobuf request for Codeium chat messages.
 func BuildWindsurfGetChatMessageRequest(apiKey, model string, messages []any) []byte {
 	sessionID := randomUUID()
 	cascadeID := randomUUID()
 
 	var metaBuf bytes.Buffer
 	// Field 1: apiKey
-	writeProtoField(&metaBuf, 1, 2, []byte(apiKey))
+	writeProtoField(&metaBuf, 1, []byte(apiKey))
 	// Field 2: ide_name
-	writeProtoField(&metaBuf, 2, 2, []byte(windsurfIDEName))
+	writeProtoField(&metaBuf, 2, []byte(windsurfIDEName))
 	// Field 3: ide_version
-	writeProtoField(&metaBuf, 3, 2, []byte(windsurfIDEVersion))
+	writeProtoField(&metaBuf, 3, []byte(windsurfIDEVersion))
 	// Field 4: extension_version
-	writeProtoField(&metaBuf, 4, 2, []byte(windsurfIDEVersion))
+	writeProtoField(&metaBuf, 4, []byte(windsurfIDEVersion))
 	// Field 5: session_id
-	writeProtoField(&metaBuf, 5, 2, []byte(sessionID))
+	writeProtoField(&metaBuf, 5, []byte(sessionID))
 	// Field 6: locale
-	writeProtoField(&metaBuf, 6, 2, []byte(windsurfLocale))
+	writeProtoField(&metaBuf, 6, []byte(windsurfLocale))
 
 	var modelBuf bytes.Buffer
 
-	writeProtoField(&modelBuf, 1, 2, []byte(model))
+	writeProtoField(&modelBuf, 1, []byte(model))
 
 	var reqBuf bytes.Buffer
 	// Field 1: metadata
-	writeProtoField(&reqBuf, 1, 2, metaBuf.Bytes())
+	writeProtoField(&reqBuf, 1, metaBuf.Bytes())
 	// Field 2: cascade_id
-	writeProtoField(&reqBuf, 2, 2, []byte(cascadeID))
+	writeProtoField(&reqBuf, 2, []byte(cascadeID))
 	// Field 3: model_or_alias
-	writeProtoField(&reqBuf, 3, 2, modelBuf.Bytes())
+	writeProtoField(&reqBuf, 3, modelBuf.Bytes())
 
 	// Field 4: repeated ChatMessage
 	for _, mRaw := range messages {
@@ -191,14 +201,14 @@ func BuildWindsurfGetChatMessageRequest(apiKey, model string, messages []any) []
 
 		var chatMsgBuf bytes.Buffer
 
-		writeProtoField(&chatMsgBuf, 1, 2, []byte(role))
-		writeProtoField(&chatMsgBuf, 2, 2, []byte(content))
+		writeProtoField(&chatMsgBuf, 1, []byte(role))
+		writeProtoField(&chatMsgBuf, 2, []byte(content))
 
 		if tcid, _ := msg["tool_call_id"].(string); tcid != "" {
-			writeProtoField(&chatMsgBuf, 3, 2, []byte(tcid))
+			writeProtoField(&chatMsgBuf, 3, []byte(tcid))
 		}
 
-		writeProtoField(&reqBuf, 4, 2, chatMsgBuf.Bytes())
+		writeProtoField(&reqBuf, 4, chatMsgBuf.Bytes())
 	}
 
 	return reqBuf.Bytes()
@@ -210,6 +220,48 @@ type wsDecodedChunk struct {
 	message          string
 	promptTokens     int
 	completionTokens int
+}
+
+func decodeWsField(fieldNum uint64, fieldBytes []byte) wsDecodedChunk {
+	switch fieldNum {
+	case 1: // ContentChunk -> field 1 string
+		txt := decodeWsStringField(fieldBytes, 1)
+		if txt != "" {
+			return wsDecodedChunk{
+				kind:             "content",
+				text:             txt,
+				promptTokens:     0,
+				completionTokens: 0,
+				message:          "",
+			}
+		}
+	case 3: // DoneChunk -> field 1 UsageStats
+		pt, ct := decodeWsDoneChunk(fieldBytes)
+		return wsDecodedChunk{
+			kind:             "done",
+			text:             "",
+			promptTokens:     pt,
+			completionTokens: ct,
+			message:          "",
+		}
+	case 4: // ErrorChunk -> field 1 string
+		errMsg := decodeWsStringField(fieldBytes, 1)
+		return wsDecodedChunk{
+			kind:             "error",
+			text:             "",
+			promptTokens:     0,
+			completionTokens: 0,
+			message:          errMsg,
+		}
+	}
+
+	return wsDecodedChunk{
+		kind:             "unknown",
+		text:             "",
+		promptTokens:     0,
+		completionTokens: 0,
+		message:          "",
+	}
 }
 
 func decodeWsCompletionChunk(payload []byte) wsDecodedChunk {
@@ -226,13 +278,13 @@ func decodeWsCompletionChunk(payload []byte) wsDecodedChunk {
 
 		if wireType == 2 {
 			length, ln := binary.Uvarint(payload[p:])
-			if ln <= 0 {
+			if ln <= 0 || length > uint64(math.MaxInt) {
 				break
 			}
 
 			p += ln
 
-			end := p + int(length)
+			end := p + int(length) // #nosec G115
 			if end > len(payload) {
 				break
 			}
@@ -240,17 +292,8 @@ func decodeWsCompletionChunk(payload []byte) wsDecodedChunk {
 			fieldBytes := payload[p:end]
 			p = end
 
-			if fieldNum == 1 { // ContentChunk -> field 1 string
-				txt := decodeWsStringField(fieldBytes, 1)
-				if txt != "" {
-					return wsDecodedChunk{kind: "content", text: txt}
-				}
-			} else if fieldNum == 3 { // DoneChunk -> field 1 UsageStats
-				pt, ct := decodeWsDoneChunk(fieldBytes)
-				return wsDecodedChunk{kind: "done", promptTokens: pt, completionTokens: ct}
-			} else if fieldNum == 4 { // ErrorChunk -> field 1 string
-				errMsg := decodeWsStringField(fieldBytes, 1)
-				return wsDecodedChunk{kind: "error", message: errMsg}
+			if res := decodeWsField(fieldNum, fieldBytes); res.kind != "unknown" {
+				return res
 			}
 		} else if wireType == 0 {
 			_, vn := binary.Uvarint(payload[p:])
@@ -264,7 +307,13 @@ func decodeWsCompletionChunk(payload []byte) wsDecodedChunk {
 		}
 	}
 
-	return wsDecodedChunk{kind: "unknown"}
+	return wsDecodedChunk{
+		kind:             "unknown",
+		text:             "",
+		promptTokens:     0,
+		completionTokens: 0,
+		message:          "",
+	}
 }
 
 func decodeWsStringField(payload []byte, targetField uint64) string {
@@ -281,13 +330,13 @@ func decodeWsStringField(payload []byte, targetField uint64) string {
 		wireType := tag & 0x07
 		if wireType == 2 {
 			length, ln := binary.Uvarint(payload[p:])
-			if ln <= 0 {
+			if ln <= 0 || length > uint64(math.MaxInt) {
 				break
 			}
 
 			p += ln
 
-			end := p + int(length)
+			end := p + int(length) // #nosec G115
 			if end > len(payload) {
 				break
 			}
@@ -312,6 +361,39 @@ func decodeWsStringField(payload []byte, targetField uint64) string {
 	return ""
 }
 
+func parseWsUsageStats(usageBytes []byte) (promptTokens, completionTokens int) {
+	up := 0
+	for up < len(usageBytes) {
+		utag, un := binary.Uvarint(usageBytes[up:])
+		if un <= 0 {
+			break
+		}
+
+		up += un
+		ufield := utag >> 3
+
+		uwire := utag & 0x07
+		if uwire != 0 {
+			break
+		}
+
+		v, vn := binary.Uvarint(usageBytes[up:])
+		if vn <= 0 {
+			break
+		}
+
+		up += vn
+
+		if ufield == 1 && v <= uint64(math.MaxInt) { // #nosec G115
+			promptTokens = int(v)
+		} else if ufield == 2 && v <= uint64(math.MaxInt) { // #nosec G115
+			completionTokens = int(v)
+		}
+	}
+
+	return promptTokens, completionTokens
+}
+
 func decodeWsDoneChunk(payload []byte) (promptTokens, completionTokens int) {
 	p := 0
 	for p < len(payload) {
@@ -322,52 +404,23 @@ func decodeWsDoneChunk(payload []byte) (promptTokens, completionTokens int) {
 
 		p += n
 		fieldNum := tag >> 3
-
 		wireType := tag & 0x07
+
 		if wireType == 2 { // Field 1 = UsageStats
 			length, ln := binary.Uvarint(payload[p:])
-			if ln <= 0 {
+			if ln <= 0 || length > uint64(math.MaxInt) {
 				break
 			}
 
 			p += ln
 
-			end := p + int(length)
+			end := p + int(length) // #nosec G115
 			if end > len(payload) {
 				break
 			}
 
 			if fieldNum == 1 {
-				usageBytes := payload[p:end]
-				up := 0
-
-				for up < len(usageBytes) {
-					utag, un := binary.Uvarint(usageBytes[up:])
-					if un <= 0 {
-						break
-					}
-
-					up += un
-					ufield := utag >> 3
-
-					uwire := utag & 0x07
-					if uwire == 0 {
-						v, vn := binary.Uvarint(usageBytes[up:])
-						if vn <= 0 {
-							break
-						}
-
-						up += vn
-
-						if ufield == 1 {
-							promptTokens = int(v)
-						} else if ufield == 2 {
-							completionTokens = int(v)
-						}
-					} else {
-						break
-					}
-				}
+				promptTokens, completionTokens = parseWsUsageStats(payload[p:end])
 			}
 
 			p = end
@@ -386,10 +439,10 @@ func decodeWsDoneChunk(payload []byte) (promptTokens, completionTokens int) {
 	return promptTokens, completionTokens
 }
 
-func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+func prepareWindsurfRequest(cred Credentials, model string, body []byte) (string, http.Header, []byte, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, err
+		return "", nil, nil, err
 	}
 
 	apiKey := cred.AccessToken
@@ -405,7 +458,7 @@ func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model 
 	}
 
 	protoPayload := BuildWindsurfGetChatMessageRequest(apiKey, wsModel, messages)
-	framedPayload := WrapConnectRPCFrame(protoPayload) // gRPC-web uses same 5-byte framing [0x00, 4-byte BE length, data]
+	framedPayload := WrapConnectRPCFrame(protoPayload)
 
 	url := strings.TrimRight(cred.BaseURL, "/")
 	if url == "" {
@@ -422,6 +475,16 @@ func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model 
 		h.Set("Authorization", "Bearer "+apiKey)
 	}
 
+	return url, h, framedPayload, nil
+}
+
+// Execute handles Codeium Windsurf gRPC-web chat completions.
+func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+	url, h, framedPayload, err := prepareWindsurfRequest(cred, model, body)
+	if err != nil {
+		return nil, err
+	}
+
 	res, err := e.DoPOST(ctx, url, h, framedPayload)
 	if err != nil {
 		return nil, err
@@ -435,8 +498,6 @@ func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model 
 	created := time.Now().Unix()
 
 	if stream {
-		sseBody := wrapWindsurfStream(res.Body, model, cid, created)
-
 		return &Result{
 			StatusCode: 200,
 			Header: http.Header{
@@ -444,7 +505,7 @@ func (e *WindsurfExecutor) Execute(ctx context.Context, cred Credentials, model 
 				"Cache-Control": []string{"no-cache"},
 				"Connection":    []string{"keep-alive"},
 			},
-			Body: sseBody,
+			Body: wrapWindsurfStream(res.Body, model, cid, created),
 		}, nil
 	}
 
@@ -496,11 +557,74 @@ func readWindsurfFrames(r io.Reader, handleFrame func(flag byte, payload []byte)
 	}
 }
 
+func handleWsStreamFrame(flag byte, payload []byte, cid, model string, created int64, hadError *string, promptTokens, completionTokens *int, writeSSE func(map[string]any)) {
+	if flag == 0x80 { // Trailer frame
+		trailer := string(payload)
+		if strings.Contains(trailer, "grpc-status:") && !strings.Contains(trailer, "grpc-status: 0") && !strings.Contains(trailer, "grpc-status:0") {
+			*hadError = trailer
+		}
+
+		return
+	}
+
+	if flag != 0x00 {
+		return
+	}
+
+	chunk := decodeWsCompletionChunk(payload)
+	switch chunk.kind {
+	case "content":
+		if chunk.text != "" {
+			writeSSE(map[string]any{
+				"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+				"choices": []any{map[string]any{
+					"index": 0, "delta": map[string]any{"content": chunk.text}, "finish_reason": nil,
+				}},
+			})
+		}
+	case "done":
+		*promptTokens = chunk.promptTokens
+		*completionTokens = chunk.completionTokens
+	case "error":
+		*hadError = chunk.message
+	}
+}
+
+func finishWsStream(cid, model string, created int64, hadError string, promptTokens, completionTokens int, writeSSE func(map[string]any)) {
+	if hadError != "" {
+		writeSSE(map[string]any{
+			"error": map[string]any{
+				"message": hadError,
+				"type":    "windsurf_error",
+				"code":    "upstream_error",
+			},
+		})
+
+		return
+	}
+
+	choiceChunk := map[string]any{
+		"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+		"choices": []any{map[string]any{
+			"index": 0, "delta": map[string]any{}, "finish_reason": "stop",
+		}},
+	}
+	if promptTokens > 0 || completionTokens > 0 {
+		choiceChunk["usage"] = map[string]any{
+			"prompt_tokens":     promptTokens,
+			"completion_tokens": completionTokens,
+			"total_tokens":      promptTokens + completionTokens,
+		}
+	}
+
+	writeSSE(choiceChunk)
+}
+
 func wrapWindsurfStream(r io.ReadCloser, model, cid string, created int64) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
-		defer r.Close()
-		defer pw.Close()
+		defer func() { _ = r.Close() }()
+		defer func() { _ = pw.Close() }()
 
 		writeSSE := func(obj map[string]any) {
 			b, _ := json.Marshal(obj)
@@ -516,65 +640,16 @@ func wrapWindsurfStream(r io.ReadCloser, model, cid string, created int64) io.Re
 			}},
 		})
 
-		var promptTokens, completionTokens int
-
-		var hadError string
+		var (
+			promptTokens, completionTokens int
+			hadError                       string
+		)
 
 		readWindsurfFrames(r, func(flag byte, payload []byte) {
-			if flag == 0x80 { // Trailer frame
-				trailer := string(payload)
-				if strings.Contains(trailer, "grpc-status:") && !strings.Contains(trailer, "grpc-status: 0") && !strings.Contains(trailer, "grpc-status:0") {
-					hadError = trailer
-				}
-
-				return
-			}
-
-			if flag != 0x00 {
-				return
-			}
-
-			chunk := decodeWsCompletionChunk(payload)
-			if chunk.kind == "content" && chunk.text != "" {
-				writeSSE(map[string]any{
-					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-					"choices": []any{map[string]any{
-						"index": 0, "delta": map[string]any{"content": chunk.text}, "finish_reason": nil,
-					}},
-				})
-			} else if chunk.kind == "done" {
-				promptTokens = chunk.promptTokens
-				completionTokens = chunk.completionTokens
-			} else if chunk.kind == "error" {
-				hadError = chunk.message
-			}
+			handleWsStreamFrame(flag, payload, cid, model, created, &hadError, &promptTokens, &completionTokens, writeSSE)
 		})
 
-		if hadError != "" {
-			writeSSE(map[string]any{
-				"error": map[string]any{
-					"message": hadError,
-					"type":    "windsurf_error",
-					"code":    "upstream_error",
-				},
-			})
-		} else {
-			choiceChunk := map[string]any{
-				"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-				"choices": []any{map[string]any{
-					"index": 0, "delta": map[string]any{}, "finish_reason": "stop",
-				}},
-			}
-			if promptTokens > 0 || completionTokens > 0 {
-				choiceChunk["usage"] = map[string]any{
-					"prompt_tokens":     promptTokens,
-					"completion_tokens": completionTokens,
-					"total_tokens":      promptTokens + completionTokens,
-				}
-			}
-
-			writeSSE(choiceChunk)
-		}
+		finishWsStream(cid, model, created, hadError, promptTokens, completionTokens, writeSSE)
 
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
@@ -582,38 +657,43 @@ func wrapWindsurfStream(r io.ReadCloser, model, cid string, created int64) io.Re
 	return pr
 }
 
+func handleWsNonStreamFrame(flag byte, payload []byte, hadError *string, totalText *string, promptTokens, completionTokens *int) {
+	if flag == 0x80 {
+		trailer := string(payload)
+		if strings.Contains(trailer, "grpc-status:") && !strings.Contains(trailer, "grpc-status: 0") && !strings.Contains(trailer, "grpc-status:0") {
+			*hadError = trailer
+		}
+
+		return
+	}
+
+	if flag != 0x00 {
+		return
+	}
+
+	chunk := decodeWsCompletionChunk(payload)
+	switch chunk.kind {
+	case "content":
+		*totalText += chunk.text
+	case "done":
+		*promptTokens = chunk.promptTokens
+		*completionTokens = chunk.completionTokens
+	case "error":
+		*hadError = chunk.message
+	}
+}
+
 func collectWindsurfNonStreaming(r io.ReadCloser, model, cid string, created int64) ([]byte, error) {
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
-	var totalText string
-
-	var promptTokens, completionTokens int
-
-	var hadError string
+	var (
+		totalText                      string
+		promptTokens, completionTokens int
+		hadError                       string
+	)
 
 	readWindsurfFrames(r, func(flag byte, payload []byte) {
-		if flag == 0x80 {
-			trailer := string(payload)
-			if strings.Contains(trailer, "grpc-status:") && !strings.Contains(trailer, "grpc-status: 0") && !strings.Contains(trailer, "grpc-status:0") {
-				hadError = trailer
-			}
-
-			return
-		}
-
-		if flag != 0x00 {
-			return
-		}
-
-		chunk := decodeWsCompletionChunk(payload)
-		if chunk.kind == "content" {
-			totalText += chunk.text
-		} else if chunk.kind == "done" {
-			promptTokens = chunk.promptTokens
-			completionTokens = chunk.completionTokens
-		} else if chunk.kind == "error" {
-			hadError = chunk.message
-		}
+		handleWsNonStreamFrame(flag, payload, &hadError, &totalText, &promptTokens, &completionTokens)
 	})
 
 	if hadError != "" {
@@ -631,6 +711,7 @@ func collectWindsurfNonStreaming(r io.ReadCloser, model, cid string, created int
 			"finish_reason": "stop",
 		}},
 	}
+
 	if promptTokens > 0 || completionTokens > 0 {
 		out["usage"] = map[string]any{
 			"prompt_tokens":     promptTokens,

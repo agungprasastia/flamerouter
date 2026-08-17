@@ -42,38 +42,64 @@ func groupVoicesByLang(voices []map[string]any) (languages []map[string]any, byL
 	byLang = map[string]any{}
 
 	for _, v := range voices {
-		code, _ := v["lang"].(string)
-		if code == "" {
-			code = "en"
-		}
+		code, name := extractVoiceLangAndName(v)
 
-		name := code
-		if n, ok := v["langName"].(string); ok && n != "" {
-			name = n
-		}
-
-		entry, ok := byLang[code].(map[string]any)
-		if !ok {
+		entry, okEntry := byLang[code].(map[string]any)
+		if !okEntry {
 			entry = map[string]any{"code": code, "name": name, "voices": []any{}}
 			byLang[code] = entry
 		}
 
-		vs := entry["voices"].([]any)
-		entry["voices"] = append(vs, v)
+		vs, okVs := entry["voices"].([]any)
+		if okVs {
+			entry["voices"] = append(vs, v)
+		}
 	}
 
+	languages = sortVoiceLanguages(byLang)
+
+	return languages, byLang
+}
+
+func extractVoiceLangAndName(v map[string]any) (string, string) {
+	code, okCode := v["lang"].(string)
+	if !okCode || code == "" {
+		code = "en"
+	}
+
+	name := code
+	if n, okN := v["langName"].(string); okN && n != "" {
+		name = n
+	}
+
+	return code, name
+}
+
+func sortVoiceLanguages(byLang map[string]any) []map[string]any {
+	var languages []map[string]any
+
 	for _, v := range byLang {
-		languages = append(languages, v.(map[string]any))
+		m, okM := v.(map[string]any)
+		if okM {
+			languages = append(languages, m)
+		}
 	}
 
 	sort.Slice(languages, func(i, j int) bool {
-		a, _ := languages[i]["name"].(string)
-		b, _ := languages[j]["name"].(string)
+		a, okA := languages[i]["name"].(string)
+		if !okA {
+			return false
+		}
+
+		b, okB := languages[j]["name"].(string)
+		if !okB {
+			return false
+		}
 
 		return a < b
 	})
 
-	return languages, byLang
+	return languages
 }
 
 func filterVoicesLang(voices []map[string]any, lang string) []map[string]any {
@@ -115,8 +141,14 @@ func (s *Server) handleMediaTTSVoices(w http.ResponseWriter, r *http.Request) {
 	lang := r.URL.Query().Get("lang")
 	apiKey := r.URL.Query().Get("apiKey")
 
-	var voices []map[string]any
+	voices := s.resolveTTSVoices(provider, apiKey)
 
+	voices = filterVoicesLang(voices, lang)
+	languages, byLang := groupVoicesByLang(voices)
+	writeJSONOK(w, map[string]any{"voices": voices, "languages": languages, "byLang": byLang})
+}
+
+func (s *Server) resolveTTSVoices(provider, apiKey string) []map[string]any {
 	switch provider {
 	case "elevenlabs":
 		if apiKey == "" {
@@ -125,26 +157,20 @@ func (s *Server) handleMediaTTSVoices(w http.ResponseWriter, r *http.Request) {
 
 		if apiKey != "" {
 			if live, err := fetchElevenLabsVoices(apiKey); err == nil && len(live) > 0 {
-				voices = live
+				return live
 			}
 		}
 
-		if voices == nil {
-			voices = append([]map[string]any{}, staticElevenVoices...)
-		}
+		return append([]map[string]any{}, staticElevenVoices...)
 	case "openai", "local-device":
-		voices = append([]map[string]any{}, staticOpenAIVoices...)
+		return append([]map[string]any{}, staticOpenAIVoices...)
 	default: // edge-tts
 		if live, err := fetchEdgeTTSVoices(); err == nil && len(live) > 0 {
-			voices = live
-		} else {
-			voices = append([]map[string]any{}, staticEdgeVoices...)
+			return live
 		}
-	}
 
-	voices = filterVoicesLang(voices, lang)
-	languages, byLang := groupVoicesByLang(voices)
-	writeJSONOK(w, map[string]any{"voices": voices, "languages": languages, "byLang": byLang})
+		return append([]map[string]any{}, staticEdgeVoices...)
+	}
 }
 
 // GET /api/media-providers/tts/elevenlabs/voices.
@@ -262,7 +288,7 @@ func (s *Server) handleMediaInworldVoices(w http.ResponseWriter, r *http.Request
 }
 
 func httpGetJSON(url, authHeader, authVal string) ([]byte, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second, Transport: nil, CheckRedirect: nil, Jar: nil}
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
@@ -280,7 +306,13 @@ func httpGetJSON(url, authHeader, authVal string) ([]byte, error) {
 		return nil, err
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			if err := resp.Body.Close(); err != nil {
+				_ = err
+			}
+		}
+	}()
 
 	if resp.StatusCode >= 400 {
 		return nil, errHTTPStatus(resp.StatusCode)
@@ -311,41 +343,60 @@ func fetchEdgeTTSVoices() ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(raw))
 
 	for _, v := range raw {
-		locale, _ := v["Locale"].(string)
-		short, _ := v["ShortName"].(string)
-		friendly, _ := v["FriendlyName"].(string)
-		gender, _ := v["Gender"].(string)
-
-		if short == "" {
-			continue
+		entry, ok := parseEdgeTTSVoiceItem(v)
+		if ok {
+			out = append(out, entry)
 		}
-
-		parts := strings.SplitN(locale, "-", 2)
-		lang := locale
-		country := ""
-
-		if len(parts) > 0 {
-			lang = parts[0]
-		}
-
-		if len(parts) > 1 {
-			country = parts[1]
-		}
-
-		name := friendly
-		if name == "" {
-			name = short
-		}
-
-		name = strings.ReplaceAll(name, "Microsoft ", "")
-		name = strings.ReplaceAll(name, " Online (Natural) - ", " (")
-		out = append(out, map[string]any{
-			"id": short, "name": name, "locale": locale, "lang": lang, "country": country,
-			"gender": gender, "provider": "edge-tts",
-		})
 	}
 
 	return out, nil
+}
+
+func parseEdgeTTSVoiceItem(v map[string]any) (map[string]any, bool) {
+	short, okShort := v["ShortName"].(string)
+	if !okShort || short == "" {
+		return nil, false
+	}
+
+	locale, okLocale := v["Locale"].(string)
+	if !okLocale {
+		return nil, false
+	}
+
+	friendly, okFriendly := v["FriendlyName"].(string)
+	if !okFriendly {
+		friendly = ""
+	}
+
+	gender, okGender := v["Gender"].(string)
+	if !okGender {
+		gender = ""
+	}
+
+	parts := strings.SplitN(locale, "-", 2)
+	lang := locale
+	country := ""
+
+	if len(parts) > 0 {
+		lang = parts[0]
+	}
+
+	if len(parts) > 1 {
+		country = parts[1]
+	}
+
+	name := friendly
+	if name == "" {
+		name = short
+	}
+
+	name = strings.ReplaceAll(name, "Microsoft ", "")
+	name = strings.ReplaceAll(name, " Online (Natural) - ", " (")
+
+	return map[string]any{
+		"id": short, "name": name, "locale": locale, "lang": lang, "country": country,
+		"gender": gender, "provider": "edge-tts",
+	}, true
 }
 
 func fetchElevenLabsVoices(apiKey string) ([]map[string]any, error) {
@@ -365,56 +416,49 @@ func fetchElevenLabsVoices(apiKey string) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(data.Voices))
 
 	for _, v := range data.Voices {
-		id, _ := v["voice_id"].(string)
-		name, _ := v["name"].(string)
-		labels, _ := v["labels"].(map[string]any)
-		lang := "en"
-		gender := ""
-
-		if labels != nil {
-			if l, ok := labels["language"].(string); ok && l != "" {
-				lang = strings.Split(l, "-")[0]
-			}
-
-			if g, ok := labels["gender"].(string); ok {
-				gender = g
-			}
+		entry, ok := parseElevenLabsVoiceItem(v)
+		if ok {
+			out = append(out, entry)
 		}
-
-		out = append(out, map[string]any{
-			"id": id, "name": name, "lang": lang, "gender": gender, "provider": "elevenlabs",
-		})
 	}
 
 	return out, nil
 }
 
+func parseElevenLabsVoiceItem(v map[string]any) (map[string]any, bool) {
+	id, okID := v["voice_id"].(string)
+	if !okID {
+		return nil, false
+	}
+
+	name, okName := v["name"].(string)
+	if !okName {
+		return nil, false
+	}
+
+	labels, okLabels := v["labels"].(map[string]any)
+	lang := "en"
+	gender := ""
+
+	if okLabels && labels != nil {
+		if l, ok := labels["language"].(string); ok && l != "" {
+			lang = strings.Split(l, "-")[0]
+		}
+
+		if g, ok := labels["gender"].(string); ok {
+			gender = g
+		}
+	}
+
+	return map[string]any{
+		"id": id, "name": name, "lang": lang, "gender": gender, "provider": "elevenlabs",
+	}, true
+}
+
 func fetchMinimaxVoices(endpoint, apiKey, voiceType string) ([]map[string]any, error) {
-	if voiceType == "" {
-		voiceType = "all"
-	}
-
-	payload, _ := json.Marshal(map[string]string{"voice_type": voiceType})
-	client := &http.Client{Timeout: 15 * time.Second}
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, strings.NewReader(string(payload)))
+	body, err := executeMinimaxVoicesRequest(endpoint, apiKey, voiceType)
 	if err != nil {
 		return nil, err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := netutil.DoHTTP(client, req)
-	if err != nil {
-		return nil, err
-	}
-
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode >= 400 {
-		return nil, errHTTPStatus(resp.StatusCode)
 	}
 
 	var data map[string]any
@@ -422,6 +466,96 @@ func fetchMinimaxVoices(endpoint, apiKey, voiceType string) ([]map[string]any, e
 		return nil, err
 	}
 
+	return parseMinimaxVoiceGroups(data), nil
+}
+
+func executeMinimaxVoicesRequest(endpoint, apiKey, voiceType string) ([]byte, error) {
+	if voiceType == "" {
+		voiceType = "all"
+	}
+
+	payload, err := json.Marshal(map[string]string{"voice_type": voiceType})
+	if err != nil {
+		return nil, err
+	}
+
+	req, errReq := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, strings.NewReader(string(payload)))
+	if errReq != nil {
+		return nil, errReq
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second, Transport: nil, CheckRedirect: nil, Jar: nil}
+
+	resp, errDo := netutil.DoHTTP(client, req)
+	if errDo != nil {
+		return nil, errDo
+	}
+
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			if err := resp.Body.Close(); err != nil {
+				_ = err
+			}
+		}
+	}()
+
+	body, errRead := io.ReadAll(resp.Body)
+	if errRead != nil {
+		return nil, errRead
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, errHTTPStatus(resp.StatusCode)
+	}
+
+	return body, nil
+}
+
+func resolveMinimaxField(m map[string]any, primaryKey, fallbackKey string) string {
+	if val, ok := m[primaryKey].(string); ok && val != "" {
+		return val
+	}
+
+	if val, ok := m[fallbackKey].(string); ok {
+		return val
+	}
+
+	return ""
+}
+
+func parseMinimaxVoiceItem(item any, gKey, gLabel string) (map[string]any, bool) {
+	m, ok := item.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+
+	id := resolveMinimaxField(m, "voice_id", "voiceId")
+	if id == "" {
+		return nil, false
+	}
+
+	name := resolveMinimaxField(m, "voice_name", "voiceName")
+	if name == "" {
+		name = id
+	}
+
+	lang := "Custom"
+
+	if gKey == "system_voice" {
+		if i := strings.Index(id, "_"); i > 0 {
+			lang = id[:i]
+		}
+	} else {
+		name = name + " · " + gLabel
+	}
+
+	return map[string]any{"id": id, "name": name, "lang": lang, "category": gKey, "provider": "minimax"}, true
+}
+
+func parseMinimaxVoiceGroups(data map[string]any) []map[string]any {
 	groups := []struct{ key, label string }{
 		{"system_voice", "System"},
 		{"voice_cloning", "Cloned"},
@@ -432,46 +566,19 @@ func fetchMinimaxVoices(endpoint, apiKey, voiceType string) ([]map[string]any, e
 	var out []map[string]any
 
 	for _, g := range groups {
-		arr, _ := data[g.key].([]any)
+		arr, okArr := data[g.key].([]any)
+		if !okArr {
+			continue
+		}
+
 		for _, item := range arr {
-			m, ok := item.(map[string]any)
-			if !ok {
-				continue
+			if v, ok := parseMinimaxVoiceItem(item, g.key, g.label); ok {
+				out = append(out, v)
 			}
-
-			id, _ := m["voice_id"].(string)
-			if id == "" {
-				id, _ = m["voiceId"].(string)
-			}
-
-			if id == "" {
-				continue
-			}
-
-			name, _ := m["voice_name"].(string)
-			if name == "" {
-				name, _ = m["voiceName"].(string)
-			}
-
-			if name == "" {
-				name = id
-			}
-
-			lang := "Custom"
-
-			if g.key == "system_voice" {
-				if i := strings.Index(id, "_"); i > 0 {
-					lang = id[:i]
-				}
-			} else {
-				name = name + " · " + g.label
-			}
-
-			out = append(out, map[string]any{"id": id, "name": name, "lang": lang, "category": g.key, "provider": "minimax"})
 		}
 	}
 
-	return out, nil
+	return out
 }
 
 func fetchDeepgramVoices(apiKey string) ([]map[string]any, error) {
@@ -488,31 +595,38 @@ func fetchDeepgramVoices(apiKey string) ([]map[string]any, error) {
 		return nil, err
 	}
 
-	var out []map[string]any
+	out := make([]map[string]any, 0, len(data.TTS))
 
 	for _, m := range data.TTS {
-		id, _ := m["canonical_name"].(string)
-		if id == "" {
-			id, _ = m["name"].(string)
-		}
-
-		name, _ := m["name"].(string)
-		if name == "" {
-			name = id
-		}
-
-		lang := "en"
-
-		if langs, ok := m["languages"].([]any); ok && len(langs) > 0 {
-			if s, ok := langs[0].(string); ok {
-				lang = s
-			}
-		}
-
-		out = append(out, map[string]any{"id": id, "name": name, "lang": lang, "provider": "deepgram"})
+		entry := parseDeepgramVoiceItem(m)
+		out = append(out, entry)
 	}
 
 	return out, nil
+}
+
+func parseDeepgramVoiceItem(m map[string]any) map[string]any {
+	id, okID := m["canonical_name"].(string)
+	if !okID || id == "" {
+		if vName, okVName := m["name"].(string); okVName {
+			id = vName
+		}
+	}
+
+	name, okName := m["name"].(string)
+	if !okName || name == "" {
+		name = id
+	}
+
+	lang := "en"
+
+	if langs, ok := m["languages"].([]any); ok && len(langs) > 0 {
+		if s, okStr := langs[0].(string); okStr {
+			lang = s
+		}
+	}
+
+	return map[string]any{"id": id, "name": name, "lang": lang, "provider": "deepgram"}
 }
 
 func fetchInworldVoices(apiKey string) ([]map[string]any, error) {
@@ -529,27 +643,41 @@ func fetchInworldVoices(apiKey string) ([]map[string]any, error) {
 		return nil, err
 	}
 
-	var out []map[string]any
+	out := make([]map[string]any, 0, len(data.Voices))
 
 	for _, v := range data.Voices {
-		id, _ := v["voiceId"].(string)
-		name, _ := v["displayName"].(string)
-
-		if name == "" {
-			name = id
+		entry, ok := parseInworldVoiceItem(v)
+		if ok {
+			out = append(out, entry)
 		}
-
-		gender, _ := v["gender"].(string)
-		lang := "en"
-
-		if langs, ok := v["languages"].([]any); ok && len(langs) > 0 {
-			if s, ok := langs[0].(string); ok {
-				lang = s
-			}
-		}
-
-		out = append(out, map[string]any{"id": id, "name": name, "lang": lang, "gender": gender, "provider": "inworld"})
 	}
 
 	return out, nil
+}
+
+func parseInworldVoiceItem(v map[string]any) (map[string]any, bool) {
+	id, okID := v["voiceId"].(string)
+	if !okID {
+		return nil, false
+	}
+
+	name, okName := v["displayName"].(string)
+	if !okName || name == "" {
+		name = id
+	}
+
+	gender, okGender := v["gender"].(string)
+	if !okGender {
+		gender = ""
+	}
+
+	lang := "en"
+
+	if langs, ok := v["languages"].([]any); ok && len(langs) > 0 {
+		if s, okStr := langs[0].(string); okStr {
+			lang = s
+		}
+	}
+
+	return map[string]any{"id": id, "name": name, "lang": lang, "gender": gender, "provider": "inworld"}, true
 }

@@ -48,23 +48,30 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 		t.Fatal("devin-cli executor not registered")
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
 		"messages": []map[string]any{
 			{"role": "user", "content": "solve this task"},
 		},
 	})
 
-	res, err := ex.Execute(context.Background(), executor.Credentials{}, "swe-1.6", body, true)
+	res, err := ex.Execute(context.Background(), executor.Credentials{
+		APIKey:               "",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProviderSpecificData: nil,
+		ProjectID:            "",
+	}, "swe-1.6", body, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
 	}
 
-	outBytes, _ := io.ReadAll(res.Body)
+	outBytes, _ := io.ReadAll(res.Body) // nolint:errcheck
 	outStr := string(outBytes)
 
 	if !strings.Contains(outStr, "Hello from Devin CLI") {
@@ -104,32 +111,42 @@ echo '{"jsonrpc":"2.0","method":"_cognition.ai/agent_stopped","params":{"cause":
 	t.Setenv("CLI_DEVIN_BIN", scriptName)
 
 	ex := executor.GetExecutor("devin-cli")
-	body, _ := json.Marshal(map[string]any{
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
 		"messages": []map[string]any{
 			{"role": "user", "content": "quick test"},
 		},
 	})
 
-	res, err := ex.Execute(context.Background(), executor.Credentials{}, "swe-1.6", body, false)
+	res, err := ex.Execute(context.Background(), executor.Credentials{
+		APIKey:               "",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProviderSpecificData: nil,
+		ProjectID:            "",
+	}, "swe-1.6", body, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	var respObj map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {
 		t.Fatal(err)
 	}
 
-	choices, _ := respObj["choices"].([]any)
-	if len(choices) == 0 {
+	choices, ok := respObj["choices"].([]any)
+	if !ok || len(choices) == 0 {
 		t.Fatal("empty choices")
 	}
 
-	first, _ := choices[0].(map[string]any)
+	first, ok := choices[0].(map[string]any)
+	if !ok {
+		t.Fatal("first choice not map")
+	}
 
-	msg, _ := first["message"].(map[string]any)
-	if msg["content"] != "Non-streaming result" {
+	msg, ok := first["message"].(map[string]any)
+	if !ok || msg["content"] != "Non-streaming result" {
 		t.Errorf("content = %v, want Non-streaming result", msg["content"])
 	}
 }

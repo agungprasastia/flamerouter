@@ -53,6 +53,7 @@ func NewEngine() *Engine {
 		resolvers: make(map[string]ProviderResolver),
 		cache:     make(map[string]cacheEntry),
 		inflight:  make(map[string]chan struct{}),
+		mu:        sync.RWMutex{},
 	}
 	e.RegisterDefaultResolvers()
 
@@ -113,37 +114,11 @@ func (e *Engine) cacheKey(conn *store.Connection) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ResolveModels attempts to fetch or retrieve cached dynamic models for a connection.
-// Returns (models, nil) on success, or error on failure.
-func (e *Engine) ResolveModels(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
-	if conn == nil {
-		return nil, nil
-	}
-
-	e.mu.RLock()
-	resolver, ok := e.resolvers[conn.Provider]
-	e.mu.RUnlock()
-
-	if !ok || resolver == nil {
-		return nil, nil
-	}
-
-	key := e.cacheKey(conn)
-	now := time.Now()
-
-	e.mu.RLock()
-	entry, found := e.cache[key]
-	e.mu.RUnlock()
-
-	if found && now.Before(entry.expiresAt) {
-		return entry.models, nil
-	}
-
-	// Singleflight deduplication
+func (e *Engine) acquireInflight(ctx context.Context, key string, now time.Time) (bool, []DynamicModel, chan struct{}, error) {
 	e.mu.Lock()
-	if entry, found = e.cache[key]; found && now.Before(entry.expiresAt) {
+	if entry, found := e.cache[key]; found && now.Before(entry.expiresAt) {
 		e.mu.Unlock()
-		return entry.models, nil
+		return true, entry.models, nil, nil
 	}
 
 	waitChan, inProgress := e.inflight[key]
@@ -152,12 +127,12 @@ func (e *Engine) ResolveModels(ctx context.Context, conn *store.Connection) ([]D
 		select {
 		case <-waitChan:
 			e.mu.RLock()
-			entry = e.cache[key]
+			entry := e.cache[key]
 			e.mu.RUnlock()
 
-			return entry.models, nil
+			return true, entry.models, nil, nil
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return false, nil, nil, ctx.Err()
 		}
 	}
 
@@ -165,12 +140,63 @@ func (e *Engine) ResolveModels(ctx context.Context, conn *store.Connection) ([]D
 	e.inflight[key] = ch
 	e.mu.Unlock()
 
+	return false, nil, ch, nil
+}
+
+func (e *Engine) getResolver(conn *store.Connection) (ProviderResolver, bool) {
+	if conn == nil {
+		return nil, false
+	}
+
+	e.mu.RLock()
+	resolver, ok := e.resolvers[conn.Provider]
+	e.mu.RUnlock()
+
+	return resolver, ok && resolver != nil
+}
+
+func (e *Engine) getCachedEntry(key string, now time.Time) ([]DynamicModel, bool) {
+	e.mu.RLock()
+	entry, found := e.cache[key]
+	e.mu.RUnlock()
+
+	if found && now.Before(entry.expiresAt) {
+		return entry.models, true
+	}
+
+	return nil, false
+}
+
+// ResolveModels attempts to fetch or retrieve cached dynamic models for a connection.
+// Returns (models, nil) on success, or error on failure.
+func (e *Engine) ResolveModels(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
+	resolver, ok := e.getResolver(conn)
+	if !ok || resolver == nil {
+		return nil, nil
+	}
+
+	key := e.cacheKey(conn)
+	now := time.Now()
+
+	if cached, hit := e.getCachedEntry(key, now); hit {
+		return cached, nil
+	}
+
+	done, cachedModels, ch, err := e.acquireInflight(ctx, key, now)
+	if done || err != nil {
+		return cachedModels, err
+	}
+
 	defer func() {
 		e.mu.Lock()
 		delete(e.inflight, key)
 		close(ch)
 		e.mu.Unlock()
 	}()
+
+	if resolver == nil {
+		return nil, nil
+	}
 
 	models, err := resolver.Resolve(ctx, conn)
 	if err != nil {

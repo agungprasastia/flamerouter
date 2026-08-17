@@ -2,12 +2,20 @@ package proxy
 
 import (
 	"flamerouter/internal/store"
-	"net/url"
 	"testing"
 )
 
 func TestPoolToURL(t *testing.T) {
-	u := poolToURL(store.ProxyPool{Type: "http", Host: "127.0.0.1", Port: 8080, Username: "u", Password: "p"})
+	u := poolToURL(store.ProxyPool{
+		ID:       "",
+		Name:     "",
+		Type:     "http",
+		Host:     "127.0.0.1",
+		Port:     8080,
+		Username: "u",
+		Password: "p",
+		IsActive: false,
+	})
 	if u.String() != "http://u:p@127.0.0.1:8080" {
 		t.Fatalf("got %s", u.String())
 	}
@@ -15,8 +23,6 @@ func TestPoolToURL(t *testing.T) {
 	if u.Scheme != "http" || u.Hostname() != "127.0.0.1" {
 		t.Fatal(u)
 	}
-
-	_ = url.URL{}
 }
 
 func TestPoolEmpty(t *testing.T) {

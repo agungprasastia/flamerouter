@@ -1,3 +1,4 @@
+// Package mitm provides local HTTPS MITM proxy and certificate generation for developer tools.
 package mitm
 
 import (
@@ -55,49 +56,29 @@ func installCAMac(certPath string) error {
 }
 
 func installCALinux(certPath string) error {
-	// try common NSS/system CA dirs
-	type dest struct {
-		dir string
-		upd string
-	}
+	d := findLinuxCADest()
 
-	candidates := []dest{
-		{"/usr/local/share/ca-certificates", "update-ca-certificates"},
-		{"/etc/ca-certificates/trust-source/anchors", "update-ca-trust"},
-		{"/etc/pki/ca-trust/source/anchors", "update-ca-trust"},
-		{"/etc/pki/trust/anchors", "update-ca-certificates"},
-	}
-
-	var d dest
-
-	for _, c := range candidates {
-		if st, err := os.Stat(c.dir); err == nil && st.IsDir() {
-			d = c
-			break
-		}
-	}
-
-	if d.dir == "" {
-		d = candidates[0]
-	}
-
+	/* #nosec G301 */
 	if err := os.MkdirAll(d.dir, 0o755); err != nil {
 		return fmt.Errorf("cannot write CA dir (needs root): %w", err)
 	}
 
 	dst := filepath.Join(d.dir, "flamerouter-mitm-ca.crt")
 
+	/* #nosec G304 */
 	data, err := os.ReadFile(certPath)
 	if err != nil {
 		return err
 	}
 
+	/* #nosec G306 */
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
 		return fmt.Errorf("write CA failed (needs root): %w", err)
 	}
 
 	if d.upd != "" {
 		if p, err := exec.LookPath(d.upd); err == nil {
+			/* #nosec G204 */
 			cmd := exec.Command(p)
 
 			out, err := cmd.CombinedOutput()
@@ -108,6 +89,28 @@ func installCALinux(certPath string) error {
 	}
 
 	return nil
+}
+
+type linuxCADest struct {
+	dir string
+	upd string
+}
+
+func findLinuxCADest() linuxCADest {
+	candidates := []linuxCADest{
+		{dir: "/usr/local/share/ca-certificates", upd: "update-ca-certificates"},
+		{dir: "/etc/ca-certificates/trust-source/anchors", upd: "update-ca-trust"},
+		{dir: "/etc/pki/ca-trust/source/anchors", upd: "update-ca-trust"},
+		{dir: "/etc/pki/trust/anchors", upd: "update-ca-certificates"},
+	}
+
+	for _, c := range candidates {
+		if st, err := os.Stat(c.dir); err == nil && st.IsDir() {
+			return c
+		}
+	}
+
+	return candidates[0]
 }
 
 // CheckCATrusted best-effort: windows certutil store lookup; others always false.

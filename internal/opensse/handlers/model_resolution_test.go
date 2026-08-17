@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flamerouter/internal/opensse/fallback"
+	"flamerouter/internal/opensse/rtk"
 	"flamerouter/internal/opensse/testutil"
 	"flamerouter/internal/store"
 	"net/http"
@@ -19,7 +20,7 @@ func newTestStore(t *testing.T) *store.Store {
 		t.Fatalf("store.Open: %v", err)
 	}
 
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() }) //nolint:errcheck // cleanup close
 
 	return st
 }
@@ -34,13 +35,21 @@ func TestModelResolutionExplicitProviderModel(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant","content":"hello"}}]}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
 	reqBody := []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
 	rec := httptest.NewRecorder()
 
-	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{})
+	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
 	if err != nil {
 		t.Fatalf("ChatWithOptions err = %v", err)
 	}
@@ -77,13 +86,21 @@ func TestModelResolutionModelAlias(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-2","choices":[{"message":{"role":"assistant","content":"fast"}}]}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
 	reqBody := []byte(`{"model":"fast","messages":[{"role":"user","content":"hi"}]}`)
 	rec := httptest.NewRecorder()
 
-	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{})
+	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
 	if err != nil {
 		t.Fatalf("ChatWithOptions err = %v", err)
 	}
@@ -116,13 +133,21 @@ func TestModelResolutionComboDispatch(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-3","choices":[{"message":{"role":"assistant","content":"combo"}}]}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
 	reqBody := []byte(`{"model":"trio","messages":[{"role":"user","content":"hi"}]}`)
 	rec := httptest.NewRecorder()
 
-	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{})
+	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
 	if err != nil {
 		t.Fatalf("ChatWithOptions err = %v", err)
 	}
@@ -143,13 +168,25 @@ func TestModelResolutionComboDispatch(t *testing.T) {
 
 func TestModelResolutionMissingProviderReturns400(t *testing.T) {
 	st := newTestStore(t)
-	fake := testutil.NewFakeExecutor()
+	fake := testutil.NewFakeExecutor(testutil.Response{
+		StatusCode: http.StatusOK,
+		Header:     nil,
+		Body:       nil,
+		StreamBody: nil,
+	})
 	fb := fallback.New(st)
 
 	reqBody := []byte(`{"model":"bare-model-no-provider","messages":[{"role":"user","content":"hi"}]}`)
 	rec := httptest.NewRecorder()
 
-	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{})
+	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
 	if err != nil {
 		t.Fatalf("ChatWithOptions err = %v", err)
 	}
@@ -173,40 +210,37 @@ func TestModelResolutionMissingProviderReturns400(t *testing.T) {
 }
 
 func TestModelResolutionProviderAlias(t *testing.T) {
-	st := newTestStore(t)
-	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
-		t.Fatalf("CreateConnection: %v", err)
-	}
+	storeObj := newTestStore(t)
+	_, _ = storeObj.CreateConnection("openai", "api_key", "sec", "sk-alias", "") //nolint:errcheck // test setup
 
-	fake := testutil.NewFakeExecutor(testutil.Response{
+	fakeExec := testutil.NewFakeExecutor(testutil.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       []byte(`{"id":"chatcmpl-4","choices":[{"message":{"role":"assistant","content":"provider-alias"}}]}`),
+		Body:       []byte(`{"id":"chatcmpl-4","choices":[{"message":{"role":"assistant","content":"alias-ok"}}]}`),
+		StreamBody: nil,
 	})
-	fb := fallback.New(st)
+	fallbackObj := fallback.New(storeObj)
 
-	reqBody := []byte(`{"model":"oa/gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
-	rec := httptest.NewRecorder()
+	aliasReq := []byte(`{"model":"oa/gpt-4o","messages":[{"role":"user","content":"alias-call"}]}`)
+	recorder := httptest.NewRecorder()
 
-	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{})
-	if err != nil {
-		t.Fatalf("ChatWithOptions err = %v", err)
+	if err := ChatWithOptions(context.Background(), recorder, aliasReq, storeObj, fakeExec, fallbackObj, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	}); err != nil {
+		t.Fatalf("ChatWithOptions: %v", err)
 	}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
 	}
 
-	calls := fake.Calls()
-	if len(calls) != 1 {
-		t.Fatalf("calls = %d, want 1", len(calls))
-	}
-
-	if calls[0].Model != "gpt-4o" {
-		t.Fatalf("model = %q, want gpt-4o", calls[0].Model)
-	}
-
-	if calls[0].Credentials.APIKey != "sk-test" {
-		t.Fatalf("apiKey = %q, want sk-test", calls[0].Credentials.APIKey)
+	invocations := fakeExec.Calls()
+	if len(invocations) != 1 || invocations[0].Model != "gpt-4o" || invocations[0].Credentials.APIKey != "sk-alias" {
+		t.Fatalf("unexpected calls payload: %+v", invocations)
 	}
 }

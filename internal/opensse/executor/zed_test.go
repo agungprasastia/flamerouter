@@ -11,44 +11,77 @@ import (
 	"testing"
 )
 
+func handleMockZedLlmToken(t *testing.T, w http.ResponseWriter, r *http.Request, gotLlmTokenReq *bool) {
+	*gotLlmTokenReq = true
+
+	if r.Header.Get("Authorization") != "user-123 token-abc" {
+		t.Errorf("unexpected user auth header: %s", r.Header.Get("Authorization"))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{ // nolint:errcheck
+		"token": "zed-llm-token-xyz",
+	})
+}
+
+func handleMockZedCompletions(w http.ResponseWriter, r *http.Request, gotCompletionReq *bool, gotAuthHeader *string, gotPayload *map[string]any) {
+	*gotCompletionReq = true
+	*gotAuthHeader = r.Header.Get("Authorization")
+
+	defer func() { _ = r.Body.Close() }() // nolint:errcheck
+
+	_ = json.NewDecoder(r.Body).Decode(gotPayload) // nolint:errcheck
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	// nolint:errcheck
+	_, _ = w.Write([]byte(`{"event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello Zed"}}}
+{"status":{"type":"stream_ended"}}
+`))
+}
+
+func executeZedRequest(t *testing.T, srvURL string) *executor.Result {
+	t.Helper()
+
+	ex := executor.GetExecutor("zed")
+	if ex == nil {
+		t.Fatal("zed executor not registered")
+	}
+
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
+		"messages": []map[string]string{{"role": "user", "content": "hello"}},
+	})
+
+	res, err := ex.Execute(context.Background(), executor.Credentials{
+		APIKey:               "",
+		AccessToken:          "token-abc",
+		RefreshToken:         "",
+		BaseURL:              srvURL,
+		ProviderSpecificData: map[string]any{"userId": "user-123", "organizationId": "org-456"},
+		ProjectID:            "",
+	}, "claude-3-5-sonnet", body, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return res
+}
+
 func TestZedExecutor_ExecutionAndStreaming(t *testing.T) {
-	var gotLlmTokenReq bool
-
-	var gotCompletionReq bool
-
-	var gotAuthHeader string
-
-	var gotPayload map[string]any
+	var (
+		gotLlmTokenReq   bool
+		gotCompletionReq bool
+		gotAuthHeader    string
+		gotPayload       map[string]any
+	)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/client/llm_tokens" {
-			gotLlmTokenReq = true
-
-			if r.Header.Get("Authorization") != "user-123 token-abc" {
-				t.Errorf("unexpected user auth header: %s", r.Header.Get("Authorization"))
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"token": "zed-llm-token-xyz",
-			})
-
+			handleMockZedLlmToken(t, w, r, &gotLlmTokenReq)
 			return
 		}
 
 		if r.URL.Path == "/completions" {
-			gotCompletionReq = true
-			gotAuthHeader = r.Header.Get("Authorization")
-
-			defer r.Body.Close()
-			_ = json.NewDecoder(r.Body).Decode(&gotPayload)
-
-			w.Header().Set("Content-Type", "application/x-ndjson")
-			// send NDJSON with event
-			_, _ = w.Write([]byte(`{"event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello Zed"}}}
-{"status":{"type":"stream_ended"}}
-`))
-
+			handleMockZedCompletions(w, r, &gotCompletionReq, &gotAuthHeader, &gotPayload)
 			return
 		}
 
@@ -56,56 +89,21 @@ func TestZedExecutor_ExecutionAndStreaming(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ex := executor.GetExecutor("zed")
-	if ex == nil {
-		t.Fatal("zed executor not registered")
+	res := executeZedRequest(t, srv.URL)
+	defer func() { _ = res.Body.Close() }() // nolint:errcheck
+
+	if res.StatusCode != 200 || !gotLlmTokenReq || !gotCompletionReq {
+		t.Fatalf("status %d, tokenReq=%v, compReq=%v", res.StatusCode, gotLlmTokenReq, gotCompletionReq)
 	}
 
-	body, _ := json.Marshal(map[string]any{
-		"messages": []map[string]string{{"role": "user", "content": "hello"}},
-	})
-
-	res, err := ex.Execute(context.Background(), executor.Credentials{
-		AccessToken: "token-abc",
-		BaseURL:     srv.URL,
-		ProviderSpecificData: map[string]any{
-			"userId":         "user-123",
-			"organizationId": "org-456",
-		},
-	}, "claude-3-5-sonnet", body, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != 200 {
-		t.Fatalf("status %d", res.StatusCode)
+	if gotAuthHeader != "Bearer zed-llm-token-xyz" || gotPayload["provider"] != "Anthropic" {
+		t.Errorf("auth=%q provider=%v", gotAuthHeader, gotPayload["provider"])
 	}
 
-	if !gotLlmTokenReq {
-		t.Error("did not request llm token")
-	}
-
-	if !gotCompletionReq {
-		t.Error("did not request completions")
-	}
-
-	if gotAuthHeader != "Bearer zed-llm-token-xyz" {
-		t.Errorf("got auth %q, want Bearer zed-llm-token-xyz", gotAuthHeader)
-	}
-
-	if gotPayload["provider"] != "Anthropic" {
-		t.Errorf("provider = %v, want Anthropic", gotPayload["provider"])
-	}
-
-	outBytes, _ := io.ReadAll(res.Body)
-
+	outBytes, _ := io.ReadAll(res.Body) // nolint:errcheck
 	outStr := string(outBytes)
-	if !strings.Contains(outStr, "Hello Zed") {
-		t.Errorf("response stream missing text: %s", outStr)
-	}
 
-	if !strings.Contains(outStr, "[DONE]") {
-		t.Errorf("response stream missing [DONE]: %s", outStr)
+	if !strings.Contains(outStr, "Hello Zed") || !strings.Contains(outStr, "[DONE]") {
+		t.Errorf("unexpected output: %s", outStr)
 	}
 }

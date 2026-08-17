@@ -21,9 +21,11 @@ func testOpenSSEServer(t *testing.T, fakeExec *testutil.FakeExecutor) (http.Hand
 		t.Fatal(err)
 	}
 
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() {
+		_ = st.Close() //nolint:errcheck // test cleanup
+	})
 
-	cfg := &config.Config{
+	cfg := &config.Config{ //nolint:exhaustruct // test config
 		DataDir:       dir,
 		JWTSecret:     "test-secret-long-enough",
 		APIKeySecret:  "test-api-key-secret",
@@ -40,6 +42,7 @@ func TestOpenSSECoreSmokeChatCompletions(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-smoke-1","choices":[{"message":{"role":"assistant","content":"smoke chat"}}]}`),
+		StreamBody: nil,
 	})
 
 	h, st := testOpenSSEServer(t, fake)
@@ -69,11 +72,14 @@ func TestOpenSSECoreSmokeChatCompletions(t *testing.T) {
 	}
 }
 
-func TestOpenSSECoreSmokeMessages(t *testing.T) {
+func executeSmokeRequest(t *testing.T, respBody, path, payload string) {
+	t.Helper()
+
 	fake := testutil.NewFakeExecutor(testutil.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       []byte(`{"id":"chatcmpl-smoke-2","choices":[{"message":{"role":"assistant","content":"smoke message"}}]}`),
+		Body:       []byte(respBody),
+		StreamBody: nil,
 	})
 
 	h, st := testOpenSSEServer(t, fake)
@@ -81,12 +87,10 @@ func TestOpenSSECoreSmokeMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reqBody := bytes.NewBufferString(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hello claude"}]}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/messages", reqBody)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(payload))
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-
 	h.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
@@ -98,33 +102,22 @@ func TestOpenSSECoreSmokeMessages(t *testing.T) {
 	}
 }
 
+func TestOpenSSECoreSmokeMessages(t *testing.T) {
+	executeSmokeRequest(
+		t,
+		`{"id":"chatcmpl-smoke-2","choices":[{"message":{"role":"assistant","content":"smoke message"}}]}`,
+		"/v1/messages",
+		`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hello claude"}]}`,
+	)
+}
+
 func TestOpenSSECoreSmokeResponses(t *testing.T) {
-	fake := testutil.NewFakeExecutor(testutil.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       []byte(`{"id":"chatcmpl-smoke-3","choices":[{"message":{"role":"assistant","content":"smoke responses"}}]}`),
-	})
-
-	h, st := testOpenSSEServer(t, fake)
-	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
-		t.Fatal(err)
-	}
-
-	reqBody := bytes.NewBufferString(`{"model":"openai/gpt-4o","input":"smoke input"}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", reqBody)
-	req.Header.Set("Content-Type", "application/json")
-
-	rr := httptest.NewRecorder()
-
-	h.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
-	}
-
-	if len(fake.Calls()) != 1 {
-		t.Fatalf("calls = %d, want 1", len(fake.Calls()))
-	}
+	executeSmokeRequest(
+		t,
+		`{"id":"chatcmpl-smoke-3","choices":[{"message":{"role":"assistant","content":"smoke responses"}}]}`,
+		"/v1/responses",
+		`{"model":"openai/gpt-4o","input":"smoke input"}`,
+	)
 }
 
 func TestOpenSSECoreSmokeGeminiModels(t *testing.T) {
@@ -151,34 +144,10 @@ func TestOpenSSECoreSmokeGeminiModels(t *testing.T) {
 }
 
 func TestOpenSSECoreSmokeVercelAIChat(t *testing.T) {
-	fake := testutil.NewFakeExecutor(testutil.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body: []byte(`{
-			"id":"chatcmpl-smoke-4",
-			"choices":[{"message":{"role":"assistant","content":"smoke vercel"}}],
-			"usage":{"prompt_tokens":5,"completion_tokens":10}
-		}`),
-	})
-
-	h, st := testOpenSSEServer(t, fake)
-	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
-		t.Fatal(err)
-	}
-
-	reqBody := bytes.NewBufferString(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"smoke vercel"}]}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/api/chat", reqBody)
-	req.Header.Set("Content-Type", "application/json")
-
-	rr := httptest.NewRecorder()
-
-	h.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
-	}
-
-	if len(fake.Calls()) != 1 {
-		t.Fatalf("calls = %d, want 1", len(fake.Calls()))
-	}
+	executeSmokeRequest(
+		t,
+		`{"id":"chatcmpl-smoke-4","choices":[{"message":{"role":"assistant","content":"smoke vercel"}}],"usage":{"prompt_tokens":5,"completion_tokens":10}}`,
+		"/v1/api/chat",
+		`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"smoke vercel"}]}`,
+	)
 }

@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -27,11 +29,9 @@ func TestDetectClient(t *testing.T) {
 		{"unknown-agent/1", nil, ""},
 	}
 	for _, tc := range cases {
-		r, err := http.NewRequest(http.MethodPost, "/", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		r := httptest.NewRequest(http.MethodPost, "/", nil)
 		r.Header.Set("User-Agent", tc.ua)
+
 		for k, v := range tc.headers {
 			r.Header.Set(k, v)
 		}
@@ -65,13 +65,8 @@ func TestShouldPassthrough(t *testing.T) {
 	}
 }
 
-func TestShouldBypass(t *testing.T) {
-	warmup := []byte(`{"messages":[{"role":"user","content":"Warmup"}]}`)
-	count := []byte(`{"messages":[{"role":"user","content":"count"}]}`)
-	hi := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
-	title := []byte(`{"messages":[{"role":"user","content":"Please write a 5-10 word title for the following conversation: hello"}]}`)
-	naming := []byte(`{"system":"isNewTopic true","messages":[{"role":"user","content":"hello world"}]}`)
-	long := []byte(`{"messages":[{"role":"user","content":"` + strings.Repeat("x", 80) + `"}]}`)
+func assertClaudeBypasses(t *testing.T, warmup, count, title, naming []byte) {
+	t.Helper()
 
 	if !ShouldBypass(warmup, "claude-code") {
 		t.Fatal("Warmup + claude-code")
@@ -92,21 +87,11 @@ func TestShouldBypass(t *testing.T) {
 	if !ShouldBypass(warmup, "claude") {
 		t.Fatal("Warmup + claude")
 	}
+}
 
-	// short "hi" must NOT bypass (removed len<50 rule)
-	if ShouldBypass(hi, "claude-code") {
-		t.Fatal("short hi must not bypass")
-	}
+func assertNonClaudeNeverBypasses(t *testing.T, warmup, count, title, naming, hi []byte) {
+	t.Helper()
 
-	if ShouldBypass(long, "claude-code") {
-		t.Fatal("long message should not bypass")
-	}
-
-	if ShouldBypass([]byte(`not-json`), "claude-code") {
-		t.Fatal("bad json")
-	}
-
-	// non-claude client never bypasses naming/warmup patterns
 	for _, client := range []string{"cursor", "codex", "opencode", "github-copilot", ""} {
 		if ShouldBypass(warmup, client) {
 			t.Fatalf("Warmup must not bypass for client=%q", client)
@@ -130,11 +115,37 @@ func TestShouldBypass(t *testing.T) {
 	}
 }
 
+func TestShouldBypass(t *testing.T) {
+	warmup := []byte(`{"messages":[{"role":"user","content":"Warmup"}]}`)
+	count := []byte(`{"messages":[{"role":"user","content":"count"}]}`)
+	hi := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+	title := []byte(`{"messages":[{"role":"user","content":"Please write a 5-10 word title for the following conversation: hello"}]}`)
+	naming := []byte(`{"system":"isNewTopic true","messages":[{"role":"user","content":"hello world"}]}`)
+	long := []byte(`{"messages":[{"role":"user","content":"` + strings.Repeat("x", 80) + `"}]}`)
+
+	assertClaudeBypasses(t, warmup, count, title, naming)
+
+	if ShouldBypass(hi, "claude-code") {
+		t.Fatal("short hi must not bypass")
+	}
+
+	if ShouldBypass(long, "claude-code") {
+		t.Fatal("long message should not bypass")
+	}
+
+	if ShouldBypass([]byte(`not-json`), "claude-code") {
+		t.Fatal("bad json")
+	}
+
+	assertNonClaudeNeverBypasses(t, warmup, count, title, naming, hi)
+}
+
 func TestDetectClientCopilotNotInitiatorAlone(t *testing.T) {
-	r, err := http.NewRequest(http.MethodPost, "/", nil)
+	r, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	r.Header.Set("User-Agent", "Mozilla/5.0")
 	r.Header.Set("x-initiator", "user")
 
@@ -142,10 +153,11 @@ func TestDetectClientCopilotNotInitiatorAlone(t *testing.T) {
 		t.Fatalf("x-initiator alone must not be github-copilot, got %q", got)
 	}
 
-	r2, err := http.NewRequest(http.MethodPost, "/", nil)
+	r2, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	r2.Header.Set("User-Agent", "GitHubCopilotChat/1")
 
 	if got := DetectClient(r2); got != "github-copilot" {
@@ -153,7 +165,9 @@ func TestDetectClientCopilotNotInitiatorAlone(t *testing.T) {
 	}
 }
 
-func TestDedupeTools(t *testing.T) {
+func testDedupeToolsRules(t *testing.T) {
+	t.Helper()
+
 	body := []byte(`{"tools":[
 		{"type":"function","function":{"name":"WebSearch"}},
 		{"type":"function","function":{"name":"mcp__exa__web_search_exa"}},
@@ -163,14 +177,16 @@ func TestDedupeTools(t *testing.T) {
 	out := DedupeTools(body)
 
 	var req map[string]any
-
 	if err := json.Unmarshal(out, &req); err != nil {
 		t.Fatal(err)
 	}
 
-	tools := req["tools"].([]any)
-	names := map[string]bool{}
+	tools, ok := req["tools"].([]any)
+	if !ok {
+		t.Fatal("missing tools in response")
+	}
 
+	names := map[string]bool{}
 	for _, t0 := range tools {
 		names[toolName(t0)] = true
 	}
@@ -182,8 +198,11 @@ func TestDedupeTools(t *testing.T) {
 	if !names["mcp__exa__web_search_exa"] || !names["other"] {
 		t.Fatalf("mcp+other kept: %v", names)
 	}
+}
 
-	// exact name dup: keep later
+func testDedupeToolsExactName(t *testing.T) {
+	t.Helper()
+
 	dup := []byte(`{"tools":[
 		{"function":{"name":"foo"}},
 		{"function":{"name":"foo"}}
@@ -191,11 +210,19 @@ func TestDedupeTools(t *testing.T) {
 	out2 := DedupeTools(dup)
 
 	var req2 map[string]any
-	_ = json.Unmarshal(out2, &req2)
+	if err := json.Unmarshal(out2, &req2); err != nil {
+		t.Fatal(err)
+	}
 
-	if len(req2["tools"].([]any)) != 1 {
+	tArr, ok := req2["tools"].([]any)
+	if !ok || len(tArr) != 1 {
 		t.Fatalf("want 1 tool after name dedupe, got %v", req2["tools"])
 	}
+}
+
+func TestDedupeTools(t *testing.T) {
+	testDedupeToolsRules(t)
+	testDedupeToolsExactName(t)
 }
 
 func TestInjectReasoning(t *testing.T) {
@@ -208,9 +235,21 @@ func TestInjectReasoning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ch := c["choices"].([]any)[0].(map[string]any)
+	chList, ok := c["choices"].([]any)
+	if !ok || len(chList) == 0 {
+		t.Fatal("empty choices")
+	}
 
-	delta := ch["delta"].(map[string]any)
+	ch, ok := chList[0].(map[string]any)
+	if !ok {
+		t.Fatal("invalid choice map")
+	}
+
+	delta, ok := ch["delta"].(map[string]any)
+	if !ok {
+		t.Fatal("missing delta map")
+	}
+
 	if delta["reasoning_content"] != "think" {
 		t.Fatalf("got %v", delta)
 	}

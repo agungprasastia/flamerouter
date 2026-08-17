@@ -19,37 +19,32 @@ func init() {
 	RegisterSpecialized("commandcode", &CommandCodeExecutor{
 		Base: Base{
 			Provider: "commandcode",
+			Client:   nil,
+			Headers:  nil,
 			BaseURL:  "https://api.commandcode.ai/alpha/generate",
+			BaseURLs: nil,
 		},
 	})
 }
 
+// CommandCodeExecutor executes CommandCode streaming requests.
 type CommandCodeExecutor struct {
 	Base
 }
 
-func (e *CommandCodeExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, err
+func resolveCommandCodeURL(baseURL, credBase string) string {
+	if credBase == "" {
+		return baseURL
 	}
 
-	m["stream"] = true // always stream NDJSON upstream
-	m["model"] = model
-
-	payload, err := json.Marshal(m)
-	if err != nil {
-		return nil, err
+	if !strings.Contains(credBase, "/alpha/") {
+		return credBase + "/alpha/generate"
 	}
 
-	url := e.BaseURL
-	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" {
-		url = base
-		if !strings.Contains(base, "/alpha/") {
-			url = base + "/alpha/generate"
-		}
-	}
+	return credBase
+}
 
+func buildCommandCodeRequest(ctx context.Context, url string, payload []byte, cred Credentials) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
@@ -68,11 +63,90 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, cred Credentials, mod
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
+	return req, nil
+}
+
+func processCommandCodeStream(r io.ReadCloser, pw *io.PipeWriter) {
+	defer func() {
+		if err := pw.Close(); err != nil {
+			_ = err
+		}
+
+		if err := r.Close(); err != nil {
+			_ = err
+		}
+	}()
+
+	state := concerns.NewResponseState()
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var raw map[string]any
+		if json.Unmarshal([]byte(line), &raw) == nil {
+			chunks := translator.DefaultRegistry.TranslateResponse(
+				translator.FormatCommandCode, translator.FormatOpenAI, raw, state,
+			)
+			for _, c := range chunks {
+				if j, err := json.Marshal(c); err == nil {
+					if _, err := pw.Write([]byte("data: " + string(j) + "\n\n")); err != nil {
+						_ = err
+					}
+				}
+			}
+		}
+	}
+
+	if _, err := pw.Write([]byte("data: [DONE]\n\n")); err != nil {
+		_ = err
+	}
+}
+
+func prepareCommandCodePayload(model string, body []byte) ([]byte, error) {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, err
+	}
+
+	m["stream"] = true // always stream NDJSON upstream
+	m["model"] = model
+
+	return json.Marshal(m)
+}
+
+// Execute executes CommandCode requests.
+func (e *CommandCodeExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, _ bool) (*Result, error) {
+	payload, err := prepareCommandCodePayload(model, body)
+	if err != nil {
+		return nil, err
+	}
+
+	base := strings.TrimRight(cred.BaseURL, "/")
+	url := resolveCommandCodeURL(e.BaseURL, base)
+
+	req, err := buildCommandCodeRequest(ctx, url, payload, cred)
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := e.client().Do(req)
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
+		if resp != nil && resp.Body != nil {
+			errClose := resp.Body.Close()
+			if errClose != nil {
+				return nil, fmt.Errorf("closing response body: %w", errClose)
+			}
+		}
+
 		return nil, fmt.Errorf("nil response from upstream")
 	}
 
@@ -80,43 +154,8 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, cred Credentials, mod
 		return &Result{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: resp.Body}, nil
 	}
 
-	// Wrap NDJSON → OpenAI SSE
 	pr, pw := io.Pipe()
-	go func() {
-		defer pw.Close()
-		defer resp.Body.Close()
-
-		state := concerns.NewResponseState()
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-
-			var event map[string]any
-			if json.Unmarshal([]byte(line), &event) != nil {
-				// translator expects map; pass via wrapper
-				event = map[string]any{"_raw": line}
-			}
-			// Prefer raw line path: commandcode translator accepts map with type fields
-			// Re-parse as generic: put line as stream event fields
-			var raw map[string]any
-			if json.Unmarshal([]byte(line), &raw) == nil {
-				chunks := translator.DefaultRegistry.TranslateResponse(
-					translator.FormatCommandCode, translator.FormatOpenAI, raw, state,
-				)
-				for _, c := range chunks {
-					j, _ := json.Marshal(c)
-					pw.Write([]byte("data: " + string(j) + "\n\n"))
-				}
-			}
-		}
-
-		pw.Write([]byte("data: [DONE]\n\n"))
-	}()
+	go processCommandCodeStream(resp.Body, pw)
 
 	h := resp.Header.Clone()
 	h.Set("Content-Type", "text/event-stream")
@@ -126,7 +165,10 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, cred Credentials, mod
 
 func randomUUIDSimple() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		_ = err
+	}
+
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 

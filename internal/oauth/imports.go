@@ -1,6 +1,9 @@
+// Package oauth provides OAuth authentication flows, token lifecycle helpers,
+// and specialized third-party login providers.
 package oauth
 
 import (
+	"context"
 	"encoding/json"
 	"flamerouter/internal/store"
 	"io"
@@ -9,45 +12,91 @@ import (
 	"time"
 )
 
-// SpecializedImport dispatches POST/GET specialized oauth routes that store connections.
-// path is after /api/oauth/ e.g. "cursor/import".
-func (h *Handler) SpecializedImport(w http.ResponseWriter, r *http.Request, path string, st *store.Store) bool {
+func (h *Handler) handleSpecializedCursor(w http.ResponseWriter, r *http.Request, path string, st *store.Store) bool {
 	switch path {
 	case "cursor/import":
 		h.importCursor(w, r, st)
+		return true
 	case "cursor/auto-import":
 		h.autoImportStub(w, r, "cursor")
-	case "codex/import-token":
-		h.importCodexToken(w, r, st)
-	case "codex/bulk-import":
-		h.bulkImportCodex(w, r, st)
-	case "iflow/cookie":
-		h.importIFlowCookie(w, r, st)
-	case "gitlab/pat":
-		h.importGitLabPAT(w, r, st)
-	case "kiro/import":
-		h.importKiro(w, r, st)
-	case "kiro/auto-import":
-		h.autoImportStub(w, r, "kiro")
-	case "kiro/api-key":
-		h.importKiroAPIKey(w, r, st)
-	case "kiro/import-cli-proxy":
-		h.importKiroCLIProxy(w, r, st)
-	case "kiro/social-authorize":
-		h.kiroSocialAuthorize(w, r)
-	case "kiro/social-exchange":
-		h.kiroSocialExchange(w, r, st)
+		return true
 	default:
 		return false
 	}
+}
 
-	return true
+func (h *Handler) handleSpecializedCodex(w http.ResponseWriter, r *http.Request, path string, st *store.Store) bool {
+	switch path {
+	case "codex/import-token":
+		h.importCodexToken(w, r, st)
+		return true
+	case "codex/bulk-import":
+		h.bulkImportCodex(w, r, st)
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Handler) handleSpecializedKiro(w http.ResponseWriter, r *http.Request, path string, st *store.Store) bool {
+	switch path {
+	case "kiro/import":
+		h.importKiro(w, r, st)
+		return true
+	case "kiro/auto-import":
+		h.autoImportStub(w, r, "kiro")
+		return true
+	case "kiro/api-key":
+		h.importKiroAPIKey(w, r, st)
+		return true
+	case "kiro/import-cli-proxy":
+		h.importKiroCLIProxy(w, r, st)
+		return true
+	case "kiro/social-authorize":
+		h.kiroSocialAuthorize(w, r)
+		return true
+	case "kiro/social-exchange":
+		h.kiroSocialExchange(w, r, st)
+		return true
+	default:
+		return false
+	}
+}
+
+// SpecializedImport dispatches POST/GET specialized oauth routes that store connections.
+// path is after /api/oauth/ e.g. "cursor/import".
+func (h *Handler) SpecializedImport(w http.ResponseWriter, r *http.Request, path string, st *store.Store) bool {
+	if h.handleSpecializedCursor(w, r, path, st) {
+		return true
+	}
+
+	if h.handleSpecializedCodex(w, r, path, st) {
+		return true
+	}
+
+	if h.handleSpecializedKiro(w, r, path, st) {
+		return true
+	}
+
+	switch path {
+	case "iflow/cookie":
+		h.importIFlowCookie(w, r, st)
+		return true
+	case "gitlab/pat":
+		h.importGitLabPAT(w, r, st)
+		return true
+	default:
+		return false
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+	}
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
@@ -63,7 +112,7 @@ func requirePOST(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func (h *Handler) autoImportStub(w http.ResponseWriter, r *http.Request, provider string) {
+func (h *Handler) autoImportStub(w http.ResponseWriter, _ *http.Request, provider string) {
 	// Local filesystem import not ported; clients fall back to manual import.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":  false,
@@ -142,24 +191,13 @@ func (h *Handler) importCodexToken(w http.ResponseWriter, r *http.Request, st *s
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "connection": map[string]string{"id": id, "provider": "codex"}})
 }
 
-func (h *Handler) bulkImportCodex(w http.ResponseWriter, r *http.Request, st *store.Store) {
-	if !requirePOST(w, r) {
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid body")
-		return
+func parseRawAccounts(body []byte) []map[string]any {
+	var raw any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil
 	}
 
 	var accounts []map[string]any
-
-	var raw any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
 
 	switch v := raw.(type) {
 	case []any:
@@ -180,53 +218,77 @@ func (h *Handler) bulkImportCodex(w http.ResponseWriter, r *http.Request, st *st
 		}
 	}
 
+	return accounts
+}
+
+func extractAccountTokens(acc map[string]any) (string, string, string) {
+	tok, hasTok := acc["accessToken"].(string)
+	if !hasTok || tok == "" {
+		if t, hasT := acc["access_token"].(string); hasT {
+			tok = t
+		}
+	}
+
+	name, hasName := acc["name"].(string)
+	if !hasName || name == "" {
+		name = "Codex Bulk"
+	}
+
+	rt, hasRT := acc["refreshToken"].(string)
+	if !hasRT || rt == "" {
+		if r, hasR := acc["refresh_token"].(string); hasR {
+			rt = r
+		}
+	}
+
+	return strings.TrimSpace(tok), name, strings.TrimSpace(rt)
+}
+
+func importSingleCodexAccount(st *store.Store, acc map[string]any, i int) (map[string]any, bool) {
+	tok, name, rt := extractAccountTokens(acc)
+	if tok == "" {
+		return map[string]any{"index": i, "success": false, "error": "accessToken required"}, false
+	}
+
+	psd := map[string]any{"authMethod": "bulk_import"}
+
+	id, err := st.CreateOAuthConnection("codex", "oauth", name, tok, rt, "", psd)
+	if err != nil {
+		return map[string]any{"index": i, "success": false, "error": err.Error()}, false
+	}
+
+	return map[string]any{"index": i, "success": true, "id": id}, true
+}
+
+func (h *Handler) bulkImportCodex(w http.ResponseWriter, r *http.Request, st *store.Store) {
+	if !requirePOST(w, r) {
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	accounts := parseRawAccounts(body)
 	if len(accounts) == 0 {
 		writeErr(w, http.StatusBadRequest, "no accounts provided")
 		return
 	}
 
-	var results []map[string]any
-
+	results := make([]map[string]any, 0, len(accounts))
 	okN, failN := 0, 0
 
 	for i, acc := range accounts {
-		tok, _ := acc["accessToken"].(string)
-		if tok == "" {
-			tok, _ = acc["access_token"].(string)
-		}
+		res, success := importSingleCodexAccount(st, acc, i)
+		results = append(results, res)
 
-		if strings.TrimSpace(tok) == "" {
+		if success {
+			okN++
+		} else {
 			failN++
-
-			results = append(results, map[string]any{"index": i, "success": false, "error": "accessToken required"})
-
-			continue
 		}
-
-		name, _ := acc["name"].(string)
-		if name == "" {
-			name = "Codex Bulk"
-		}
-
-		rt, _ := acc["refreshToken"].(string)
-		if rt == "" {
-			rt, _ = acc["refresh_token"].(string)
-		}
-
-		psd := map[string]any{"authMethod": "bulk_import"}
-
-		id, err := st.CreateOAuthConnection("codex", "oauth", name, strings.TrimSpace(tok), strings.TrimSpace(rt), "", psd)
-		if err != nil {
-			failN++
-
-			results = append(results, map[string]any{"index": i, "success": false, "error": err.Error()})
-
-			continue
-		}
-
-		okN++
-
-		results = append(results, map[string]any{"index": i, "success": true, "id": id})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"success": okN, "failed": failN, "results": results})
@@ -305,26 +367,17 @@ func (h *Handler) importGitLabPAT(w http.ResponseWriter, r *http.Request, st *st
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "connection": map[string]string{"id": id, "provider": "gitlab"}})
 }
 
-func (h *Handler) importKiro(w http.ResponseWriter, r *http.Request, st *store.Store) {
-	if !requirePOST(w, r) {
-		return
-	}
+type kiroImportReq struct {
+	RefreshToken string `json:"refreshToken"`
+	ClientID     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
+	Region       string `json:"region"`
+	AuthMethod   string `json:"authMethod"`
+	ProfileArn   string `json:"profileArn"`
+	AccessToken  string `json:"accessToken"`
+}
 
-	var req struct {
-		RefreshToken string `json:"refreshToken"`
-		ClientID     string `json:"clientId"`
-		ClientSecret string `json:"clientSecret"`
-		Region       string `json:"region"`
-		AuthMethod   string `json:"authMethod"`
-		ProfileArn   string `json:"profileArn"`
-		AccessToken  string `json:"accessToken"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.RefreshToken) == "" {
-		writeErr(w, http.StatusBadRequest, "refreshToken is required")
-		return
-	}
-
+func buildKiroImportPSD(req *kiroImportReq) map[string]any {
 	psd := map[string]any{"authMethod": "imported", "provider": "Imported"}
 
 	if req.ClientID != "" && req.ClientSecret != "" {
@@ -343,16 +396,37 @@ func (h *Handler) importKiro(w http.ResponseWriter, r *http.Request, st *store.S
 		psd["profileArn"] = req.ProfileArn
 	}
 
-	access := strings.TrimSpace(req.AccessToken)
-	refresh := strings.TrimSpace(req.RefreshToken)
-	// Best-effort live refresh; store refresh even if refresh fails (offline import).
-	if tok, err := RefreshKiroToken(r.Context(), refresh, psd); err == nil && tok != nil {
+	return psd
+}
+
+func refreshKiroTokensIfPossible(ctx context.Context, access, refresh string, psd map[string]any) (string, string) {
+	if tok, err := RefreshKiroToken(ctx, refresh, psd); err == nil && tok != nil {
 		access = tok.AccessToken
 
 		if tok.RefreshToken != "" {
 			refresh = tok.RefreshToken
 		}
 	}
+
+	return access, refresh
+}
+
+func (h *Handler) importKiro(w http.ResponseWriter, r *http.Request, st *store.Store) {
+	if !requirePOST(w, r) {
+		return
+	}
+
+	var req kiroImportReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.RefreshToken) == "" {
+		writeErr(w, http.StatusBadRequest, "refreshToken is required")
+		return
+	}
+
+	psd := buildKiroImportPSD(&req)
+	access := strings.TrimSpace(req.AccessToken)
+	refresh := strings.TrimSpace(req.RefreshToken)
+
+	access, refresh = refreshKiroTokensIfPossible(r.Context(), access, refresh, psd)
 
 	exp := ""
 	if access != "" {
@@ -401,6 +475,24 @@ func (h *Handler) importKiroAPIKey(w http.ResponseWriter, r *http.Request, st *s
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "connection": map[string]string{"id": id, "provider": "kiro"}})
 }
 
+func extractKiroCLIProxyTokens(raw map[string]any) (string, string) {
+	access, hasAccess := raw["accessToken"].(string)
+	if !hasAccess || access == "" {
+		if a, hasA := raw["access_token"].(string); hasA {
+			access = a
+		}
+	}
+
+	refresh, hasRefresh := raw["refreshToken"].(string)
+	if !hasRefresh || refresh == "" {
+		if r, hasR := raw["refresh_token"].(string); hasR {
+			refresh = r
+		}
+	}
+
+	return access, refresh
+}
+
 func (h *Handler) importKiroCLIProxy(w http.ResponseWriter, r *http.Request, st *store.Store) {
 	if !requirePOST(w, r) {
 		return
@@ -421,16 +513,7 @@ func (h *Handler) importKiroCLIProxy(w http.ResponseWriter, r *http.Request, st 
 		}
 	}
 
-	access, _ := raw["accessToken"].(string)
-	if access == "" {
-		access, _ = raw["access_token"].(string)
-	}
-
-	refresh, _ := raw["refreshToken"].(string)
-	if refresh == "" {
-		refresh, _ = raw["refresh_token"].(string)
-	}
-
+	access, refresh := extractKiroCLIProxyTokens(raw)
 	if access == "" && refresh == "" {
 		writeErr(w, http.StatusBadRequest, "cli proxy auth requires accessToken or refreshToken")
 		return
@@ -441,7 +524,10 @@ func (h *Handler) importKiroCLIProxy(w http.ResponseWriter, r *http.Request, st 
 		psd = p
 	}
 
-	exp, _ := raw["expiresAt"].(string)
+	var exp string
+	if e, ok := raw["expiresAt"].(string); ok {
+		exp = e
+	}
 
 	id, err := st.CreateOAuthConnection("kiro", "oauth", "Kiro CLI Proxy", access, refresh, exp, psd)
 	if err != nil {

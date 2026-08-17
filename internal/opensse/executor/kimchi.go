@@ -28,10 +28,12 @@ var (
 	anthropicKimchiRe = regexp.MustCompile(`(?i)(?:^|[-_/])(?:claude|anthropic)(?:[-_/]|$)`)
 )
 
+// KimchiExecutor wraps DefaultExecutor with Kimchi-specific message cleanups.
 type KimchiExecutor struct {
 	DefaultExecutor
 }
 
+// NewKimchiExecutor constructs a new KimchiExecutor.
 func NewKimchiExecutor(client *http.Client) *KimchiExecutor {
 	if client == nil {
 		client = http.DefaultClient
@@ -44,6 +46,22 @@ func NewKimchiExecutor(client *http.Client) *KimchiExecutor {
 	}
 }
 
+func parseKimchiArraySystem(s []any) string {
+	var parts []string
+
+	for _, part := range s {
+		if str, ok := part.(string); ok && str != "" {
+			parts = append(parts, str)
+		} else if m, ok := part.(map[string]any); ok {
+			if t, okT := m["text"].(string); okT && t != "" {
+				parts = append(parts, t)
+			}
+		}
+	}
+
+	return strings.Join(parts, "\n")
+}
+
 func kimchiSystemToText(system any) string {
 	if system == nil {
 		return ""
@@ -53,21 +71,23 @@ func kimchiSystemToText(system any) string {
 	case string:
 		return s
 	case []any:
-		var parts []string
-
-		for _, part := range s {
-			if str, ok := part.(string); ok && str != "" {
-				parts = append(parts, str)
-			} else if m, ok := part.(map[string]any); ok {
-				if t, ok := m["text"].(string); ok && t != "" {
-					parts = append(parts, t)
-				}
-			}
-		}
-
-		return strings.Join(parts, "\n")
+		return parseKimchiArraySystem(s)
 	default:
 		return fmt.Sprint(s)
+	}
+}
+
+func appendOrPrependKimchiSystem(existingSystem map[string]any, text string, messages []any, body map[string]any) {
+	if existingSystem == nil {
+		body["messages"] = append([]any{map[string]any{"role": "system", "content": text}}, messages...)
+		return
+	}
+
+	switch c := existingSystem["content"].(type) {
+	case string:
+		existingSystem["content"] = fmt.Sprintf("%s\n\n%s", text, c)
+	case []any:
+		existingSystem["content"] = append([]any{map[string]any{"type": "text", "text": text}}, c...)
 	}
 }
 
@@ -90,25 +110,15 @@ func mergeKimchiTopLevelSystem(body map[string]any) {
 	var existingSystem map[string]any
 
 	for _, item := range messages {
-		if msg, ok := item.(map[string]any); ok {
-			if role, _ := msg["role"].(string); role == "system" {
+		if msg, okMsg := item.(map[string]any); okMsg {
+			if role, okRole := msg["role"].(string); okRole && role == "system" {
 				existingSystem = msg
 				break
 			}
 		}
 	}
 
-	if existingSystem == nil {
-		body["messages"] = append([]any{map[string]any{"role": "system", "content": text}}, messages...)
-		return
-	}
-
-	switch c := existingSystem["content"].(type) {
-	case string:
-		existingSystem["content"] = fmt.Sprintf("%s\n\n%s", text, c)
-	case []any:
-		existingSystem["content"] = append([]any{map[string]any{"type": "text", "text": text}}, c...)
-	}
+	appendOrPrependKimchiSystem(existingSystem, text, messages, body)
 }
 
 func stripKimchiMessageArtifacts(body map[string]any) {
@@ -187,10 +197,9 @@ func stripKimchiReasoningContent(body map[string]any) {
 	}
 
 	for _, item := range messages {
-		if msg, ok := item.(map[string]any); ok {
-			role, _ := msg["role"].(string)
-			if role == "assistant" {
-				if rc, ok := msg["reasoning_content"].(string); ok && len(rc) > reasoningPlaceholderMaxLen {
+		if msg, okMsg := item.(map[string]any); okMsg {
+			if role, okRole := msg["role"].(string); okRole && role == "assistant" {
+				if rc, okRC := msg["reasoning_content"].(string); okRC && len(rc) > reasoningPlaceholderMaxLen {
 					delete(msg, "reasoning_content")
 				}
 			}
@@ -228,6 +237,7 @@ func transformKimchiRequest(model string, body map[string]any) map[string]any {
 	return body
 }
 
+// Execute executes Kimchi chat requests with sanitized OpenAI envelope.
 func (e *KimchiExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {

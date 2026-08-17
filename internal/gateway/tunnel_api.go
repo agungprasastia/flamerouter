@@ -62,11 +62,15 @@ func (s *Server) handleTunnelDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = cfTunnel.Disable()
+	if err := cfTunnel.Disable(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	writeJSONOK(w, map[string]any{"success": true, "status": cfTunnel.Status()})
 }
 
-func (s *Server) handleTunnelStatus(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTunnelStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSONOK(w, map[string]any{
 		"tunnel": map[string]any{
 			"status": cfTunnel.Status(),
@@ -116,10 +120,14 @@ func (s *Server) handleTailscaleDisable(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_ = tsTunnel.Disable()
+	if err := tsTunnel.Disable(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	writeJSONOK(w, map[string]any{"success": true, "status": tsTunnel.Status()})
 }
 
-func (s *Server) handleTailscaleCheck(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTailscaleCheck(w http.ResponseWriter, _ *http.Request) {
 	writeJSONOK(w, tsTunnel.Check())
 }

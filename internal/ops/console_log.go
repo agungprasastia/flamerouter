@@ -1,3 +1,4 @@
+// Package ops provides operational utilities such as logging, updater, and shutdown handlers.
 package ops
 
 import (
@@ -17,14 +18,21 @@ type ConsoleLog struct {
 // DefaultConsole is the process-wide translator/dashboard console buffer.
 var DefaultConsole = NewConsoleLog(defaultConsoleMaxLines)
 
+// NewConsoleLog creates a new ConsoleLog ring buffer.
 func NewConsoleLog(max int) *ConsoleLog {
 	if max <= 0 {
 		max = defaultConsoleMaxLines
 	}
 
-	return &ConsoleLog{max: max, lines: make([]string, 0, max), subs: make(map[chan string]struct{})}
+	return &ConsoleLog{
+		max:   max,
+		lines: make([]string, 0, max),
+		subs:  make(map[chan string]struct{}),
+		mu:    sync.Mutex{},
+	}
 }
 
+// Append adds a new log line to the buffer and broadcasts to subscribers.
 func (c *ConsoleLog) Append(line string) {
 	if c == nil {
 		return
@@ -46,6 +54,7 @@ func (c *ConsoleLog) Append(line string) {
 	c.mu.Unlock()
 }
 
+// Get returns a copy of all buffered log lines.
 func (c *ConsoleLog) Get() []string {
 	if c == nil {
 		return nil
@@ -59,6 +68,7 @@ func (c *ConsoleLog) Get() []string {
 	return out
 }
 
+// Clear removes all log lines from the buffer and signals clear to subscribers.
 func (c *ConsoleLog) Clear() {
 	if c == nil {
 		return
@@ -91,6 +101,7 @@ func (c *ConsoleLog) Subscribe() chan string {
 	return ch
 }
 
+// Unsubscribe removes a subscription channel and drains any remaining messages.
 func (c *ConsoleLog) Unsubscribe(ch chan string) {
 	if c == nil || ch == nil {
 		return

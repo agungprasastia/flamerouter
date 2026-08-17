@@ -1,5 +1,6 @@
 package rtk
 
+// Ponytail levels.
 const (
 	PonytailLite  = "lite"
 	PonytailFull  = "full"
@@ -15,6 +16,7 @@ const (
 	ponytailPersist = "ACTIVE EVERY RESPONSE. No drift back to over-building. Still active if unsure."
 )
 
+// PonytailPrompts maps ponytail compression levels to prompt instructions.
 var PonytailPrompts = map[string]string{
 	PonytailLite: ponytailPersona + " Lite: build what's asked, but name the lazier alternative in one line. User picks. " +
 		ponytailLadder + " " + ponytailRules + " " + ponytailOutput + " " + ponytailNotLazy + " " + ponytailPersist,

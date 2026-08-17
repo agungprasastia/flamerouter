@@ -8,22 +8,37 @@ import (
 func (e *Engine) RegisterDefaultResolvers() {
 	rm := tokenrefresh.NewRefreshManager()
 
-	copilot := &CopilotResolver{RefreshManager: rm}
+	copilot := &CopilotResolver{
+		RefreshManager: rm,
+		Client:         nil,
+	}
 	e.Register("github", copilot)
 	e.Register("copilot", copilot)
 
-	kiro := &KiroResolver{RefreshManager: rm}
+	kiro := &KiroResolver{
+		RefreshManager: rm,
+		Client:         nil,
+	}
 	e.Register("kiro", kiro)
 
-	grokCli := &GrokCliResolver{RefreshManager: rm}
+	grokCli := &GrokCliResolver{
+		RefreshManager: rm,
+		Client:         nil,
+	}
 	e.Register("grok-cli", grokCli)
 
-	kimchi := &KimchiResolver{}
+	kimchi := &KimchiResolver{
+		Client: nil,
+	}
 	e.Register("kimchi", kimchi)
 
-	clinepass := &ClinePassResolver{}
+	clinepass := &ClinePassResolver{
+		Client: nil,
+	}
 	e.Register("clinepass", clinepass)
 
-	qoder := &QoderResolver{}
+	qoder := &QoderResolver{
+		Client: nil,
+	}
 	e.Register("qoder", qoder)
 }

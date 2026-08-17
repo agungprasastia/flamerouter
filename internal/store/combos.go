@@ -1,3 +1,4 @@
+// Package store provides SQLite persistent storage for flamerouter state.
 package store
 
 import (
@@ -5,19 +6,25 @@ import (
 	"encoding/json"
 )
 
+// Combo represents a model fallbacks / combo configuration.
 type Combo struct {
 	ID     string   `json:"id"`
 	Name   string   `json:"name"`
 	Models []string `json:"models"`
 }
 
+// ListCombos returns all combos ordered by name.
 func (s *Store) ListCombos() ([]Combo, error) {
 	rows, err := s.db.Query(`SELECT id, name, models FROM combos ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 
-	defer rows.Close()
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	var out []Combo
 
@@ -29,13 +36,17 @@ func (s *Store) ListCombos() ([]Combo, error) {
 			return nil, err
 		}
 
-		_ = json.Unmarshal([]byte(modelsJSON), &c.Models)
+		if err := json.Unmarshal([]byte(modelsJSON), &c.Models); err != nil {
+			c.Models = nil
+		}
+
 		out = append(out, c)
 	}
 
 	return out, rows.Err()
 }
 
+// GetComboByName retrieves a combo by name or returns sql.ErrNoRows if not found.
 func (s *Store) GetComboByName(name string) (*Combo, error) {
 	var c Combo
 
@@ -43,23 +54,27 @@ func (s *Store) GetComboByName(name string) (*Combo, error) {
 
 	err := s.db.QueryRow(`SELECT id, name, models FROM combos WHERE name=?`, name).
 		Scan(&c.ID, &c.Name, &modelsJSON)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-
 	if err != nil {
 		return nil, err
 	}
 
-	_ = json.Unmarshal([]byte(modelsJSON), &c.Models)
+	if err := json.Unmarshal([]byte(modelsJSON), &c.Models); err != nil {
+		c.Models = nil
+	}
 
 	return &c, nil
 }
 
+// CreateCombo saves a new combo model list.
 func (s *Store) CreateCombo(name string, models []string) (string, error) {
 	id := newID()
-	b, _ := json.Marshal(models)
-	_, err := s.db.Exec(
+
+	b, err := json.Marshal(models)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = s.db.Exec(
 		`INSERT INTO combos(id, name, models) VALUES(?,?,?)`,
 		id, name, string(b),
 	)
@@ -67,15 +82,23 @@ func (s *Store) CreateCombo(name string, models []string) (string, error) {
 	return id, err
 }
 
+// UpdateCombo updates models list for a combo id.
 func (s *Store) UpdateCombo(id, name string, models []string) error {
-	b, _ := json.Marshal(models)
+	b, err := json.Marshal(models)
+	if err != nil {
+		return err
+	}
 
 	res, err := s.db.Exec(`UPDATE combos SET name=?, models=? WHERE id=?`, name, string(b), id)
 	if err != nil {
 		return err
 	}
 
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
 	if n == 0 {
 		return sql.ErrNoRows
 	}
@@ -83,13 +106,18 @@ func (s *Store) UpdateCombo(id, name string, models []string) error {
 	return nil
 }
 
+// DeleteCombo deletes a combo by id.
 func (s *Store) DeleteCombo(id string) error {
 	res, err := s.db.Exec(`DELETE FROM combos WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
 
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
 	if n == 0 {
 		return sql.ErrNoRows
 	}

@@ -79,15 +79,17 @@ func TestTestBatchByIDs(t *testing.T) {
 	}
 
 	var m map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &m)
+	if err := json.Unmarshal(rr.Body.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
 
-	results, _ := m["results"].([]any)
-	if len(results) != 1 {
+	results, ok := m["results"].([]any)
+	if !ok || len(results) != 1 {
 		t.Fatalf("%+v", m)
 	}
 
-	r0 := results[0].(map[string]any)
-	if r0["valid"] != true {
+	r0, ok := results[0].(map[string]any)
+	if !ok || r0["valid"] != true {
 		t.Fatalf("%+v", r0)
 	}
 }
@@ -103,7 +105,9 @@ func TestKiloFreeModelsRoute(t *testing.T) {
 	}
 
 	var m map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &m)
+	if err := json.Unmarshal(rr.Body.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, ok := m["models"]; !ok && rr.Code == http.StatusOK {
 		t.Fatalf("%+v", m)

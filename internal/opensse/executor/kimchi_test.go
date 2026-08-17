@@ -3,14 +3,13 @@ package executor
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestKimchi_TransformRequest(t *testing.T) {
-	body := map[string]any{
+func buildKimchiTestPayload() map[string]any {
+	return map[string]any{
 		"system":            "System rule from top-level",
 		"anthropic_version": "2023-06-01",
 		"thinking":          map[string]any{"type": "enabled"},
@@ -47,8 +46,10 @@ func TestKimchi_TransformRequest(t *testing.T) {
 			},
 		},
 	}
+}
 
-	res := transformKimchiRequest("claude-3-5-sonnet", body)
+func verifyKimchiTopLevelAndSystem(t *testing.T, res map[string]any) {
+	t.Helper()
 
 	if _, hasSys := res["system"]; hasSys {
 		t.Fatalf("expected top-level system to be deleted")
@@ -66,21 +67,34 @@ func TestKimchi_TransformRequest(t *testing.T) {
 		t.Fatalf("expected reasoning_effort to be dropped for claude model")
 	}
 
-	msgs := res["messages"].([]any)
-	// Leading system message merged
-	firstMsg := msgs[0].(map[string]any)
-	if firstMsg["role"] != "system" || firstMsg["content"] != "System rule from top-level" {
-		t.Fatalf("expected merged system message, got %v", firstMsg)
+	msgs, ok := res["messages"].([]any)
+	if !ok || len(msgs) == 0 {
+		t.Fatalf("expected messages slice")
 	}
 
-	userMsg := msgs[1].(map[string]any)
+	firstMsg, okMsg := msgs[0].(map[string]any)
+	if !okMsg || firstMsg["role"] != "system" || firstMsg["content"] != "System rule from top-level" {
+		t.Fatalf("expected merged system message, got %v", firstMsg)
+	}
+}
+
+func verifyKimchiUserMsg(t *testing.T, userMsg map[string]any) {
+	t.Helper()
+
 	if _, hasCC := userMsg["cache_control"]; hasCC {
 		t.Fatalf("expected msg cache_control dropped")
 	}
 
-	parts := userMsg["content"].([]any)
+	parts, okParts := userMsg["content"].([]any)
+	if !okParts || len(parts) == 0 {
+		t.Fatalf("expected user message content array")
+	}
 
-	part0 := parts[0].(map[string]any)
+	part0, okP0 := parts[0].(map[string]any)
+	if !okP0 {
+		t.Fatalf("part0 is not map")
+	}
+
 	if _, hasCC := part0["cache_control"]; hasCC {
 		t.Fatalf("expected content cache_control dropped")
 	}
@@ -88,22 +102,86 @@ func TestKimchi_TransformRequest(t *testing.T) {
 	if _, hasSig := part0["signature"]; hasSig {
 		t.Fatalf("expected signature dropped")
 	}
+}
 
-	asstMsg := msgs[2].(map[string]any)
+func verifyKimchiAsstMsgs(t *testing.T, msgs []any) {
+	t.Helper()
+
+	asstMsg, okA := msgs[2].(map[string]any)
+	if !okA {
+		t.Fatalf("asstMsg is not map")
+	}
+
 	if _, hasRC := asstMsg["reasoning_content"]; hasRC {
 		t.Fatalf("expected long reasoning_content to be stripped")
 	}
 
-	asstMsgShort := msgs[3].(map[string]any)
-	if rc, _ := asstMsgShort["reasoning_content"].(string); rc != " " {
-		t.Fatalf("expected short reasoning_content placeholder preserved, got %q", rc)
+	asstMsgShort, okAS := msgs[3].(map[string]any)
+	if !okAS {
+		t.Fatalf("asstMsgShort is not map")
 	}
 
-	tools := res["tools"].([]any)
+	rc, okRC := asstMsgShort["reasoning_content"].(string)
+	if !okRC || rc != " " {
+		t.Fatalf("expected short reasoning_content placeholder preserved, got %q", rc)
+	}
+}
 
-	tool0 := tools[0].(map[string]any)
+func verifyKimchiUserAndAsst(t *testing.T, msgs []any) {
+	t.Helper()
+
+	userMsg, okU := msgs[1].(map[string]any)
+	if !okU {
+		t.Fatalf("user message is not map")
+	}
+
+	verifyKimchiUserMsg(t, userMsg)
+	verifyKimchiAsstMsgs(t, msgs)
+}
+
+func verifyKimchiMessagesAndTools(t *testing.T, res map[string]any) {
+	t.Helper()
+
+	msgs, ok := res["messages"].([]any)
+	if !ok || len(msgs) < 4 {
+		t.Fatalf("expected at least 4 messages")
+	}
+
+	verifyKimchiUserAndAsst(t, msgs)
+
+	tools, okT := res["tools"].([]any)
+	if !okT || len(tools) == 0 {
+		t.Fatalf("expected tools slice")
+	}
+
+	tool0, okT0 := tools[0].(map[string]any)
+	if !okT0 {
+		t.Fatalf("tool0 is not map")
+	}
+
 	if _, hasCC := tool0["cache_control"]; hasCC {
 		t.Fatalf("expected tool cache_control dropped")
+	}
+}
+
+func TestKimchi_TransformRequest(t *testing.T) {
+	body := buildKimchiTestPayload()
+	res := transformKimchiRequest("claude-3-5-sonnet", body)
+
+	verifyKimchiTopLevelAndSystem(t, res)
+	verifyKimchiMessagesAndTools(t, res)
+}
+
+func verifyKimchiMockResponse(t *testing.T, res *Result, receivedBody map[string]any) {
+	t.Helper()
+
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %v", res)
+	}
+
+	msgs, ok := receivedBody["messages"].([]any)
+	if !ok || len(msgs) != 2 {
+		t.Fatalf("expected 2 messages received, got %v", receivedBody)
 	}
 }
 
@@ -111,44 +189,51 @@ func TestKimchi_ExecuteMock(t *testing.T) {
 	var receivedBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+		err := json.NewDecoder(r.Body).Decode(&receivedBody)
+		if err != nil {
+			t.Errorf("decoding request: %v", err)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+
+		_, err = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+		if err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
 	ex := NewKimchiExecutor(srv.Client())
 	cred := Credentials{
-		APIKey:  "kimchi-key",
-		BaseURL: srv.URL + "/v1",
+		ProviderSpecificData: nil,
+		AccessToken:          "",
+		RefreshToken:         "",
+		ProjectID:            "",
+		APIKey:               "kimchi-key",
+		BaseURL:              srv.URL + "/v1",
 	}
-	body, _ := json.Marshal(map[string]any{
+
+	body, err := json.Marshal(map[string]any{
 		"system": "System instructions",
 		"messages": []any{
 			map[string]any{"role": "user", "content": "hello"},
 		},
 		"client_metadata": map[string]any{"foo": "bar"},
 	})
+	if err != nil {
+		t.Fatalf("json marshal error: %v", err)
+	}
 
 	res, err := ex.Execute(context.Background(), cred, "kimchi/qwen", body, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer res.Body.Close()
 
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", res.StatusCode)
-	}
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			t.Errorf("closing res body: %v", err)
+		}
+	}()
 
-	if _, hasCM := receivedBody["client_metadata"]; hasCM {
-		t.Fatalf("expected client_metadata dropped")
-	}
-
-	msgs, ok := receivedBody["messages"].([]any)
-	if !ok || len(msgs) < 2 {
-		t.Fatalf("expected system message prepended to messages, got %v", receivedBody["messages"])
-	}
-
-	_, _ = io.ReadAll(res.Body)
+	verifyKimchiMockResponse(t, res, receivedBody)
 }

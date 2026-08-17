@@ -45,32 +45,47 @@ func resolveThinkingFormat(targetFormat, model, provider string) string {
 	return "openai"
 }
 
-func toBudget(cfg map[string]any, rng *ThinkingRange) (budget int, ok bool, auto bool) {
-	mode, _ := cfg["mode"].(string)
-	if mode == "auto" {
+func parseBudgetVal(cfg map[string]any) (int, bool) {
+	switch b := cfg["budget"].(type) {
+	case int:
+		return b, true
+	case float64:
+		return int(b), true
+	default:
+		return 0, false
+	}
+}
+
+func toBudgetModeVal(mode string, cfg map[string]any) (budget int, ok bool, auto bool) {
+	switch mode {
+	case "auto":
 		return -1, true, true
+	case "budget":
+		budget, found := parseBudgetVal(cfg)
+		return budget, found, false
+	case "level":
+		level, okLevel := cfg["level"].(string)
+		if !okLevel {
+			return 0, false, false
+		}
+
+		budget, found := EffortToBudget(level)
+
+		return budget, found, false
+	default:
+		return 0, false, false
+	}
+}
+
+func toBudget(cfg map[string]any, rng *ThinkingRange) (budget int, ok bool, auto bool) {
+	mode, okMode := cfg["mode"].(string)
+	if !okMode {
+		return 0, false, false
 	}
 
-	if mode == "budget" {
-		switch b := cfg["budget"].(type) {
-		case int:
-			budget = b
-		case float64:
-			budget = int(b)
-		default:
-			return 0, false, false
-		}
-	} else if mode == "level" {
-		level, _ := cfg["level"].(string)
-
-		b, found := EffortToBudget(level)
-		if !found {
-			return 0, false, false
-		}
-
-		budget = b
-	} else {
-		return 0, false, false
+	budget, ok, auto = toBudgetModeVal(mode, cfg)
+	if !ok || auto {
+		return budget, ok, auto
 	}
 
 	if rng != nil {
@@ -87,7 +102,11 @@ func toBudget(cfg map[string]any, rng *ThinkingRange) (budget int, ok bool, auto
 }
 
 func toLevel(cfg map[string]any) string {
-	mode, _ := cfg["mode"].(string)
+	mode, ok := cfg["mode"].(string)
+	if !ok {
+		return ""
+	}
+
 	if mode == "level" {
 		if l, ok := cfg["level"].(string); ok {
 			return l
@@ -120,7 +139,7 @@ func toLevel(cfg map[string]any) string {
 func toGeminiThinkingLevel(cfg map[string]any) string {
 	raw := "high"
 
-	if mode, _ := cfg["mode"].(string); mode != "auto" {
+	if mode, ok := cfg["mode"].(string); !ok || mode != "auto" {
 		if l := toLevel(cfg); l != "" {
 			raw = l
 		}
@@ -231,9 +250,190 @@ func stripAllThinking(body map[string]any) {
 	}
 }
 
+func applyOpenAIThinking(body map[string]any, eff map[string]any, none, canDisable bool) {
+	if none && canDisable {
+		body["reasoning_effort"] = "none"
+		return
+	}
+
+	level := toLevel(eff)
+	if level == "max" {
+		level = "xhigh"
+	}
+
+	if level != "" {
+		body["reasoning_effort"] = level
+	}
+}
+
+func applyClaudeAdaptiveThinking(body map[string]any, eff map[string]any, none, canDisable bool) {
+	if none && canDisable {
+		body["thinking"] = map[string]any{"type": "disabled"}
+		return
+	}
+
+	body["thinking"] = map[string]any{"type": "adaptive"}
+	level := toLevel(eff)
+
+	if level == "xhigh" {
+		level = "high"
+	}
+
+	body["output_config"] = map[string]any{"effort": level}
+}
+
+func applyClaudeBudgetThinking(body map[string]any, eff map[string]any, none, canDisable bool, caps *Capabilities) {
+	if none && canDisable {
+		body["thinking"] = map[string]any{"type": "disabled"}
+		return
+	}
+
+	budget, ok, auto := toBudget(eff, capsThinkingRange(caps))
+	if auto || (ok && budget == -1) {
+		body["thinking"] = map[string]any{"type": "enabled"}
+		return
+	}
+
+	if !ok || budget <= 0 {
+		budget = 8192
+	}
+
+	body["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
+}
+
+func applyGeminiLevelThinking(body map[string]any, eff map[string]any, none bool, caps *Capabilities) {
+	level := "minimal"
+	if !none {
+		level = toGeminiThinkingLevel(eff)
+	}
+
+	setGeminiThinking(body, map[string]any{
+		"thinkingLevel":   level,
+		"includeThoughts": level != "minimal",
+	})
+
+	floor := geminiLevelOutputFloor[level]
+	if floor == 0 {
+		floor = geminiLevelOutputFloor["high"]
+	}
+
+	ensureGeminiOutputFloor(body, floor, caps)
+}
+
+func applyGeminiBudgetThinking(body map[string]any, eff map[string]any, none, canDisable bool, caps *Capabilities) {
+	if none && canDisable {
+		setGeminiThinking(body, map[string]any{"thinkingBudget": 0, "includeThoughts": false})
+		return
+	}
+
+	budget, ok, auto := toBudget(eff, capsThinkingRange(caps))
+	tb := -1
+
+	if ok && !auto {
+		tb = budget
+	}
+
+	setGeminiThinking(body, map[string]any{"thinkingBudget": tb, "includeThoughts": true})
+	ensureGeminiOutputFloor(body, geminiBudgetOutputFloor(tb), caps)
+}
+
+func applyQwenThinking(body map[string]any, eff map[string]any, none, canDisable bool, caps *Capabilities) {
+	if none && canDisable {
+		body["enable_thinking"] = false
+		return
+	}
+
+	body["enable_thinking"] = true
+	budget, ok, auto := toBudget(eff, capsThinkingRange(caps))
+
+	if ok && !auto && budget > 0 {
+		body["thinking_budget"] = budget
+	}
+}
+
+func applyDeepseekThinking(body map[string]any, eff map[string]any, none, canDisable bool) {
+	if none && canDisable {
+		body["thinking"] = map[string]any{"type": "disabled"}
+		return
+	}
+
+	body["thinking"] = map[string]any{"type": "enabled"}
+	level := toLevel(eff)
+
+	if level == "xhigh" || level == "max" {
+		body["reasoning_effort"] = "max"
+	} else {
+		body["reasoning_effort"] = "high"
+	}
+}
+
+func applyZaiThinking(body map[string]any, none, canDisable bool) {
+	if none && canDisable {
+		body["enable_thinking"] = false
+		delete(body, "thinking")
+
+		return
+	}
+
+	body["thinking"] = map[string]any{"type": "enabled"}
+}
+
+func applyKimiThinking(body map[string]any, eff map[string]any, none, canDisable bool) {
+	if none && canDisable {
+		body["thinking"] = map[string]any{"type": "disabled"}
+		return
+	}
+
+	if effort := toKimiReasoningEffort(eff); effort != "" {
+		body["reasoning_effort"] = effort
+	}
+}
+
+func applyMinimaxThinking(body map[string]any, none, canDisable bool) {
+	t := "adaptive"
+	if none && canDisable {
+		t = "disabled"
+	}
+
+	body["thinking"] = map[string]any{"type": t}
+}
+
+func applyHunyuanThinking(body map[string]any, eff map[string]any, none, canDisable bool, caps *Capabilities) {
+	if none && canDisable {
+		body["thinking"] = map[string]any{"type": "disabled"}
+		return
+	}
+
+	budget, ok, auto := toBudget(eff, capsThinkingRange(caps))
+	if auto || (ok && budget == -1) {
+		body["thinking"] = map[string]any{"type": "enabled"}
+	} else {
+		if !ok || budget <= 0 {
+			budget = 8192
+		}
+
+		body["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
+	}
+}
+
+func applyStepThinking(body map[string]any, eff map[string]any, none, canDisable bool) {
+	if none && canDisable {
+		return
+	}
+
+	level := toLevel(eff)
+	if level != "" {
+		if level == "xhigh" || level == "max" {
+			level = "high"
+		}
+
+		body["reasoning_effort"] = level
+	}
+}
+
 func applyThinkingFormat(fmt string, body map[string]any, cfg map[string]any, caps *Capabilities) {
-	mode, _ := cfg["mode"].(string)
-	none := mode == "none"
+	mode, okMode := cfg["mode"].(string)
+	none := okMode && mode == "none"
 	canDisable := caps == nil || caps.ThinkingCanDisable
 	eff := cfg
 
@@ -242,165 +442,54 @@ func applyThinkingFormat(fmt string, body map[string]any, cfg map[string]any, ca
 		none = false
 	}
 
+	if applyThinkingFormatVendor1(fmt, body, eff, none, canDisable, caps) {
+		return
+	}
+
+	applyThinkingFormatVendor2(fmt, body, eff, none, canDisable, caps)
+}
+
+func applyThinkingFormatVendor1(fmt string, body map[string]any, eff map[string]any, none, canDisable bool, caps *Capabilities) bool {
 	switch fmt {
 	case "openai":
-		if none && canDisable {
-			body["reasoning_effort"] = "none"
-			return
-		}
-
-		level := toLevel(eff)
-		if level == "max" {
-			level = "xhigh"
-		}
-
-		if level != "" {
-			body["reasoning_effort"] = level
-		}
+		applyOpenAIThinking(body, eff, none, canDisable)
+		return true
 	case "claude-adaptive":
-		if none && canDisable {
-			body["thinking"] = map[string]any{"type": "disabled"}
-			return
-		}
-
-		body["thinking"] = map[string]any{"type": "adaptive"}
-
-		level := toLevel(eff)
-		if level == "xhigh" {
-			level = "high"
-		}
-
-		body["output_config"] = map[string]any{"effort": level}
+		applyClaudeAdaptiveThinking(body, eff, none, canDisable)
+		return true
 	case "claude-budget":
-		if none && canDisable {
-			body["thinking"] = map[string]any{"type": "disabled"}
-			return
-		}
-
-		budget, ok, auto := toBudget(eff, capsThinkingRange(caps))
-		if auto || (ok && budget == -1) {
-			body["thinking"] = map[string]any{"type": "enabled"}
-		} else {
-			if !ok || budget <= 0 {
-				budget = 8192
-			}
-
-			body["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
-		}
+		applyClaudeBudgetThinking(body, eff, none, canDisable, caps)
+		return true
 	case "gemini-level":
-		level := "minimal"
-		if !none {
-			level = toGeminiThinkingLevel(eff)
-		}
-
-		setGeminiThinking(body, map[string]any{
-			"thinkingLevel":   level,
-			"includeThoughts": level != "minimal",
-		})
-
-		floor := geminiLevelOutputFloor[level]
-		if floor == 0 {
-			floor = geminiLevelOutputFloor["high"]
-		}
-
-		ensureGeminiOutputFloor(body, floor, caps)
+		applyGeminiLevelThinking(body, eff, none, caps)
+		return true
 	case "gemini-budget":
-		if none && canDisable {
-			setGeminiThinking(body, map[string]any{"thinkingBudget": 0, "includeThoughts": false})
-			return
-		}
-
-		budget, ok, auto := toBudget(eff, capsThinkingRange(caps))
-		tb := -1
-
-		if ok && !auto {
-			tb = budget
-		}
-
-		setGeminiThinking(body, map[string]any{"thinkingBudget": tb, "includeThoughts": true})
-		ensureGeminiOutputFloor(body, geminiBudgetOutputFloor(tb), caps)
+		applyGeminiBudgetThinking(body, eff, none, canDisable, caps)
+		return true
 	case "zai":
-		if none && canDisable {
-			body["enable_thinking"] = false
-			delete(body, "thinking")
+		applyZaiThinking(body, none, canDisable)
+		return true
+	default:
+		return false
+	}
+}
 
-			return
-		}
-
-		body["thinking"] = map[string]any{"type": "enabled"}
+func applyThinkingFormatVendor2(fmt string, body map[string]any, eff map[string]any, none, canDisable bool, caps *Capabilities) {
+	switch fmt {
 	case "qwen":
-		if none && canDisable {
-			body["enable_thinking"] = false
-			return
-		}
-
-		body["enable_thinking"] = true
-		budget, ok, auto := toBudget(eff, capsThinkingRange(caps))
-
-		if ok && !auto && budget > 0 {
-			body["thinking_budget"] = budget
-		}
+		applyQwenThinking(body, eff, none, canDisable, caps)
 	case "deepseek":
-		if none && canDisable {
-			body["thinking"] = map[string]any{"type": "disabled"}
-			return
-		}
-
-		body["thinking"] = map[string]any{"type": "enabled"}
-		level := toLevel(eff)
-
-		if level == "xhigh" || level == "max" {
-			body["reasoning_effort"] = "max"
-		} else {
-			body["reasoning_effort"] = "high"
-		}
+		applyDeepseekThinking(body, eff, none, canDisable)
 	case "kimi":
-		if none && canDisable {
-			body["thinking"] = map[string]any{"type": "disabled"}
-			return
-		}
-
-		if effort := toKimiReasoningEffort(eff); effort != "" {
-			body["reasoning_effort"] = effort
-		}
+		applyKimiThinking(body, eff, none, canDisable)
 	case "minimax":
-		t := "adaptive"
-		if none && canDisable {
-			t = "disabled"
-		}
-
-		body["thinking"] = map[string]any{"type": t}
+		applyMinimaxThinking(body, none, canDisable)
 	case "hunyuan":
-		if none && canDisable {
-			body["thinking"] = map[string]any{"type": "disabled"}
-			return
-		}
-
-		budget, ok, auto := toBudget(eff, capsThinkingRange(caps))
-		if auto || (ok && budget == -1) {
-			body["thinking"] = map[string]any{"type": "enabled"}
-		} else {
-			if !ok || budget <= 0 {
-				budget = 8192
-			}
-
-			body["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
-		}
+		applyHunyuanThinking(body, eff, none, canDisable, caps)
 	case "step":
-		if none && canDisable {
-			return
-		}
-
-		level := toLevel(eff)
-		if level != "" {
-			if level == "xhigh" || level == "max" {
-				level = "high"
-			}
-
-			body["reasoning_effort"] = level
-		}
+		applyStepThinking(body, eff, none, canDisable)
 	case "kiro":
-		// handled via system-tag injection in openai-to-kiro
+		_ = fmt
 	}
 }
 

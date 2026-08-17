@@ -27,14 +27,22 @@ func init() {
 }
 
 const (
-	MimoBootstrapURL      = "https://api.xiaomimimo.com/api/free-ai/bootstrap"
-	MimoChatURL           = "https://api.xiaomimimo.com/v1/chat/completions"
-	MimoSessionAffinity   = "ses_"
-	MimoSessionIDLength   = 24
+	// MimoBootstrapURL is the public endpoint for MiMo bootstrap token acquisition.
+	MimoBootstrapURL = "https://api.xiaomimimo.com/api/free-ai/bootstrap"
+	// MimoChatURL is the chat completions URL.
+	MimoChatURL = "https://api.xiaomimimo.com/v1/chat/completions"
+	// MimoSessionAffinity is the prefix for session affinity.
+	MimoSessionAffinity = "ses_"
+	// MimoSessionIDLength is the random session ID length.
+	MimoSessionIDLength = 24
+	// MimoJWTFallbackTTLSec is default fallback TTL.
 	MimoJWTFallbackTTLSec = 3000
+	// MimoJWTExpiryBufferMS is the cache buffer before expiry.
 	MimoJWTExpiryBufferMS = 300000 // 5 minutes in ms
-	MimoSessionChars      = "abcdefghijklmnopqrstuvwxyz0123456789"
-	MimoSystemMarker      = "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks."
+	// MimoSessionChars is valid session characters.
+	MimoSessionChars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	// MimoSystemMarker is system instructions for MiMo free.
+	MimoSystemMarker = "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks."
 )
 
 var mimoUserAgents = []string{
@@ -43,6 +51,7 @@ var mimoUserAgents = []string{
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 }
 
+// MimoFreeExecutor handles requests to Xiaomi MiMo Free tier.
 type MimoFreeExecutor struct {
 	sessionID    string
 	bootstrapURL string
@@ -53,6 +62,7 @@ type MimoFreeExecutor struct {
 	jwtMu        sync.Mutex
 }
 
+// NewMimoFreeExecutor creates a new MimoFreeExecutor.
 func NewMimoFreeExecutor(client *http.Client) *MimoFreeExecutor {
 	if client == nil {
 		client = http.DefaultClient
@@ -60,13 +70,18 @@ func NewMimoFreeExecutor(client *http.Client) *MimoFreeExecutor {
 
 	return &MimoFreeExecutor{
 		Base: Base{
-			Provider: "mimo-free",
 			Client:   client,
+			Provider: "mimo-free",
 			BaseURL:  MimoChatURL,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 		sessionID:    generateMimoSessionID(),
 		bootstrapURL: MimoBootstrapURL,
 		chatURL:      MimoChatURL,
+		cachedJWT:    "",
+		jwtExpiresAt: 0,
+		jwtMu:        sync.Mutex{},
 	}
 }
 
@@ -76,7 +91,7 @@ func generateMimoFingerprint() string {
 		username = u.Username
 	}
 
-	hostname, _ := os.Hostname()
+	hostname, _ := os.Hostname() // nolint:errcheck
 	seed := fmt.Sprintf("%s|%s|%s|%s|%s", hostname, runtime.GOOS, runtime.GOARCH, "unknown-cpu", username)
 	h := sha256.Sum256([]byte(seed))
 
@@ -101,28 +116,33 @@ func generateMimoSessionID() string {
 	return sb.String()
 }
 
+func decodeJWTSegment(payloadSegment string) ([]byte, error) {
+	if rem := len(payloadSegment) % 4; rem > 0 {
+		payloadSegment += strings.Repeat("=", 4-rem)
+	}
+
+	data, err := base64.URLEncoding.DecodeString(payloadSegment)
+	if err != nil {
+		data, err = base64.StdEncoding.DecodeString(payloadSegment)
+	}
+
+	return data, err
+}
+
 func parseMimoJWTExp(jwt string) int64 {
 	parts := strings.Split(jwt, ".")
-	if len(parts) >= 2 {
-		payloadSegment := parts[1]
-		// Add base64 padding if needed
-		if rem := len(payloadSegment) % 4; rem > 0 {
-			payloadSegment += strings.Repeat("=", 4-rem)
+	if len(parts) < 2 {
+		return time.Now().UnixMilli() + MimoJWTFallbackTTLSec*1000
+	}
+
+	data, err := decodeJWTSegment(parts[1])
+	if err == nil {
+		var payload struct {
+			Exp int64 `json:"exp"`
 		}
 
-		data, err := base64.URLEncoding.DecodeString(payloadSegment)
-		if err != nil {
-			data, err = base64.StdEncoding.DecodeString(payloadSegment)
-		}
-
-		if err == nil {
-			var payload struct {
-				Exp int64 `json:"exp"`
-			}
-
-			if err := json.Unmarshal(data, &payload); err == nil && payload.Exp > 0 {
-				return payload.Exp * 1000
-			}
+		if err := json.Unmarshal(data, &payload); err == nil && payload.Exp > 0 {
+			return payload.Exp * 1000
 		}
 	}
 
@@ -141,8 +161,8 @@ func injectMimoSystemMarker(body map[string]any) map[string]any {
 
 	for _, item := range messages {
 		if msg, ok := item.(map[string]any); ok {
-			role, _ := msg["role"].(string)
-			content, _ := msg["content"].(string)
+			role, _ := msg["role"].(string)       // nolint:errcheck
+			content, _ := msg["content"].(string) // nolint:errcheck
 
 			if role == "system" && strings.Contains(content, MimoSystemMarker) {
 				return body
@@ -173,6 +193,34 @@ func (e *MimoFreeExecutor) resetJWTCache() {
 	e.jwtExpiresAt = 0
 }
 
+func (e *MimoFreeExecutor) parseBootstrapResponse(resp *http.Response) (string, error) {
+	if resp == nil || resp.Body == nil {
+		return "", fmt.Errorf("nil response from upstream")
+	}
+
+	defer func() {
+		_ = resp.Body.Close() // nolint:errcheck
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("MiMo bootstrap failed: %d", resp.StatusCode)
+	}
+
+	var data struct {
+		JWT string `json:"jwt"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", fmt.Errorf("decode bootstrap response: %w", err)
+	}
+
+	if data.JWT == "" {
+		return "", errors.New("MiMo bootstrap returned no JWT")
+	}
+
+	return data.JWT, nil
+}
+
 func (e *MimoFreeExecutor) bootstrapJWT(ctx context.Context) (string, error) {
 	e.jwtMu.Lock()
 	if e.cachedJWT != "" && time.Now().UnixMilli() < e.jwtExpiresAt-MimoJWTExpiryBufferMS {
@@ -183,7 +231,7 @@ func (e *MimoFreeExecutor) bootstrapJWT(ctx context.Context) (string, error) {
 	}
 	e.jwtMu.Unlock()
 
-	reqBody, _ := json.Marshal(map[string]string{
+	reqBody, _ := json.Marshal(map[string]string{ // nolint:errcheck
 		"client": generateMimoFingerprint(),
 	})
 
@@ -204,35 +252,25 @@ func (e *MimoFreeExecutor) bootstrapJWT(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if resp == nil || resp.Body == nil {
-		return "", fmt.Errorf("nil response from upstream")
-	}
-	defer resp.Body.Close()
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close() // nolint:errcheck
+		}
+	}()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("MiMo bootstrap failed: %d", resp.StatusCode)
-	}
-
-	var data struct {
-		JWT string `json:"jwt"`
+	token, err := e.parseBootstrapResponse(resp)
+	if err != nil {
+		return "", err
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return "", fmt.Errorf("decode bootstrap response: %w", err)
-	}
-
-	if data.JWT == "" {
-		return "", errors.New("MiMo bootstrap returned no JWT")
-	}
-
-	exp := parseMimoJWTExp(data.JWT)
+	exp := parseMimoJWTExp(token)
 
 	e.jwtMu.Lock()
-	e.cachedJWT = data.JWT
+	e.cachedJWT = token
 	e.jwtExpiresAt = exp
 	e.jwtMu.Unlock()
 
-	return data.JWT, nil
+	return token, nil
 }
 
 func (e *MimoFreeExecutor) buildHeaders(stream bool, jwt string) http.Header {
@@ -260,12 +298,7 @@ func (e *MimoFreeExecutor) buildHeaders(stream bool, jwt string) http.Header {
 	return h
 }
 
-func (e *MimoFreeExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
-	jwt, err := e.bootstrapJWT(ctx)
-	if err != nil {
-		return nil, err
-	}
-
+func prepareMimoPayload(model string, body []byte, stream bool) ([]byte, error) {
 	var parsedBody map[string]any
 	if err := json.Unmarshal(body, &parsedBody); err != nil {
 		return nil, err
@@ -278,7 +311,17 @@ func (e *MimoFreeExecutor) Execute(ctx context.Context, cred Credentials, model 
 		transformedBody["model"] = model
 	}
 
-	payload, err := json.Marshal(transformedBody)
+	return json.Marshal(transformedBody)
+}
+
+// Execute executes requests against Xiaomi MiMo Free.
+func (e *MimoFreeExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+	jwt, err := e.bootstrapJWT(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	payload, err := prepareMimoPayload(model, body, stream)
 	if err != nil {
 		return nil, err
 	}
@@ -303,12 +346,12 @@ func (e *MimoFreeExecutor) Execute(ctx context.Context, cred Credentials, model 
 		DrainBody(res.Body)
 		e.resetJWTCache()
 
-		jwt, err = e.bootstrapJWT(ctx)
-		if err != nil {
-			return nil, err
+		freshJWT, errBoot := e.bootstrapJWT(ctx)
+		if errBoot != nil {
+			return nil, errBoot
 		}
 
-		headers.Set("Authorization", "Bearer "+jwt)
+		headers.Set("Authorization", "Bearer "+freshJWT)
 
 		return e.DoPOST(ctx, chatURL, headers, payload)
 	}

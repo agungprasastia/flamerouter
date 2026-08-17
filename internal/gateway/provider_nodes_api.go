@@ -3,12 +3,13 @@ package gateway
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flamerouter/internal/store"
 	"net/http"
 	"strings"
 )
 
-func (s *Server) handleListProviderNodes(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListProviderNodes(w http.ResponseWriter, _ *http.Request) {
 	nodes, err := s.st.GetProviderNodes()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
@@ -30,32 +31,36 @@ func (s *Server) handleListProviderNodes(w http.ResponseWriter, r *http.Request)
 	writeJSONOK(w, map[string]any{"nodes": list})
 }
 
-func (s *Server) handleCreateProviderNode(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name    string `json:"name"`
-		Prefix  string `json:"prefix"`
-		APIType string `json:"apiType"`
-		BaseURL string `json:"baseUrl"`
-		Type    string `json:"type"`
+type providerNodeCreateReq struct {
+	Name    string `json:"name"`
+	Prefix  string `json:"prefix"`
+	APIType string `json:"apiType"`
+	BaseURL string `json:"baseUrl"`
+	Type    string `json:"type"`
+}
+
+func normalizeNodeBaseURL(req *providerNodeCreateReq) {
+	req.BaseURL = strings.TrimRight(req.BaseURL, "/")
+	if req.Type == "anthropic-compatible" && strings.HasSuffix(req.BaseURL, "/messages") {
+		req.BaseURL = strings.TrimSuffix(req.BaseURL, "/messages")
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json")
-		return
+	if req.Type == "custom-embedding" && strings.HasSuffix(req.BaseURL, "/embeddings") {
+		req.BaseURL = strings.TrimSuffix(req.BaseURL, "/embeddings")
 	}
+}
 
+func sanitizeNodeCreateReq(req *providerNodeCreateReq) error {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Prefix = strings.TrimSpace(req.Prefix)
 	req.BaseURL = strings.TrimSpace(req.BaseURL)
 
 	if req.Name == "" {
-		writeErr(w, http.StatusBadRequest, "Name is required")
-		return
+		return errors.New("name is required")
 	}
 
 	if req.Prefix == "" {
-		writeErr(w, http.StatusBadRequest, "Prefix is required")
-		return
+		return errors.New("prefix is required")
 	}
 
 	if req.Type == "" {
@@ -66,22 +71,29 @@ func (s *Server) handleCreateProviderNode(w http.ResponseWriter, r *http.Request
 		req.BaseURL = "https://api.openai.com/v1"
 	}
 
-	req.BaseURL = strings.TrimRight(req.BaseURL, "/")
-	if req.Type == "anthropic-compatible" && strings.HasSuffix(req.BaseURL, "/messages") {
-		req.BaseURL = strings.TrimSuffix(req.BaseURL, "/messages")
-	}
-
-	if req.Type == "custom-embedding" && strings.HasSuffix(req.BaseURL, "/embeddings") {
-		req.BaseURL = strings.TrimSuffix(req.BaseURL, "/embeddings")
-	}
+	normalizeNodeBaseURL(req)
 
 	if req.Type == "openai-compatible" && req.APIType != "chat" && req.APIType != "responses" {
 		if req.APIType == "" {
 			req.APIType = "chat"
 		} else {
-			writeErr(w, http.StatusBadRequest, "Invalid OpenAI compatible API type")
-			return
+			return errors.New("invalid openai compatible api type")
 		}
+	}
+
+	return nil
+}
+
+func (s *Server) handleCreateProviderNode(w http.ResponseWriter, r *http.Request) {
+	var req providerNodeCreateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if err := sanitizeNodeCreateReq(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	id, err := s.st.CreateProviderNode(req.Type, req.Name, req.Prefix, req.APIType, req.BaseURL)

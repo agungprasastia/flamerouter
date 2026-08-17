@@ -11,14 +11,84 @@ var skipPatterns = []string{
 	"Please write a 5-10 word title for the following conversation:",
 }
 
-// ShouldBypass returns true for Claude naming/warmup requests that waste quota.
-// Only applies when client is "claude-code" or "claude" (9router: UA has claude-cli).
-func ShouldBypass(body []byte, client string) bool {
-	if len(body) == 0 {
+func checkLastMessageAssistantJSON(last map[string]any) bool {
+	role, ok := last["role"].(string)
+	if !ok || role != "assistant" {
 		return false
 	}
 
-	if client != "claude-code" && client != "claude" {
+	if arr, ok := last["content"].([]any); ok && len(arr) > 0 {
+		if block, ok := arr[0].(map[string]any); ok {
+			if t, ok := block["text"].(string); ok && t == "{" {
+				return true
+			}
+		}
+	}
+
+	return messageText(last) == "{"
+}
+
+func hasSkipPattern(text string) bool {
+	for _, p := range skipPatterns {
+		if strings.Contains(text, p) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func checkUserMessagesForBypass(msgs []any) bool {
+	if len(msgs) == 1 {
+		if msg, ok := msgs[0].(map[string]any); ok {
+			if role, ok := msg["role"].(string); ok && role == "user" && messageText(msg) == "count" {
+				return true
+			}
+		}
+	}
+
+	return checkUserMessagesContent(msgs)
+}
+
+func checkUserMessagesContent(msgs []any) bool {
+	var userParts []string
+
+	for _, m := range msgs {
+		msg, ok := m.(map[string]any)
+		if !ok || msg == nil {
+			continue
+		}
+
+		if role, ok := msg["role"].(string); ok && role == "user" {
+			userParts = append(userParts, messageText(msg))
+		}
+	}
+
+	return hasSkipPattern(strings.Join(userParts, " "))
+}
+
+func checkBypassSignals(req map[string]any, msgs []any) bool {
+	if last, ok := msgs[len(msgs)-1].(map[string]any); ok && checkLastMessageAssistantJSON(last) {
+		return true
+	}
+
+	if first, ok := msgs[0].(map[string]any); ok && messageText(first) == "Warmup" {
+		return true
+	}
+
+	if checkUserMessagesForBypass(msgs) {
+		return true
+	}
+
+	systemText := collectSystemText(req, msgs)
+
+	return strings.Contains(systemText, "isNewTopic")
+}
+
+// ShouldBypass returns true for Claude naming/warmup requests that waste quota.
+// Only applies when client is "claude-code" or "claude" (9router: UA has claude-cli).
+func ShouldBypass(body []byte, client string) bool {
+	if len(body) == 0 || (client != "claude-code" && client != "claude") {
 		return false
 	}
 
@@ -27,69 +97,36 @@ func ShouldBypass(body []byte, client string) bool {
 		return false
 	}
 
-	msgs, _ := req["messages"].([]any)
-	if len(msgs) == 0 {
+	msgs, ok := req["messages"].([]any)
+	if !ok || len(msgs) == 0 {
 		return false
 	}
 
-	// Pattern 1: title extraction (assistant last message text == "{")
-	if last, ok := msgs[len(msgs)-1].(map[string]any); ok {
-		if role, _ := last["role"].(string); role == "assistant" {
-			if arr, ok := last["content"].([]any); ok && len(arr) > 0 {
-				if block, ok := arr[0].(map[string]any); ok {
-					if t, _ := block["text"].(string); t == "{" {
-						return true
-					}
-				}
-			}
+	return checkBypassSignals(req, msgs)
+}
 
-			if messageText(last) == "{" {
-				return true
-			}
-		}
-	}
+func extractTextFromBlocks(blocks []any) string {
+	var b strings.Builder
 
-	// Pattern 2: Warmup
-	if first, ok := msgs[0].(map[string]any); ok {
-		if messageText(first) == "Warmup" {
-			return true
-		}
-	}
-
-	// Pattern 3: single "count" user message
-	if len(msgs) == 1 {
-		if msg, ok := msgs[0].(map[string]any); ok {
-			role, _ := msg["role"].(string)
-			if role == "user" && messageText(msg) == "count" {
-				return true
-			}
-		}
-	}
-
-	// Pattern 4: skip patterns in user text
-	var userParts []string
-
-	for _, m := range msgs {
-		msg, _ := m.(map[string]any)
-		if msg == nil {
+	for _, item := range blocks {
+		block, ok := item.(map[string]any)
+		if !ok || block == nil {
 			continue
 		}
 
-		if role, _ := msg["role"].(string); role == "user" {
-			userParts = append(userParts, messageText(msg))
+		t, _ := block["type"].(string) //nolint:errcheck // type fallback string
+		if t == "text" || t == "" {
+			if text, ok := block["text"].(string); ok && text != "" {
+				if b.Len() > 0 {
+					b.WriteByte(' ')
+				}
+
+				b.WriteString(text)
+			}
 		}
 	}
 
-	userText := strings.Join(userParts, " ")
-	for _, p := range skipPatterns {
-		if strings.Contains(userText, p) {
-			return true
-		}
-	}
-
-	// Pattern 5: CC naming (isNewTopic in system)
-	systemText := collectSystemText(req, msgs)
-	return strings.Contains(systemText, "isNewTopic")
+	return b.String()
 }
 
 func messageText(msg map[string]any) string {
@@ -101,41 +138,42 @@ func messageText(msg map[string]any) string {
 	case string:
 		return c
 	case []any:
-		var b strings.Builder
-
-		for _, item := range c {
-			block, _ := item.(map[string]any)
-			if block == nil {
-				continue
-			}
-
-			if t, _ := block["type"].(string); t == "text" || t == "" {
-				if text, _ := block["text"].(string); text != "" {
-					if b.Len() > 0 {
-						b.WriteByte(' ')
-					}
-
-					b.WriteString(text)
-				}
-			}
-		}
-
-		return b.String()
+		return extractTextFromBlocks(c)
 	}
 
 	return ""
+}
+
+func collectSystemFromBlocks(s []any) []string {
+	var parts []string
+
+	for _, item := range s {
+		block, ok := item.(map[string]any)
+		if !ok || block == nil {
+			continue
+		}
+
+		t, _ := block["type"].(string) //nolint:errcheck // type fallback string
+		if t == "text" || t == "" {
+			if text, ok := block["text"].(string); ok && text != "" {
+				parts = append(parts, text)
+			}
+		}
+	}
+
+	return parts
 }
 
 func collectSystemText(req map[string]any, msgs []any) string {
 	var parts []string
 
 	for _, m := range msgs {
-		msg, _ := m.(map[string]any)
-		if msg == nil {
+		msg, ok := m.(map[string]any)
+		if !ok || msg == nil {
 			continue
 		}
 
-		if role, _ := msg["role"].(string); role == "system" {
+		if role, ok := msg["role"].(string); ok && role == "system" {
 			parts = append(parts, messageText(msg))
 		}
 	}
@@ -144,18 +182,7 @@ func collectSystemText(req map[string]any, msgs []any) string {
 	case string:
 		parts = append(parts, s)
 	case []any:
-		for _, item := range s {
-			block, _ := item.(map[string]any)
-			if block == nil {
-				continue
-			}
-
-			if t, _ := block["type"].(string); t == "text" || t == "" {
-				if text, _ := block["text"].(string); text != "" {
-					parts = append(parts, text)
-				}
-			}
-		}
+		parts = append(parts, collectSystemFromBlocks(s)...)
 	}
 
 	return strings.Join(parts, " ")

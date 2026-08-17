@@ -94,7 +94,11 @@ func TestLogin_FifthFailReturns429(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() {
+		if clErr := st.Close(); clErr != nil {
+			t.Errorf("store close error: %v", clErr)
+		}
+	})
 
 	sh := NewSessionHandler(NewJWTManager("test-secret"), st, "correct-pass")
 
@@ -153,7 +157,10 @@ func TestClientIP_TrustProxyXFF(t *testing.T) {
 }
 
 func TestClientIP_UnknownWithoutTrust(t *testing.T) {
-	_ = os.Unsetenv("TRUST_PROXY")
+	if err := os.Unsetenv("TRUST_PROXY"); err != nil {
+		t.Fatalf("unsetenv error: %v", err)
+	}
+
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	r.Header.Set("X-Forwarded-For", "8.8.8.8")
 

@@ -1,6 +1,9 @@
 package executor
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"math"
+)
 
 // EncodeCursorProtobuf encodes JSON body into Cursor's protobuf wire format.
 // Field 1 (string): tag 0x0a + varint length + data.
@@ -27,18 +30,19 @@ func DecodeCursorProtobuf(data []byte) []byte {
 	i := 1
 
 	length, n := binary.Uvarint(data[i:])
-	if n <= 0 {
+	if n <= 0 || length > uint64(len(data)) || length > math.MaxInt {
 		return nil
 	}
 
 	i += n
+	lInt := int(length)
 
-	end := i + int(length)
-	if end > len(data) {
+	end := i + lInt
+	if end > len(data) || end < i {
 		return nil
 	}
 
-	out := make([]byte, length)
+	out := make([]byte, lInt)
 	copy(out, data[i:end])
 
 	return out

@@ -22,6 +22,7 @@ type QoderResolver struct {
 	Client *http.Client
 }
 
+// TTL returns cache TTL for Qoder models.
 func (r *QoderResolver) TTL() time.Duration {
 	return qoderCacheTTL
 }
@@ -50,22 +51,60 @@ type qoderModelListResponse struct {
 }
 
 func (r *QoderResolver) fetchRaw(ctx context.Context, creds qoder.CosyCreds) ([]qoderChatEntry, int, error) {
-	modelListURL := qoder.QODER_MODEL_LIST_URL
+	req, cancel, err := buildQoderModelRequest(ctx, creds)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer cancel()
+
+	resp, err := r.client().Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if resp == nil || resp.Body == nil {
+		return nil, 0, fmt.Errorf("nil response from upstream")
+	}
+
+	defer func() {
+		//nolint:errcheck // best effort close
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		rawBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, resp.StatusCode, fmt.Errorf("read qoder error response: %w", readErr)
+		}
+
+		return nil, resp.StatusCode, fmt.Errorf("qoder model/list returned status %d: %s", resp.StatusCode, string(rawBytes))
+	}
+
+	var chatResp qoderModelListResponse
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&chatResp); decodeErr != nil {
+		return nil, resp.StatusCode, fmt.Errorf("decode qoder models response: %w", decodeErr)
+	}
+
+	return chatResp.Chat, resp.StatusCode, nil
+}
+
+func buildQoderModelRequest(ctx context.Context, creds qoder.CosyCreds) (*http.Request, context.CancelFunc, error) {
+	modelListURL := qoder.ModelListURL
 	if strings.HasPrefix(creds.AuthToken, "jt-") {
-		modelListURL = fmt.Sprintf("%s/algo/api/v2/model/list", qoder.QODER_CHAT_BASE_ALT)
+		modelListURL = fmt.Sprintf("%s/algo/api/v2/model/list", qoder.ChatBaseAlt)
 	}
 
 	headers, err := qoder.BuildCosyHeaders(nil, modelListURL, creds)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, qoderDefaultTimeout)
-	defer cancel()
+	reqCtx, cancel := context.WithTimeout(ctx, qoderDefaultTimeout)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelListURL, nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, modelListURL, nil)
 	if err != nil {
-		return nil, 0, err
+		cancel()
+		return nil, nil, err
 	}
 
 	req.Header.Set("Accept", "application/json")
@@ -75,29 +114,10 @@ func (r *QoderResolver) fetchRaw(ctx context.Context, creds qoder.CosyCreds) ([]
 		req.Header.Set(k, v)
 	}
 
-	resp, err := r.client().Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	if resp == nil || resp.Body == nil {
-		return nil, 0, fmt.Errorf("nil response from upstream")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, resp.StatusCode, fmt.Errorf("qoder model/list returned status %d: %s", resp.StatusCode, string(b))
-	}
-
-	var parsed qoderModelListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("decode qoder models response: %w", err)
-	}
-
-	return parsed.Chat, resp.StatusCode, nil
+	return req, cancel, nil
 }
 
-func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
+func extractQoderAuth(conn *store.Connection) (string, string) {
 	authToken := conn.AccessToken
 	if authToken == "" {
 		authToken = conn.APIKey
@@ -111,25 +131,11 @@ func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]
 		}
 	}
 
-	if strings.HasPrefix(authToken, "pt-") {
-		jt, uid, err := ResolvePatCredential(ctx, r.client(), authToken)
-		if err != nil {
-			return nil, err
-		}
+	return authToken, userID
+}
 
-		authToken = jt
-
-		if uid != "" {
-			userID = uid
-		}
-	}
-
-	if authToken == "" || userID == "" {
-		return nil, nil
-	}
-
-	machineID := ""
-	email := ""
+func extractQoderMetadata(conn *store.Connection) (string, string) {
+	machineID, email := "", ""
 
 	if conn.ProviderSpecificData != nil {
 		if mid, ok := conn.ProviderSpecificData["machineId"].(string); ok {
@@ -141,22 +147,55 @@ func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]
 		}
 	}
 
-	creds := qoder.CosyCreds{
+	return machineID, email
+}
+
+func (r *QoderResolver) resolveAuthCreds(ctx context.Context, conn *store.Connection) (qoder.CosyCreds, error) {
+	authToken, userID := extractQoderAuth(conn)
+
+	if strings.HasPrefix(authToken, "pt-") {
+		jt, uid, err := ResolvePatCredential(ctx, r.client(), authToken)
+		if err != nil {
+			return qoder.CosyCreds{
+				UserID:    "",
+				AuthToken: "",
+				Name:      "",
+				Email:     "",
+				MachineID: "",
+			}, err
+		}
+
+		authToken = jt
+
+		if uid != "" {
+			userID = uid
+		}
+	}
+
+	if authToken == "" || userID == "" {
+		return qoder.CosyCreds{
+			UserID:    "",
+			AuthToken: "",
+			Name:      "",
+			Email:     "",
+			MachineID: "",
+		}, nil
+	}
+
+	machineID, email := extractQoderMetadata(conn)
+
+	return qoder.CosyCreds{
 		UserID:    userID,
 		AuthToken: authToken,
 		Name:      conn.Name,
 		Email:     email,
 		MachineID: machineID,
-	}
+	}, nil
+}
 
-	raw, _, err := r.fetchRaw(ctx, creds)
-	if err != nil {
-		return nil, err
-	}
-
+func filterQoderModels(raw []qoderChatEntry) []DynamicModel {
 	seen := make(map[string]bool)
-
-	var out []DynamicModel
+	out := make([]DynamicModel, 0, len(raw))
 
 	for _, entry := range raw {
 		key := strings.TrimSpace(entry.Key)
@@ -188,8 +227,31 @@ func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]
 			IsReasoning:     entry.IsReasoning,
 			IsVL:            entry.IsVL,
 			Description:     entry.Description,
+			Capabilities:    nil,
+			RawConfig:       nil,
+			UpstreamModelID: "",
+			RateMultiplier:  0,
 		})
 	}
 
-	return out, nil
+	return out
+}
+
+// Resolve retrieves dynamic models for Qoder connection.
+func (r *QoderResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
+	creds, err := r.resolveAuthCreds(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+
+	if creds.AuthToken == "" || creds.UserID == "" {
+		return nil, nil
+	}
+
+	raw, _, err := r.fetchRaw(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+
+	return filterQoderModels(raw), nil
 }

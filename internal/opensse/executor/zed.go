@@ -18,12 +18,18 @@ func init() {
 		Base: Base{
 			Provider: "zed",
 			BaseURL:  "https://cloud.zed.dev",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 	RegisterSpecialized("zd", &ZedExecutor{
 		Base: Base{
 			Provider: "zed",
 			BaseURL:  "https://cloud.zed.dev",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 }
@@ -40,50 +46,44 @@ type zedTokenEntry struct {
 	token     string
 }
 
+// ZedExecutor implements proxying to the Zed editor upstream service.
 type ZedExecutor struct {
 	Base
 }
 
 func normalizeZedProvider(value string, model string) string {
 	raw := strings.ToLower(strings.TrimSpace(value))
-	if raw == "anthropic" {
+	switch raw {
+	case "anthropic":
 		return "Anthropic"
-	}
-
-	if raw == "openai" || raw == "open_ai" {
+	case "openai", "open_ai":
 		return "OpenAi"
-	}
-
-	if raw == "google" || raw == "gemini" {
+	case "google", "gemini":
 		return "Google"
-	}
-
-	if raw == "xai" || raw == "x_ai" || raw == "x-ai" {
+	case "xai", "x_ai", "x-ai":
 		return "XAi"
 	}
 
 	m := strings.ToLower(model)
-	if strings.Contains(m, "claude") {
+
+	switch {
+	case strings.Contains(m, "claude"):
 		return "Anthropic"
-	}
-
-	if strings.Contains(m, "gemini") {
+	case strings.Contains(m, "gemini"):
 		return "Google"
-	}
-
-	if strings.Contains(m, "grok") || strings.Contains(m, "xai") {
+	case strings.Contains(m, "grok") || strings.Contains(m, "xai"):
 		return "XAi"
+	default:
+		return "OpenAi"
 	}
-
-	return "OpenAi"
 }
 
 func buildZedUserAuthHeader(cred Credentials) (string, error) {
-	userId := ""
+	userID := ""
 
 	if cred.ProviderSpecificData != nil {
 		if u, ok := cred.ProviderSpecificData["userId"].(string); ok && u != "" {
-			userId = u
+			userID = u
 		}
 	}
 
@@ -92,59 +92,39 @@ func buildZedUserAuthHeader(cred Credentials) (string, error) {
 		token = cred.APIKey
 	}
 
-	if userId == "" || token == "" {
-		return "", fmt.Errorf("Zed credential is missing userId or accessToken")
+	if userID == "" || token == "" {
+		return "", fmt.Errorf("zed credential is missing userId or accessToken")
 	}
 
-	return fmt.Sprintf("%s %s", userId, token), nil
+	return fmt.Sprintf("%s %s", userID, token), nil
 }
 
-func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, forceRefresh bool) (string, error) {
-	orgId := ""
-	userId := ""
-
-	if cred.ProviderSpecificData != nil {
-		if o, ok := cred.ProviderSpecificData["organizationId"].(string); ok && o != "" {
-			orgId = o
-		} else if o, ok := cred.ProviderSpecificData["defaultOrganizationId"].(string); ok && o != "" {
-			orgId = o
-		}
-
-		if u, ok := cred.ProviderSpecificData["userId"].(string); ok {
-			userId = u
-		}
+func extractZedTokenFromData(data []byte) (string, error) {
+	var parsed struct {
+		Token any `json:"token"`
 	}
 
-	if orgId == "" {
-		orgId = "default"
-	}
-
-	token := cred.AccessToken
-	if token == "" {
-		token = cred.APIKey
-	}
-
-	tokenSuffix := token
-	if len(tokenSuffix) > 16 {
-		tokenSuffix = tokenSuffix[len(tokenSuffix)-16:]
-	}
-
-	cacheKey := fmt.Sprintf("%s:%s:%s", userId, orgId, tokenSuffix)
-
-	if !forceRefresh {
-		if val, ok := zedTokenCache.Load(cacheKey); ok {
-			entry := val.(zedTokenEntry)
-			if time.Now().Before(entry.expiresAt) {
-				return entry.token, nil
-			}
-		}
-	}
-
-	authHeader, err := buildZedUserAuthHeader(cred)
-	if err != nil {
+	if err := json.Unmarshal(data, &parsed); err != nil {
 		return "", err
 	}
 
+	switch v := parsed.Token.(type) {
+	case string:
+		return v, nil
+	case []any:
+		if len(v) > 0 {
+			return fmt.Sprint(v[0]), nil
+		}
+	case map[string]any:
+		if val, ok := v["value"].(string); ok {
+			return val, nil
+		}
+	}
+
+	return "", fmt.Errorf("zed did not return an LLM token")
+}
+
+func buildZedTokenRequest(ctx context.Context, cred Credentials, orgID, authHeader string) (*http.Request, error) {
 	base := strings.TrimRight(cred.BaseURL, "/")
 	if base == "" {
 		base = zedDefaultLLMBaseURL
@@ -152,11 +132,14 @@ func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, force
 
 	url := base + "/client/llm_tokens"
 
-	reqBody, _ := json.Marshal(map[string]string{"organization_id": orgId})
+	reqBody, err := json.Marshal(map[string]string{"organization_id": orgID})
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -169,44 +152,89 @@ func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, force
 		}
 	}
 
+	return req, nil
+}
+
+func (e *ZedExecutor) requestLlmToken(ctx context.Context, cred Credentials, orgID, authHeader string) (string, error) {
+	req, err := buildZedTokenRequest(ctx, cred, orgID, authHeader)
+	if err != nil {
+		return "", err
+	}
+
 	resp, err := e.client().Do(req)
 	if err != nil {
 		return "", err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return "", fmt.Errorf("nil response from upstream")
 	}
-	defer resp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("Zed llm_tokens failed: HTTP %d %s", resp.StatusCode, string(bodyBytes))
-	}
+	defer func() {
+		_ = resp.Body.Close() // nolint:errcheck
+	}()
 
-	var data struct {
-		Token any `json:"token"`
-	}
-
-	if err := json.Unmarshal(bodyBytes, &data); err != nil {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return "", err
 	}
 
-	llmToken := ""
-	switch v := data.Token.(type) {
-	case string:
-		llmToken = v
-	case []any:
-		if len(v) > 0 {
-			llmToken = fmt.Sprint(v[0])
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("zed llm_tokens failed: HTTP %d %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return extractZedTokenFromData(bodyBytes)
+}
+
+func resolveZedOrgAndUser(cred Credentials) (orgID, userID, tokenSuffix string) {
+	orgID = "default"
+	userID = ""
+
+	if cred.ProviderSpecificData != nil {
+		if o, ok := cred.ProviderSpecificData["organizationId"].(string); ok && o != "" {
+			orgID = o
+		} else if o, ok := cred.ProviderSpecificData["defaultOrganizationId"].(string); ok && o != "" {
+			orgID = o
 		}
-	case map[string]any:
-		if val, ok := v["value"].(string); ok {
-			llmToken = val
+
+		if u, ok := cred.ProviderSpecificData["userId"].(string); ok {
+			userID = u
 		}
 	}
 
-	if llmToken == "" {
-		return "", fmt.Errorf("Zed did not return an LLM token")
+	token := cred.AccessToken
+	if token == "" {
+		token = cred.APIKey
+	}
+
+	tokenSuffix = token
+	if len(tokenSuffix) > 16 {
+		tokenSuffix = tokenSuffix[len(tokenSuffix)-16:]
+	}
+
+	return orgID, userID, tokenSuffix
+}
+
+func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, forceRefresh bool) (string, error) {
+	orgID, userID, tokenSuffix := resolveZedOrgAndUser(cred)
+	cacheKey := fmt.Sprintf("%s:%s:%s", userID, orgID, tokenSuffix)
+
+	if !forceRefresh {
+		if val, ok := zedTokenCache.Load(cacheKey); ok {
+			if entry, ok := val.(zedTokenEntry); ok && time.Now().Before(entry.expiresAt) {
+				return entry.token, nil
+			}
+		}
+	}
+
+	authHeader, err := buildZedUserAuthHeader(cred)
+	if err != nil {
+		return "", err
+	}
+
+	llmToken, err := e.requestLlmToken(ctx, cred, orgID, authHeader)
+	if err != nil {
+		return "", err
 	}
 
 	zedTokenCache.Store(cacheKey, zedTokenEntry{
@@ -217,15 +245,28 @@ func (e *ZedExecutor) fetchLlmToken(ctx context.Context, cred Credentials, force
 	return llmToken, nil
 }
 
-func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+func buildZedHeaders(llmToken string) http.Header {
+	h := make(http.Header)
+	h.Set("Content-Type", "application/json")
+	h.Set("Accept", "application/x-ndjson, text/event-stream, */*")
+	h.Set("User-Agent", "9router/zed")
+	h.Set("x-zed-version", zedClientVersion)
+	h.Set("x-zed-client-supports-status-messages", "true")
+	h.Set("x-zed-client-supports-stream-ended-request-completion-status", "true")
+	h.Set("Authorization", "Bearer "+llmToken)
+
+	return h
+}
+
+func (e *ZedExecutor) prepareZedRequest(ctx context.Context, cred Credentials, model string, body []byte) (string, http.Header, []byte, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, err
+		return "", nil, nil, err
 	}
 
 	provider := normalizeZedProvider("", model)
-	threadID, _ := m["thread_id"].(string)
-	promptID, _ := m["prompt_id"].(string)
+	threadID, _ := m["thread_id"].(string) // nolint:errcheck
+	promptID, _ := m["prompt_id"].(string) // nolint:errcheck
 
 	payload := map[string]any{
 		"thread_id":        threadID,
@@ -237,12 +278,11 @@ func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model strin
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return "", nil, nil, err
 	}
 
 	llmToken, err := e.fetchLlmToken(ctx, cred, false)
 	if err != nil {
-		// If fetchLlmToken fails, fallback to direct token
 		llmToken = cred.AccessToken
 		if llmToken == "" {
 			llmToken = cred.APIKey
@@ -255,15 +295,17 @@ func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model strin
 	}
 
 	url := base + "/completions"
+	h := buildZedHeaders(llmToken)
 
-	h := make(http.Header)
-	h.Set("Content-Type", "application/json")
-	h.Set("Accept", "application/x-ndjson, text/event-stream, */*")
-	h.Set("User-Agent", "9router/zed")
-	h.Set("x-zed-version", zedClientVersion)
-	h.Set("x-zed-client-supports-status-messages", "true")
-	h.Set("x-zed-client-supports-stream-ended-request-completion-status", "true")
-	h.Set("Authorization", "Bearer "+llmToken)
+	return url, h, payloadBytes, nil
+}
+
+// Execute handles proxying requests to the Zed completions endpoint.
+func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, _ bool) (*Result, error) {
+	url, h, payloadBytes, err := e.prepareZedRequest(ctx, cred, model, body)
+	if err != nil {
+		return nil, err
+	}
 
 	res, err := e.DoPOST(ctx, url, h, payloadBytes)
 	if err != nil {
@@ -301,21 +343,109 @@ func (e *ZedExecutor) Execute(ctx context.Context, cred Credentials, model strin
 	}, nil
 }
 
+func handleZedStatus(status map[string]any, cid, model string, writeSSE func(any)) (shouldBreak, shouldContinue bool) {
+	typ, _ := status["type"].(string) // nolint:errcheck
+	if typ == "failed" {
+		msg := fmt.Sprintf("%v", status["message"])
+		writeSSE(map[string]any{
+			"id":     cid,
+			"object": "chat.completion.chunk",
+			"model":  model,
+			"choices": []any{map[string]any{
+				"index": 0,
+				"delta": map[string]any{
+					"content": fmt.Sprintf("[Zed error] %s", msg),
+				},
+				"finish_reason": "stop",
+			}},
+		})
+
+		return true, false
+	}
+
+	if typ == "stream_ended" {
+		return true, false
+	}
+
+	return false, true
+}
+
+func handleZedClaudeEvent(evMap map[string]any, cid, model string, created int64, writeSSE func(any)) bool {
+	if _, ok := evMap["choices"]; ok {
+		writeSSE(evMap)
+		return true
+	}
+
+	if evType, ok := evMap["type"].(string); ok && evType == "content_block_delta" {
+		if delta, ok := evMap["delta"].(map[string]any); ok {
+			if text, ok := delta["text"].(string); ok && text != "" {
+				writeSSE(map[string]any{
+					"id":      cid,
+					"object":  "chat.completion.chunk",
+					"created": created,
+					"model":   model,
+					"choices": []any{map[string]any{
+						"index":         0,
+						"delta":         map[string]any{"content": text},
+						"finish_reason": nil,
+					}},
+				})
+
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func processZedPayload(payload map[string]any, cid, model string, created int64, writeSSE func(any)) bool {
+	if status, ok := payload["status"].(map[string]any); ok {
+		shouldBreak, shouldContinue := handleZedStatus(status, cid, model, writeSSE)
+		if shouldBreak {
+			return false
+		}
+
+		if shouldContinue {
+			return true
+		}
+	}
+
+	event, hasEvent := payload["event"]
+	if !hasEvent {
+		event = payload
+	}
+
+	if evMap, ok := event.(map[string]any); ok {
+		if handled := handleZedClaudeEvent(evMap, cid, model, created, writeSSE); handled {
+			return true
+		}
+	}
+
+	writeSSE(event)
+
+	return true
+}
+
 func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
-		defer r.Close()
-		defer pw.Close()
+		defer func() { _ = r.Close() }()  // nolint:errcheck
+		defer func() { _ = pw.Close() }() // nolint:errcheck
 
 		sc := bufio.NewScanner(r)
 		created := time.Now().Unix()
 		cid := fmt.Sprintf("chatcmpl-zed-%d", time.Now().UnixMilli())
 
 		writeSSE := func(obj any) {
-			b, _ := json.Marshal(obj)
-			_, _ = pw.Write([]byte("data: "))
-			_, _ = pw.Write(b)
-			_, _ = pw.Write([]byte("\n\n"))
+			b, err := json.Marshal(obj)
+			if err != nil {
+				return
+			}
+
+			_, _ = pw.Write([]byte("data: ")) // nolint:errcheck
+			_, _ = pw.Write(b)                // nolint:errcheck
+			_, _ = pw.Write([]byte("\n\n"))   // nolint:errcheck
 		}
 
 		for sc.Scan() {
@@ -337,73 +467,12 @@ func wrapZedNDJSONStream(r io.ReadCloser, model string) io.ReadCloser {
 				continue
 			}
 
-			// check status
-			if status, ok := payload["status"].(map[string]any); ok {
-				if typ, _ := status["type"].(string); typ == "failed" {
-					msg := fmt.Sprintf("%v", status["message"])
-					writeSSE(map[string]any{
-						"id":     cid,
-						"object": "chat.completion.chunk",
-						"model":  model,
-						"choices": []any{map[string]any{
-							"index": 0,
-							"delta": map[string]any{
-								"content": fmt.Sprintf("[Zed error] %s", msg),
-							},
-							"finish_reason": "stop",
-						}},
-					})
-
-					break
-				}
-
-				if typ, _ := status["type"].(string); typ == "stream_ended" {
-					break
-				}
-
-				continue
+			if !processZedPayload(payload, cid, model, created, writeSSE) {
+				break
 			}
-
-			// check event
-			event, hasEvent := payload["event"]
-			if !hasEvent {
-				event = payload
-			}
-
-			// If event is already an OpenAI chunk or object, forward or unwrap
-			if evMap, ok := event.(map[string]any); ok {
-				if _, ok := evMap["choices"]; ok {
-					writeSSE(evMap)
-					continue
-				}
-				// Claude / Anthropic event unwrapping:
-				// content_block_delta -> delta.text
-				if evType, _ := evMap["type"].(string); evType == "content_block_delta" {
-					if delta, ok := evMap["delta"].(map[string]any); ok {
-						if text, ok := delta["text"].(string); ok && text != "" {
-							writeSSE(map[string]any{
-								"id":      cid,
-								"object":  "chat.completion.chunk",
-								"created": created,
-								"model":   model,
-								"choices": []any{map[string]any{
-									"index":         0,
-									"delta":         map[string]any{"content": text},
-									"finish_reason": nil,
-								}},
-							})
-
-							continue
-						}
-					}
-				}
-			}
-
-			// Generic chunk forward
-			writeSSE(event)
 		}
 
-		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+		_, _ = pw.Write([]byte("data: [DONE]\n\n")) // nolint:errcheck
 	}()
 
 	return pr

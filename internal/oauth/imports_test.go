@@ -18,7 +18,11 @@ func testStore(t *testing.T) *store.Store {
 		t.Fatal(err)
 	}
 
-	t.Cleanup(func() { _ = st.Close() })
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("failed to close store: %v", err)
+		}
+	})
 
 	return st
 }
@@ -39,7 +43,9 @@ func TestSpecializedImport_CodexToken(t *testing.T) {
 	}
 
 	var out map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json unmarshal failed: %v", err)
+	}
 
 	if out["success"] != true {
 		t.Fatalf("resp %v", out)
@@ -70,9 +76,9 @@ func TestSpecializedImport_GitLabPAT(t *testing.T) {
 		t.Fatalf("code %d %s", rr.Code, rr.Body.String())
 	}
 
-	conns, _ := st.ListConnectionsByProvider("gitlab")
-	if len(conns) != 1 || conns[0].AccessToken != "glpat-x" {
-		t.Fatalf("%+v", conns)
+	conns, err := st.ListConnectionsByProvider("gitlab")
+	if err != nil || len(conns) != 1 || conns[0].AccessToken != "glpat-x" {
+		t.Fatalf("%+v (err=%v)", conns, err)
 	}
 }
 

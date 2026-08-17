@@ -11,7 +11,10 @@ func init() {
 	RegisterSpecialized("codex", &CodexExecutor{
 		Base: Base{
 			Provider: "codex",
+			Client:   nil,
+			Headers:  nil,
 			BaseURL:  "https://chatgpt.com/backend-api/codex/responses",
+			BaseURLs: nil,
 		},
 	})
 }
@@ -23,6 +26,7 @@ var responsesAllowlist = map[string]bool{
 	"client_metadata": true, "text": true,
 }
 
+// CodexExecutor handles requests for Codex backend responses.
 type CodexExecutor struct {
 	Base
 }
@@ -36,7 +40,7 @@ func (e *CodexExecutor) transform(model string, body map[string]any) map[string]
 				continue
 			}
 
-			if role, _ := item["role"].(string); role == "system" {
+			if role, okRole := item["role"].(string); okRole && role == "system" {
 				item["role"] = "developer"
 			}
 		}
@@ -60,7 +64,8 @@ func (e *CodexExecutor) transform(model string, body map[string]any) map[string]
 	return out
 }
 
-func (e *CodexExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+// Execute executes Codex response queries.
+func (e *CodexExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, _ bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err

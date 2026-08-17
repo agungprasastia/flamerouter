@@ -35,6 +35,7 @@ type KiroResolver struct {
 	RefreshManager *tokenrefresh.RefreshManager
 }
 
+// TTL returns cache TTL for Kiro models.
 func (r *KiroResolver) TTL() time.Duration {
 	return kiroCacheTTL
 }
@@ -143,23 +144,7 @@ func formatKiroDisplayName(modelName, modelID string, rateMultiplier float64) st
 }
 
 func (r *KiroResolver) fetchRaw(ctx context.Context, conn *store.Connection) ([]kiroRawModel, int, error) {
-	profileArn := ""
-
-	if conn.ProviderSpecificData != nil {
-		if arn, ok := conn.ProviderSpecificData["profileArn"].(string); ok {
-			profileArn = arn
-		}
-	}
-
-	region := regionFromProfileArn(profileArn)
-	vals := url.Values{}
-	vals.Set("origin", "AI_EDITOR")
-
-	if profileArn != "" {
-		vals.Set("profileArn", profileArn)
-	}
-
-	reqURL := fmt.Sprintf("https://q.%s.amazonaws.com/ListAvailableModels?%s", region, vals.Encode())
+	reqURL := buildKiroRequestURL(conn)
 
 	ctx, cancel := context.WithTimeout(ctx, kiroDefaultTimeout)
 	defer cancel()
@@ -176,13 +161,22 @@ func (r *KiroResolver) fetchRaw(ctx context.Context, conn *store.Connection) ([]
 	if err != nil {
 		return nil, 0, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return nil, 0, fmt.Errorf("nil response from upstream")
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		//nolint:errcheck // best effort close
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, resp.StatusCode, fmt.Errorf("read kiro error response: %w", err)
+		}
+
 		return nil, resp.StatusCode, fmt.Errorf("kiro ListAvailableModels returned status %d: %s", resp.StatusCode, string(b))
 	}
 
@@ -194,6 +188,147 @@ func (r *KiroResolver) fetchRaw(ctx context.Context, conn *store.Connection) ([]
 	return parsed.Models, resp.StatusCode, nil
 }
 
+func buildKiroRequestURL(conn *store.Connection) string {
+	profileArn := ""
+
+	if conn.ProviderSpecificData != nil {
+		if arn, ok := conn.ProviderSpecificData["profileArn"].(string); ok {
+			profileArn = arn
+		}
+	}
+
+	region := regionFromProfileArn(profileArn)
+	vals := url.Values{}
+	vals.Set("origin", "AI_EDITOR")
+
+	if profileArn != "" {
+		vals.Set("profileArn", profileArn)
+	}
+
+	return fmt.Sprintf("https://q.%s.amazonaws.com/ListAvailableModels?%s", region, vals.Encode())
+}
+
+func (r *KiroResolver) tryRefresh(ctx context.Context, conn *store.Connection) ([]kiroRawModel, error) {
+	refreshMgr := r.RefreshManager
+	if refreshMgr == nil {
+		refreshMgr = tokenrefresh.NewRefreshManager()
+	}
+
+	outcome, refreshErr := refreshMgr.Refresh(ctx, "kiro", conn.RefreshToken)
+	if refreshErr != nil || outcome == nil || outcome.AccessToken == "" {
+		return nil, refreshErr
+	}
+
+	targetConn := *conn
+	targetConn.AccessToken = outcome.AccessToken
+
+	if outcome.RefreshToken != "" {
+		targetConn.RefreshToken = outcome.RefreshToken
+	}
+
+	items, _, callErr := r.fetchRaw(ctx, &targetConn)
+
+	return items, callErr
+}
+
+func createKiroVariants(id, name, desc string, ctxLen int, rateMult float64) (DynamicModel, DynamicModel) {
+	base := DynamicModel{
+		ID:              id,
+		Name:            name,
+		ContextLength:   ctxLen,
+		MaxOutputTokens: 0,
+		IsReasoning:     false,
+		IsVL:            false,
+		Capabilities:    map[string]any{"thinking": false, "agentic": false},
+		RawConfig:       nil,
+		UpstreamModelID: id,
+		Description:     desc,
+		RateMultiplier:  rateMult,
+	}
+
+	thinking := DynamicModel{
+		ID:              id + "-thinking",
+		Name:            name + " (Thinking)",
+		ContextLength:   ctxLen,
+		MaxOutputTokens: 0,
+		IsReasoning:     true,
+		IsVL:            false,
+		Capabilities:    map[string]any{"thinking": true, "agentic": false},
+		RawConfig:       nil,
+		UpstreamModelID: id,
+		Description:     desc,
+		RateMultiplier:  rateMult,
+	}
+
+	return base, thinking
+}
+
+func createKiroAgenticVariants(id, name, desc string, ctxLen int, rateMult float64) (DynamicModel, DynamicModel) {
+	agentic := DynamicModel{
+		ID:              id + "-agentic",
+		Name:            name + " (Agentic)",
+		ContextLength:   ctxLen,
+		MaxOutputTokens: 0,
+		IsReasoning:     false,
+		IsVL:            false,
+		Capabilities:    map[string]any{"thinking": false, "agentic": true},
+		RawConfig:       nil,
+		UpstreamModelID: id,
+		Description:     desc,
+		RateMultiplier:  rateMult,
+	}
+
+	thinkingAgentic := DynamicModel{
+		ID:              id + "-thinking-agentic",
+		Name:            name + " (Thinking + Agentic)",
+		ContextLength:   ctxLen,
+		MaxOutputTokens: 0,
+		IsReasoning:     true,
+		IsVL:            false,
+		Capabilities:    map[string]any{"thinking": true, "agentic": true},
+		RawConfig:       nil,
+		UpstreamModelID: id,
+		Description:     desc,
+		RateMultiplier:  rateMult,
+	}
+
+	return agentic, thinkingAgentic
+}
+
+func buildKiroModelVariants(m kiroRawModel) []DynamicModel {
+	upstreamID := m.ModelID
+	if upstreamID == "" {
+		upstreamID = m.ID
+	}
+
+	if upstreamID == "" {
+		return nil
+	}
+
+	safeUpstream := stripSyntheticSuffixes(upstreamID)
+	display := formatKiroDisplayName(m.ModelName, safeUpstream, m.RateMultiplier)
+
+	ctxLen := 200000
+	if m.TokenLimits != nil && m.TokenLimits.MaxInputTokens > 0 {
+		ctxLen = m.TokenLimits.MaxInputTokens
+	}
+
+	rateMult := m.RateMultiplier
+	if rateMult <= 0 {
+		rateMult = 1.0
+	}
+
+	base, thinking := createKiroVariants(safeUpstream, display, m.Description, ctxLen, rateMult)
+	if safeUpstream == "auto" {
+		return []DynamicModel{base, thinking}
+	}
+
+	agentic, thinkingAgentic := createKiroAgenticVariants(safeUpstream, display, m.Description, ctxLen, rateMult)
+
+	return []DynamicModel{base, thinking, agentic, thinkingAgentic}
+}
+
+// Resolve retrieves dynamic model variants for Kiro connection.
 func (r *KiroResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
 	if conn.AccessToken == "" {
 		return nil, nil
@@ -201,21 +336,10 @@ func (r *KiroResolver) Resolve(ctx context.Context, conn *store.Connection) ([]D
 
 	raw, statusCode, err := r.fetchRaw(ctx, conn)
 	if err != nil && statusCode == http.StatusUnauthorized && conn.RefreshToken != "" {
-		rm := r.RefreshManager
-		if rm == nil {
-			rm = tokenrefresh.NewRefreshManager()
-		}
-
-		refreshed, refErr := rm.Refresh(ctx, "kiro", conn.RefreshToken)
-		if refErr == nil && refreshed != nil && refreshed.AccessToken != "" {
-			connCopy := *conn
-			connCopy.AccessToken = refreshed.AccessToken
-
-			if refreshed.RefreshToken != "" {
-				connCopy.RefreshToken = refreshed.RefreshToken
-			}
-
-			raw, _, err = r.fetchRaw(ctx, &connCopy)
+		refRaw, refErr := r.tryRefresh(ctx, conn)
+		if refErr == nil {
+			raw = refRaw
+			err = nil
 		}
 	}
 
@@ -226,73 +350,8 @@ func (r *KiroResolver) Resolve(ctx context.Context, conn *store.Connection) ([]D
 	var expanded []DynamicModel
 
 	for _, m := range raw {
-		upstreamID := m.ModelID
-		if upstreamID == "" {
-			upstreamID = m.ID
-		}
-
-		if upstreamID == "" {
-			continue
-		}
-
-		safeUpstream := stripSyntheticSuffixes(upstreamID)
-		display := formatKiroDisplayName(m.ModelName, safeUpstream, m.RateMultiplier)
-
-		ctxLen := 200000
-		if m.TokenLimits != nil && m.TokenLimits.MaxInputTokens > 0 {
-			ctxLen = m.TokenLimits.MaxInputTokens
-		}
-
-		rateMult := m.RateMultiplier
-		if rateMult <= 0 {
-			rateMult = 1.0
-		}
-
-		isAuto := safeUpstream == "auto"
-
-		// 1. base
-		expanded = append(expanded, DynamicModel{
-			ID:              safeUpstream,
-			Name:            display,
-			ContextLength:   ctxLen,
-			RateMultiplier:  rateMult,
-			UpstreamModelID: safeUpstream,
-			Description:     m.Description,
-			Capabilities:    map[string]any{"thinking": false, "agentic": false},
-		})
-		// 2. thinking
-		expanded = append(expanded, DynamicModel{
-			ID:              safeUpstream + "-thinking",
-			Name:            display + " (Thinking)",
-			ContextLength:   ctxLen,
-			RateMultiplier:  rateMult,
-			UpstreamModelID: safeUpstream,
-			Description:     m.Description,
-			Capabilities:    map[string]any{"thinking": true, "agentic": false},
-		})
-
-		if !isAuto {
-			// 3. agentic
-			expanded = append(expanded, DynamicModel{
-				ID:              safeUpstream + "-agentic",
-				Name:            display + " (Agentic)",
-				ContextLength:   ctxLen,
-				RateMultiplier:  rateMult,
-				UpstreamModelID: safeUpstream,
-				Description:     m.Description,
-				Capabilities:    map[string]any{"thinking": false, "agentic": true},
-			})
-			// 4. thinking + agentic
-			expanded = append(expanded, DynamicModel{
-				ID:              safeUpstream + "-thinking-agentic",
-				Name:            display + " (Thinking + Agentic)",
-				ContextLength:   ctxLen,
-				RateMultiplier:  rateMult,
-				UpstreamModelID: safeUpstream,
-				Description:     m.Description,
-				Capabilities:    map[string]any{"thinking": true, "agentic": true},
-			})
-		}
+		variants := buildKiroModelVariants(m)
+		expanded = append(expanded, variants...)
 	}
 
 	return expanded, nil

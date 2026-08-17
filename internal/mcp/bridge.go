@@ -1,3 +1,4 @@
+// Package mcp provides stdio process bridging and SSE streaming for MCP plugins.
 package mcp
 
 import (
@@ -23,8 +24,12 @@ type Plugin struct {
 	mu      sync.Mutex
 }
 
+// New creates a new MCP bridge instance.
 func New() *Bridge {
-	return &Bridge{plugins: make(map[string]*Plugin)}
+	return &Bridge{
+		plugins: make(map[string]*Plugin),
+		mu:      sync.Mutex{},
+	}
 }
 
 // Start launches an MCP plugin process and fans stdout to subscribers.
@@ -45,20 +50,27 @@ func (b *Bridge) Start(name, command string, args []string) error {
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		_ = stdin.Close()
+		if clErr := stdin.Close(); clErr != nil {
+			_ = clErr
+		}
+
 		return err
 	}
 
 	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
+		if clErr := stdin.Close(); clErr != nil {
+			_ = clErr
+		}
+
 		return err
 	}
 
 	p := &Plugin{
-		cmd:     cmd,
 		stdin:   stdin,
+		cmd:     cmd,
 		stdout:  bufio.NewScanner(stdout),
 		clients: make(map[chan []byte]struct{}),
+		mu:      sync.Mutex{},
 	}
 	// larger MCP messages
 	buf := make([]byte, 0, 64*1024)
@@ -83,7 +95,9 @@ func (b *Bridge) readLoop(name string, p *Plugin) {
 		p.mu.Unlock()
 	}
 
-	_ = p.cmd.Wait()
+	if waitErr := p.cmd.Wait(); waitErr != nil {
+		_ = waitErr
+	}
 
 	b.mu.Lock()
 	if cur, ok := b.plugins[name]; ok && cur == p {

@@ -9,7 +9,8 @@ import (
 	"net/http"
 )
 
-func Embeddings(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
+// Embeddings handles OpenAI embeddings requests.
+func Embeddings(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, _ executor.Executor, fb *fallback.Fallback) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
@@ -21,14 +22,16 @@ func Embeddings(ctx context.Context, w http.ResponseWriter, body []byte, st *sto
 		return nil
 	}
 
-	modelStr, _ := m["model"].(string)
+	modelStr, _ := m["model"].(string) //nolint:errcheck // optional type assertion
 
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
 	if errMsg != "" || conn == nil {
 		if errMsg == "" {
 			errMsg = "connection not found"
 		}
+
 		jsonError(w, http.StatusBadRequest, errMsg)
+
 		return nil
 	}
 
@@ -36,7 +39,12 @@ func Embeddings(ctx context.Context, w http.ResponseWriter, body []byte, st *sto
 	cred := mediaCredentials(conn)
 
 	ensureModelField(m, modelName)
-	payload, _ := json.Marshal(m)
+
+	payload, err := json.Marshal(m)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "failed to marshal payload")
+		return err
+	}
 
 	res, err := postOpenAIPath(ctx, cred, "/embeddings", payload)
 	if err != nil {
@@ -54,5 +62,5 @@ func Embeddings(ctx context.Context, w http.ResponseWriter, body []byte, st *sto
 		fb.ClearError(conn.ID)
 	}
 
-	return writeResult(w, res, true)
+	return writeResult(w, res)
 }

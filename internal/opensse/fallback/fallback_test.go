@@ -15,13 +15,17 @@ func setupTestStore(t *testing.T) *store.Store {
 		t.Fatal(err)
 	}
 
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() {
+		//nolint:errcheck // test cleanup
+		_ = st.Close()
+	})
 
 	return st
 }
 
 func TestMarkUnavailable(t *testing.T) {
 	st := setupTestStore(t)
+	//nolint:errcheck // test fixture
 	_, _ = st.CreateConnection("openai", "api_key", "test-key", "sk-test", "https://api.openai.com/v1")
 
 	f := fallback.New(st)
@@ -80,7 +84,9 @@ func TestClearError(t *testing.T) {
 
 func TestSelectAccount(t *testing.T) {
 	st := setupTestStore(t)
+	//nolint:errcheck // test fixture
 	_, _ = st.CreateConnection("openai", "api_key", "key1", "sk-1", "https://api.openai.com/v1")
+	//nolint:errcheck // test fixture
 	_, _ = st.CreateConnection("openai", "api_key", "key2", "sk-2", "https://api.openai.com/v1")
 
 	f := fallback.New(st)
@@ -97,7 +103,9 @@ func TestSelectAccount(t *testing.T) {
 
 func TestSelectAccount_ExcludesUnavailable(t *testing.T) {
 	st := setupTestStore(t)
+	//nolint:errcheck // test fixture
 	id1, _ := st.CreateConnection("openai", "api_key", "key1", "sk-1", "https://api.openai.com/v1")
+	//nolint:errcheck // test fixture
 	_, _ = st.CreateConnection("openai", "api_key", "key2", "sk-2", "https://api.openai.com/v1")
 
 	f := fallback.New(st)
@@ -119,7 +127,9 @@ func TestSelectAccount_ExcludesUnavailable(t *testing.T) {
 
 func TestSelectAccountWithStrategy_FillFirst(t *testing.T) {
 	st := setupTestStore(t)
+	//nolint:errcheck // test fixture
 	id1, _ := st.CreateConnection("openai", "api_key", "key1", "sk-1", "https://api.openai.com/v1")
+	//nolint:errcheck // test fixture
 	id2, _ := st.CreateConnection("openai", "api_key", "key2", "sk-2", "https://api.openai.com/v1")
 	f := fallback.New(st)
 	exclude := map[string]bool{}
@@ -137,6 +147,7 @@ func TestSelectAccountWithStrategy_FillFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if c2 == nil {
 		t.Fatal("expected c2 connection")
 	}
@@ -149,6 +160,7 @@ func TestSelectAccountWithStrategy_FillFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if c3 == nil {
 		t.Fatal("expected c3 connection")
 	}
@@ -159,7 +171,9 @@ func TestSelectAccountWithStrategy_FillFirst(t *testing.T) {
 
 func TestSelectAccountWithStrategy_RoundRobin(t *testing.T) {
 	st := setupTestStore(t)
+	//nolint:errcheck // test fixture
 	id1, _ := st.CreateConnection("openai", "api_key", "key1", "sk-1", "https://api.openai.com/v1")
+	//nolint:errcheck // test fixture
 	id2, _ := st.CreateConnection("openai", "api_key", "key2", "sk-2", "https://api.openai.com/v1")
 	f := fallback.New(st)
 	exclude := map[string]bool{}

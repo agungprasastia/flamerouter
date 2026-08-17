@@ -30,43 +30,55 @@ func Video(ctx context.Context, w http.ResponseWriter, r *http.Request, body []b
 		return nil
 	}
 
+	forwardBody, contentType, providerID, err := prepareVideoPayload(body, r.Header.Get("Content-Type"))
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return err
+	}
+
+	conn, errMsg := pickVideoConn(st, fb, providerID, r.Header.Get("x-connection-id"))
+	if errMsg != "" || conn == nil {
+		if errMsg == "" {
+			errMsg = "connection not found"
+		}
+
+		jsonError(w, http.StatusBadRequest, errMsg)
+
+		return nil
+	}
+
+	return executeVideoRequest(ctx, w, r, conn, action, forwardBody, contentType, fb)
+}
+
+func prepareVideoPayload(body []byte, origCT string) ([]byte, string, string, error) {
 	var parsed map[string]any
 
-	contentType := r.Header.Get("Content-Type")
+	contentType := origCT
 	if strings.Contains(contentType, "application/json") || (len(body) > 0 && body[0] == '{') {
 		if err := json.Unmarshal(body, &parsed); err != nil {
-			jsonError(w, http.StatusBadRequest, "Invalid JSON body")
-			return err
+			return nil, "", "", fmt.Errorf("invalid json body")
 		}
 	}
 
 	providerID, modelName, errMsg := resolveVideoProvider(parsed)
 	if errMsg != "" {
-		jsonError(w, http.StatusBadRequest, errMsg)
-		return nil
+		return nil, "", "", fmt.Errorf("%s", errMsg)
 	}
 
 	forwardBody := body
 
 	if parsed != nil && modelName != "" {
-		if m, _ := parsed["model"].(string); m != "" && m != modelName {
+		if m, _ := parsed["model"].(string); m != "" && m != modelName { //nolint:errcheck // optional type assertion
 			parsed["model"] = modelName
-			forwardBody, _ = json.Marshal(parsed)
+			forwardBody, _ = json.Marshal(parsed) //nolint:errcheck // safe map marshal
 			contentType = "application/json"
 		}
 	}
 
-	preferredID := r.Header.Get("x-connection-id")
+	return forwardBody, contentType, providerID, nil
+}
 
-	conn, errMsg := pickVideoConn(st, fb, providerID, preferredID)
-	if errMsg != "" || conn == nil {
-		if errMsg == "" {
-			errMsg = "connection not found"
-		}
-		jsonError(w, http.StatusBadRequest, errMsg)
-		return nil
-	}
-
+func executeVideoRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, conn *store.Connection, action string, forwardBody []byte, contentType string, fb *fallback.Fallback) error {
 	base := videoBaseURL(conn)
 	upstreamURL := strings.TrimRight(base, "/") + "/" + action
 
@@ -75,13 +87,14 @@ func Video(ctx context.Context, w http.ResponseWriter, r *http.Request, body []b
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return err
 	}
+
 	if res == nil || res.Body == nil {
 		jsonError(w, http.StatusBadGateway, "nil response from upstream")
 		return fmt.Errorf("nil response from upstream")
 	}
 
-	defer res.Body.Close()
-	respBody, _ := io.ReadAll(res.Body)
+	defer res.Body.Close()              //nolint:errcheck // best-effort body close
+	respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
 
 	if res.StatusCode < 400 {
 		fb.ClearError(conn.ID)
@@ -90,7 +103,7 @@ func Video(ctx context.Context, w http.ResponseWriter, r *http.Request, body []b
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-9router-connection-id", conn.ID)
 	w.WriteHeader(res.StatusCode)
-	_, _ = w.Write(respBody)
+	_, _ = w.Write(respBody) //nolint:errcheck // handler write
 
 	return nil
 }
@@ -110,7 +123,9 @@ func VideoPoll(ctx context.Context, w http.ResponseWriter, r *http.Request, requ
 		if errMsg == "" {
 			errMsg = "connection not found"
 		}
+
 		jsonError(w, http.StatusBadRequest, errMsg)
+
 		return nil
 	}
 
@@ -122,13 +137,14 @@ func VideoPoll(ctx context.Context, w http.ResponseWriter, r *http.Request, requ
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return err
 	}
+
 	if res == nil || res.Body == nil {
 		jsonError(w, http.StatusBadGateway, "nil response from upstream")
 		return fmt.Errorf("nil response from upstream")
 	}
 
-	defer res.Body.Close()
-	respBody, _ := io.ReadAll(res.Body)
+	defer res.Body.Close()              //nolint:errcheck // best-effort body close
+	respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
 
 	if res.StatusCode < 400 {
 		fb.ClearError(conn.ID)
@@ -137,7 +153,7 @@ func VideoPoll(ctx context.Context, w http.ResponseWriter, r *http.Request, requ
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-9router-connection-id", conn.ID)
 	w.WriteHeader(res.StatusCode)
-	_, _ = w.Write(respBody)
+	_, _ = w.Write(respBody) //nolint:errcheck // handler write
 
 	return nil
 }
@@ -160,7 +176,7 @@ func resolveVideoProvider(parsed map[string]any) (providerID, modelName, errMsg 
 		return defaultVideoProvider, "", ""
 	}
 
-	modelStr, _ := parsed["model"].(string)
+	modelStr, _ := parsed["model"].(string) //nolint:errcheck // optional type assertion
 	if modelStr == "" {
 		return defaultVideoProvider, "", ""
 	}
@@ -189,12 +205,12 @@ func resolveVideoProvider(parsed map[string]any) (providerID, modelName, errMsg 
 
 func pickVideoConn(st *store.Store, fb *fallback.Fallback, providerID, preferredID string) (*store.Connection, string) {
 	if preferredID != "" {
-		if c, _ := st.GetConnection(preferredID); c != nil {
+		if c, _ := st.GetConnection(preferredID); c != nil { //nolint:errcheck // optional lookup
 			return c, ""
 		}
 	}
 
-	conn, _ := fb.SelectAccountExcluding(providerID, make(map[string]bool))
+	conn, _ := fb.SelectAccountExcluding(providerID, make(map[string]bool)) //nolint:errcheck // error handled via nil check
 	if conn == nil {
 		return nil, "No credentials for provider: " + providerID
 	}

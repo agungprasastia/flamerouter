@@ -1,3 +1,4 @@
+// Package tokenrefresh provides token refresh management, deduplication, and caching.
 package tokenrefresh
 
 import (
@@ -10,11 +11,15 @@ import (
 )
 
 const (
+	// TokenExpiryBuffer defines how far in advance of actual token expiration a refresh should be triggered.
 	TokenExpiryBuffer = 5 * time.Minute
-	MaxRetryAttempts  = 2
-	RetryDelay        = 500 * time.Millisecond
+	// MaxRetryAttempts is the maximum number of retry attempts for token refresh operations.
+	MaxRetryAttempts = 2
+	// RetryDelay is the base duration to wait between refresh retry attempts.
+	RetryDelay = 500 * time.Millisecond
 )
 
+// RefreshResult represents the outcome of an OAuth token refresh.
 type RefreshResult struct {
 	AccessToken  string
 	RefreshToken string
@@ -22,24 +27,29 @@ type RefreshResult struct {
 	Error        string
 }
 
+// Refresher defines the interface for refreshing provider OAuth tokens.
+type Refresher interface {
+	Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error)
+}
+
+// RefreshManager manages provider refreshers and handles deduplication and retries.
 type RefreshManager struct {
 	refreshers map[string]Refresher
 	dedup      *DedupGroup
 	mu         sync.RWMutex
 }
 
-type Refresher interface {
-	Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error)
-}
-
+// NewRefreshManager creates a new RefreshManager with default configuration and TTL.
 func NewRefreshManager() *RefreshManager {
 	return NewRefreshManagerWithTTL(DefaultRefreshResultTTL)
 }
 
+// NewRefreshManagerWithTTL creates a new RefreshManager with custom deduplication TTL.
 func NewRefreshManagerWithTTL(ttl time.Duration) *RefreshManager {
 	rm := &RefreshManager{
 		refreshers: make(map[string]Refresher),
 		dedup:      NewDedupGroup(ttl),
+		mu:         sync.RWMutex{},
 	}
 	rm.registerDefaults()
 
@@ -47,35 +57,26 @@ func NewRefreshManagerWithTTL(ttl time.Duration) *RefreshManager {
 }
 
 func (rm *RefreshManager) registerDefaults() {
-	rm.Register("claude", &ClaudeRefresher{})
-	rm.Register("gemini", &GoogleRefresher{})
-	rm.Register("github", &GitHubRefresher{})
-	rm.Register("xai", &XAIRefresher{})
-	rm.Register("codex", &CodexRefresher{})
-	rm.Register("kiro", &KiroRefresher{})
-	rm.Register("cursor", &CursorRefresher{})
-	rm.Register("iflow", &IFlowRefresher{})
-	rm.Register("qwen", &QwenRefresher{})
-	rm.Register("kimi", &KimiRefresher{})
-	rm.Register("grok-cli", &GrokCLIRefresher{})
-	rm.Register("antigravity", &AntigravityRefresher{})
-	rm.Register("kilocode", &KilocodeRefresher{})
-	rm.Register("cline", &ClineRefresher{})
-	rm.Register("clinepass", &ClinePassRefresher{})
-	rm.Register("gitlab", &GitLabRefresher{})
-	rm.Register("codebuddy", &CodeBuddyRefresher{})
-	rm.Register("kimchi", &KimchiRefresher{})
-	rm.Register("qoder", &QoderRefresher{})
-	rm.Register("copilot", &CopilotRefresher{})
-	rm.Register("vertex", &VertexRefresher{})
+	providers := []string{
+		"claude", "gemini", "github", "xai", "codex", "kiro", "cursor",
+		"iflow", "qwen", "kimi", "grok-cli", "antigravity", "kilocode",
+		"cline", "clinepass", "gitlab", "codebuddy", "kimchi", "qoder",
+		"copilot", "vertex",
+	}
+
+	for _, p := range providers {
+		rm.Register(p, &providerOAuthRefresher{provider: p})
+	}
 }
 
+// Register registers a new Refresher implementation for a given provider.
 func (rm *RefreshManager) Register(provider string, refresher Refresher) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 	rm.refreshers[provider] = refresher
 }
 
+// Refresh executes a token refresh for a provider, using deduplication and retries.
 func (rm *RefreshManager) Refresh(ctx context.Context, provider string, refreshToken string) (*RefreshResult, error) {
 	rm.mu.RLock()
 	refresher, ok := rm.refreshers[provider]
@@ -95,16 +96,36 @@ func (rm *RefreshManager) Refresh(ctx context.Context, provider string, refreshT
 	return rm.refreshWithRetry(ctx, provider, refreshToken, refresher)
 }
 
+func waitRetry(ctx context.Context, attempt int) error {
+	if attempt == 0 {
+		return nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(RetryDelay * time.Duration(attempt)):
+		return nil
+	}
+}
+
+func extractRefreshError(result *RefreshResult, err error) error {
+	switch {
+	case err != nil:
+		return err
+	case result != nil:
+		return fmt.Errorf("%s", result.Error)
+	default:
+		return errors.New("empty result returned")
+	}
+}
+
 func (rm *RefreshManager) refreshWithRetry(ctx context.Context, provider, refreshToken string, refresher Refresher) (*RefreshResult, error) {
 	var lastErr error
 
 	for attempt := 0; attempt <= MaxRetryAttempts; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(RetryDelay * time.Duration(attempt)):
-			}
+		if err := waitRetry(ctx, attempt); err != nil {
+			return nil, err
 		}
 
 		result, err := refresher.Refresh(ctx, refreshToken)
@@ -112,394 +133,65 @@ func (rm *RefreshManager) refreshWithRetry(ctx context.Context, provider, refres
 			return result, nil
 		}
 
-		if err != nil {
-			lastErr = err
-		} else if result != nil {
-			lastErr = fmt.Errorf("%s", result.Error)
-		} else {
-			lastErr = errors.New("empty result returned")
-		}
+		lastErr = extractRefreshError(result, err)
 	}
 
 	return nil, fmt.Errorf("refresh failed after %d attempts for %s: %w", MaxRetryAttempts+1, provider, lastErr)
 }
 
+// NeedsRefresh reports whether the token expiring at expiresAt should be refreshed now.
 func (rm *RefreshManager) NeedsRefresh(expiresAt time.Time) bool {
 	return time.Until(expiresAt) < TokenExpiryBuffer
 }
 
+// GenericOAuthRefresher refreshes OAuth tokens using an OAuthConfig.
 type GenericOAuthRefresher struct {
 	Config *oauth.OAuthConfig
 }
 
+// Refresh refreshes the OAuth token for the generic provider.
 func (g *GenericOAuthRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
 	handler := oauth.NewHandler()
 
 	token, err := handler.RefreshToken(ctx, g.Config.Provider, refreshToken)
 	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
+		return &RefreshResult{
+			AccessToken:  "",
+			RefreshToken: "",
+			ExpiresAt:    time.Time{},
+			Error:        err.Error(),
+		}, err
 	}
 
 	return &RefreshResult{
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
 		ExpiresAt:    token.ExpiresAt,
+		Error:        "",
 	}, nil
 }
 
-type ClaudeRefresher struct{}
-
-func (c *ClaudeRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "claude", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
+type providerOAuthRefresher struct {
+	provider string
 }
 
-type GoogleRefresher struct{}
-
-func (g *GoogleRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
+func (p *providerOAuthRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
 	handler := oauth.NewHandler()
 
-	token, err := handler.RefreshToken(ctx, "gemini", refreshToken)
+	token, err := handler.RefreshToken(ctx, p.provider, refreshToken)
 	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
+		return &RefreshResult{
+			AccessToken:  "",
+			RefreshToken: "",
+			ExpiresAt:    time.Time{},
+			Error:        err.Error(),
+		}, err
 	}
 
 	return &RefreshResult{
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
 		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type GitHubRefresher struct{}
-
-func (g *GitHubRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "github", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type XAIRefresher struct{}
-
-func (x *XAIRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "xai", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type CodexRefresher struct{}
-
-func (c *CodexRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "codex", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type KiroRefresher struct{}
-
-func (k *KiroRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "kiro", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type CursorRefresher struct{}
-
-func (c *CursorRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "cursor", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type IFlowRefresher struct{}
-
-func (i *IFlowRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "iflow", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type QwenRefresher struct{}
-
-func (q *QwenRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "qwen", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type KimiRefresher struct{}
-
-func (k *KimiRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "kimi", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type GrokCLIRefresher struct{}
-
-func (g *GrokCLIRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "grok-cli", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type AntigravityRefresher struct{}
-
-func (a *AntigravityRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "antigravity", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type KilocodeRefresher struct{}
-
-func (k *KilocodeRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "kilocode", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type ClineRefresher struct{}
-
-func (c *ClineRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "cline", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type ClinePassRefresher struct{}
-
-func (c *ClinePassRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "clinepass", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type GitLabRefresher struct{}
-
-func (g *GitLabRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "gitlab", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type CodeBuddyRefresher struct{}
-
-func (c *CodeBuddyRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "codebuddy", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type KimchiRefresher struct{}
-
-func (k *KimchiRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "kimchi", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type QoderRefresher struct{}
-
-func (q *QoderRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "qoder", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type CopilotRefresher struct{}
-
-func (c *CopilotRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "copilot", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-type VertexRefresher struct{}
-
-func (v *VertexRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
-	handler := oauth.NewHandler()
-
-	token, err := handler.RefreshToken(ctx, "vertex", refreshToken)
-	if err != nil {
-		return &RefreshResult{Error: err.Error()}, err
-	}
-
-	return &RefreshResult{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		ExpiresAt:    token.ExpiresAt,
+		Error:        "",
 	}, nil
 }

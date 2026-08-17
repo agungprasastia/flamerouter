@@ -1,5 +1,7 @@
+// Package store provides SQLite persistent storage for flamerouter state.
 package store
 
+// ProxyPool describes an outbound proxy configuration.
 type ProxyPool struct {
 	ID       string
 	Name     string
@@ -11,13 +13,18 @@ type ProxyPool struct {
 	IsActive bool
 }
 
+// ListProxyPools returns all configured proxy pools.
 func (s *Store) ListProxyPools() ([]ProxyPool, error) {
 	rows, err := s.db.Query(`SELECT id, name, type, host, port, username, password, is_active FROM proxy_pools`)
 	if err != nil {
 		return nil, err
 	}
 
-	defer rows.Close()
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	var out []ProxyPool
 
@@ -36,6 +43,7 @@ func (s *Store) ListProxyPools() ([]ProxyPool, error) {
 	return out, rows.Err()
 }
 
+// CreateProxyPool creates a new proxy pool configuration.
 func (s *Store) CreateProxyPool(name, typ, host string, port int, username, password string) (string, error) {
 	id := newID()
 	_, err := s.db.Exec(
@@ -46,6 +54,7 @@ func (s *Store) CreateProxyPool(name, typ, host string, port int, username, pass
 	return id, err
 }
 
+// UpdateProxyPool updates an existing proxy pool configuration.
 func (s *Store) UpdateProxyPool(id, name, typ, host string, port int, username, password string, isActive bool) error {
 	_, err := s.db.Exec(
 		`UPDATE proxy_pools SET name=?,type=?,host=?,port=?,username=?,password=?,is_active=? WHERE id=?`,
@@ -55,11 +64,13 @@ func (s *Store) UpdateProxyPool(id, name, typ, host string, port int, username, 
 	return err
 }
 
+// DeleteProxyPool removes a proxy pool.
 func (s *Store) DeleteProxyPool(id string) error {
 	_, err := s.db.Exec(`DELETE FROM proxy_pools WHERE id=?`, id)
 	return err
 }
 
+// GetProxyPool retrieves a single proxy pool by id.
 func (s *Store) GetProxyPool(id string) (*ProxyPool, error) {
 	var p ProxyPool
 

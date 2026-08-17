@@ -12,6 +12,9 @@ func init() {
 	RegisterSpecialized("kiro", &KiroExecutor{
 		Base: Base{
 			Provider: "kiro",
+			Client:   nil,
+			Headers:  nil,
+			BaseURL:  "",
 			BaseURLs: []string{
 				"https://q.us-east-1.amazonaws.com/generateAssistantResponse",
 				"https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
@@ -20,6 +23,7 @@ func init() {
 	})
 }
 
+// KiroExecutor handles requests for AWS CodeWhisperer/Kiro.
 type KiroExecutor struct {
 	Base
 }
@@ -29,7 +33,7 @@ func (e *KiroExecutor) orderedURLs(cred Credentials) []string {
 
 	if b := strings.TrimRight(cred.BaseURL, "/"); b != "" {
 		if !strings.Contains(b, "generateAssistantResponse") {
-			b = b + "/generateAssistantResponse"
+			b += "/generateAssistantResponse"
 		}
 
 		return []string{b}
@@ -71,7 +75,9 @@ func (e *KiroExecutor) buildHeaders(cred Credentials, stream bool) http.Header {
 	h.Set("Amz-Sdk-Invocation-Id", randomUUIDSimple())
 
 	authMethod := strPSD(cred, "authMethod")
-	if authMethod == "api_key" || (cred.APIKey != "" && cred.AccessToken == "") {
+
+	switch {
+	case authMethod == "api_key" || (cred.APIKey != "" && cred.AccessToken == ""):
 		tok := cred.APIKey
 		if tok == "" {
 			tok = cred.AccessToken
@@ -79,13 +85,13 @@ func (e *KiroExecutor) buildHeaders(cred Credentials, stream bool) http.Header {
 
 		h.Set("Authorization", "Bearer "+tok)
 		h.Set("tokentype", "API_KEY")
-	} else if cred.AccessToken != "" {
+	case cred.AccessToken != "":
 		h.Set("Authorization", "Bearer "+cred.AccessToken)
 
 		if authMethod == "external_idp" {
 			h.Set("TokenType", "EXTERNAL_IDP")
 		}
-	} else if cred.APIKey != "" {
+	case cred.APIKey != "":
 		h.Set("Authorization", "Bearer "+cred.APIKey)
 	}
 
@@ -96,6 +102,7 @@ func (e *KiroExecutor) buildHeaders(cred Credentials, stream bool) http.Header {
 	return h
 }
 
+// Execute executes Kiro / CodeWhisperer requests.
 func (e *KiroExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {

@@ -15,6 +15,7 @@ type JWTManager struct {
 	secret []byte
 }
 
+// NewJWTManager creates a new JWTManager with the provided HMAC secret.
 func NewJWTManager(secret string) *JWTManager {
 	return &JWTManager{secret: []byte(secret)}
 }

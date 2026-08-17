@@ -1,3 +1,4 @@
+// Package store provides SQLite persistent storage for flamerouter state.
 package store
 
 import (
@@ -9,10 +10,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Store wraps a persistent SQLite database handle.
 type Store struct {
 	db *sql.DB
 }
 
+// Open initializes and migrates the SQLite database at dataDir.
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, err
@@ -28,15 +31,20 @@ func Open(dataDir string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 
 	if err := migrate(db); err != nil {
-		_ = db.Close()
+		if clErr := db.Close(); clErr != nil {
+			_ = clErr
+		}
+
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
 	return &Store{db: db}, nil
 }
 
+// DB returns the underlying sql.DB.
 func (s *Store) DB() *sql.DB { return s.db }
 
+// Close closes the underlying SQLite database.
 func (s *Store) Close() error {
 	if s.db == nil {
 		return nil

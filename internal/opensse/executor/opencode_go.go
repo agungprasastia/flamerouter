@@ -12,7 +12,10 @@ func init() {
 	RegisterSpecialized("opencode-go", &OpenCodeGoExecutor{
 		Base: Base{
 			Provider: "opencode-go",
+			Client:   nil,
+			Headers:  nil,
 			BaseURL:  "https://opencode.ai/zen/go/v1",
+			BaseURLs: nil,
 		},
 	})
 }
@@ -75,6 +78,7 @@ func (e *OpenCodeGoExecutor) buildHeaders(cred Credentials, model string, stream
 	return h
 }
 
+// Execute executes OpenCode Go requests.
 func (e *OpenCodeGoExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {

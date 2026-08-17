@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"flamerouter/internal/opensse/fallback"
+	"flamerouter/internal/opensse/rtk"
 	"flamerouter/internal/opensse/testutil"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +19,7 @@ type testUsageSink struct {
 	called     bool
 }
 
-func (s *testUsageSink) OnUsage(provider, model, connectionID string, prompt, completion, statusCode int) {
+func (s *testUsageSink) OnUsage(provider, model, _ string, prompt, completion, statusCode int) {
 	s.called = true
 	s.provider = provider
 	s.model = model
@@ -41,15 +42,28 @@ func TestUsageSinkRecordedOnSuccess(t *testing.T) {
 			"choices":[{"message":{"role":"assistant","content":"usage content"}}],
 			"usage":{"prompt_tokens":15,"completion_tokens":25}
 		}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
-	sink := &testUsageSink{}
+	sink := &testUsageSink{
+		provider:   "",
+		model:      "",
+		prompt:     0,
+		completion: 0,
+		statusCode: 0,
+		called:     false,
+	}
 
 	reqBody := []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"test usage"}]}`)
 	rec := httptest.NewRecorder()
 
 	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
-		Usage: sink,
+		Usage:           sink,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
 	})
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)
@@ -86,6 +100,7 @@ func TestTokenSaverHeaderOptOut(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-ts-1","choices":[{"message":{"role":"assistant","content":"ok"}}]}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
@@ -96,7 +111,12 @@ func TestTokenSaverHeaderOptOut(t *testing.T) {
 	headers.Set("x-9router-token-saver", "off")
 
 	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
-		ClientHeaders: headers,
+		Usage:           nil,
+		ClientHeaders:   headers,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
 	})
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"flamerouter/internal/mcp"
 	"io"
 	"net/http"
@@ -23,6 +24,44 @@ func getMCPBridge() *mcp.Bridge {
 	return mcpBridge
 }
 
+func writeMCPHeartbeat(w io.Writer, flusher http.Flusher) {
+	if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
+		_ = err
+	}
+
+	flusher.Flush()
+}
+
+func writeMCPLine(w io.Writer, line []byte, flusher http.Flusher) {
+	if _, err := io.WriteString(w, "data: "); err != nil {
+		_ = err
+	}
+
+	if _, err := w.Write(line); err != nil {
+		_ = err
+	}
+
+	if _, err := io.WriteString(w, "\n\n"); err != nil {
+		_ = err
+	}
+
+	flusher.Flush()
+}
+
+func (s *Server) ensureMCPPluginRunning(plugin string, r *http.Request) error {
+	br := getMCPBridge()
+	if br.Running(plugin) {
+		return nil
+	}
+
+	cmd := r.URL.Query().Get("command")
+	if cmd == "" {
+		return http.ErrNotSupported
+	}
+
+	return br.Start(plugin, cmd, r.URL.Query()["arg"])
+}
+
 // GET /api/mcp/{plugin}/sse — SSE stream from plugin.
 func (s *Server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 	plugin := r.PathValue("plugin")
@@ -31,20 +70,17 @@ func (s *Server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	br := getMCPBridge()
-	// ensure process if command provided as query (optional lazy start)
-	if !br.Running(plugin) {
-		cmd := r.URL.Query().Get("command")
-		if cmd == "" {
+	if err := s.ensureMCPPluginRunning(plugin, r); err != nil {
+		if err == http.ErrNotSupported {
 			writeErr(w, http.StatusNotFound, "plugin not running")
-			return
+		} else {
+			writeErr(w, http.StatusInternalServerError, err.Error())
 		}
 
-		if err := br.Start(plugin, cmd, r.URL.Query()["arg"]); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+		return
 	}
+
+	br := getMCPBridge()
 
 	ch, err := br.Subscribe(plugin)
 	if err != nil {
@@ -66,30 +102,25 @@ func (s *Server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	// heartbeat ticker
+	s.streamMCPEvents(r.Context(), w, flusher, ch)
+}
+
+func (s *Server) streamMCPEvents(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, ch <-chan []byte) {
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
-
-	ctx := r.Context()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			_, _ = io.WriteString(w, ": ping\n\n")
-
-			flusher.Flush()
-		case line, ok := <-ch:
-			if !ok {
+			writeMCPHeartbeat(w, flusher)
+		case line, okChan := <-ch:
+			if !okChan {
 				return
 			}
 
-			_, _ = io.WriteString(w, "data: ")
-			_, _ = w.Write(line)
-			_, _ = io.WriteString(w, "\n\n")
-
-			flusher.Flush()
+			writeMCPLine(w, line, flusher)
 		}
 	}
 }

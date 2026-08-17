@@ -47,7 +47,7 @@ func (s *Server) getOrCreateMITM() (*mitm.Server, error) {
 	}
 
 	if s != nil && s.st != nil {
-		if v, _ := s.st.GetSetting("mitmRouterBaseUrl"); v != "" {
+		if v, err := s.st.GetSetting("mitmRouterBaseUrl"); err == nil && v != "" {
 			routerBase = v
 		}
 	}
@@ -56,6 +56,21 @@ func (s *Server) getOrCreateMITM() (*mitm.Server, error) {
 	mitmServer = srv
 
 	return mitmServer, nil
+}
+
+func (s *Server) mitmRouterBase() string {
+	routerBase := "http://localhost:20128"
+	if s.cfg != nil && s.cfg.Port > 0 {
+		routerBase = "http://localhost:" + strconv.Itoa(s.cfg.Port)
+	}
+
+	if s.st != nil {
+		if v, err := s.st.GetSetting("mitmRouterBaseUrl"); err == nil && v != "" {
+			routerBase = v
+		}
+	}
+
+	return routerBase
 }
 
 // POST /api/mitm/start.
@@ -69,6 +84,7 @@ func (s *Server) handleMITMStart(w http.ResponseWriter, r *http.Request) {
 		Addr   string `json:"addr"`
 	}
 
+	//nolint:errcheck // optional json body
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	if body.APIKey != "" {
@@ -85,19 +101,8 @@ func (s *Server) handleMITMStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	// re-register tools with latest key
-	routerBase := "http://localhost:20128"
-	if s.cfg != nil && s.cfg.Port > 0 {
-		routerBase = "http://localhost:" + strconv.Itoa(s.cfg.Port)
-	}
 
-	if s.st != nil {
-		if v, _ := s.st.GetSetting("mitmRouterBaseUrl"); v != "" {
-			routerBase = v
-		}
-	}
-
-	srv.RegisterDefaultTools(routerBase, mitmAPIKey)
+	srv.RegisterDefaultTools(s.mitmRouterBase(), mitmAPIKey)
 
 	if err := srv.Start(addr); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": srv.Status()})
@@ -105,6 +110,7 @@ func (s *Server) handleMITMStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.st != nil {
+		//nolint:errcheck // best-effort setting save
 		_ = s.st.SetSetting("mitmEnabled", "true")
 	}
 
@@ -122,18 +128,22 @@ func (s *Server) handleMITMStop(w http.ResponseWriter, r *http.Request) {
 	mitmMu.Unlock()
 
 	if srv != nil {
-		_ = srv.Stop()
+		if err := srv.Stop(); err != nil {
+			_ = err
+		}
 	}
 
 	if s.st != nil {
-		_ = s.st.SetSetting("mitmEnabled", "false")
+		if err := s.st.SetSetting("mitmEnabled", "false"); err != nil {
+			_ = err
+		}
 	}
 
 	writeJSONOK(w, map[string]any{"success": true, "status": "stopped"})
 }
 
 // GET /api/mitm/status.
-func (s *Server) handleMITMStatus(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleMITMStatus(w http.ResponseWriter, _ *http.Request) {
 	certPath, _ := s.mitmCertPaths()
 	certExists := false
 
@@ -174,7 +184,7 @@ func (s *Server) handleMITMStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/mitm/cert — download root CA PEM.
-func (s *Server) handleMITMCert(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleMITMCert(w http.ResponseWriter, _ *http.Request) {
 	srv, err := s.getOrCreateMITM()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -185,7 +195,7 @@ func (s *Server) handleMITMCert(w http.ResponseWriter, r *http.Request) {
 	if len(pem) == 0 {
 		// try disk
 		certPath, _ := s.mitmCertPaths()
-		pem, _ = os.ReadFile(certPath)
+		pem, _ = os.ReadFile(filepath.Clean(certPath)) //nolint:gosec,errcheck // best-effort cert load
 	}
 
 	if len(pem) == 0 {
@@ -196,6 +206,7 @@ func (s *Server) handleMITMCert(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	w.Header().Set("Content-Disposition", `attachment; filename="flamerouter-mitm-ca.crt"`)
 	w.WriteHeader(http.StatusOK)
+	//nolint:errcheck // write response
 	_, _ = w.Write(pem)
 }
 
@@ -246,6 +257,7 @@ func (s *Server) handleMITMHosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var err error
+
 	switch body.Action {
 	case "disable":
 		err = mitm.DisableToolHosts(body.Tool)
@@ -264,7 +276,7 @@ func (s *Server) handleMITMHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	// also update in-memory DNS override
 	if srv, e := s.getOrCreateMITM(); e == nil {
-		for _, h := range mitm.TOOL_HOSTS[body.Tool] {
+		for _, h := range mitm.ToolHosts[body.Tool] {
 			if body.Action == "disable" {
 				srv.DNS().Delete(h)
 			} else {

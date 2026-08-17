@@ -42,7 +42,11 @@ func capForMime(mime string) string {
 }
 
 func capForOpenAIBlock(block map[string]any) string {
-	t, _ := block["type"].(string)
+	t, ok := block["type"].(string)
+	if !ok {
+		return ""
+	}
+
 	switch t {
 	case "image_url", "image":
 		return "vision"
@@ -56,7 +60,11 @@ func capForOpenAIBlock(block map[string]any) string {
 }
 
 func capForClaudeBlock(block map[string]any) string {
-	t, _ := block["type"].(string)
+	t, ok := block["type"].(string)
+	if !ok {
+		return ""
+	}
+
 	switch t {
 	case "image":
 		return "vision"
@@ -69,8 +77,7 @@ func capForClaudeBlock(block map[string]any) string {
 
 func filterBlocks(blocks []any, capOf func(map[string]any) string, caps *Capabilities, isLast bool) []any {
 	removed := map[string]bool{}
-
-	var out []any
+	out := make([]any, 0, len(blocks))
 
 	for _, block := range blocks {
 		b, ok := block.(map[string]any)
@@ -177,40 +184,96 @@ func stripResponses(body map[string]any, caps *Capabilities) {
 			continue
 		}
 
-		removed := map[string]bool{}
-
-		var out []any
-
-		for _, b := range content {
-			block, ok := b.(map[string]any)
-			if !ok {
-				out = append(out, b)
-				continue
-			}
-
-			t, _ := block["type"].(string)
-			cap := ""
-
-			if t == "input_image" {
-				cap = "vision"
-			} else if t == "input_file" {
-				cap = "pdf"
-			}
-
-			if cap != "" && !capEnabled(caps, cap) {
-				removed[cap] = true
-				continue
-			}
-
-			out = append(out, block)
-		}
-
-		for cap := range removed {
-			out = append(out, map[string]any{"type": "input_text", "text": ph(cap, i == last)})
-		}
-
-		item["content"] = out
+		item["content"] = filterResponseBlocks(content, caps, i == last)
 	}
+}
+
+func filterResponseBlocks(content []any, caps *Capabilities, isLast bool) []any {
+	removed := map[string]bool{}
+	out := make([]any, 0, len(content))
+
+	for _, b := range content {
+		block, ok := b.(map[string]any)
+		if !ok {
+			out = append(out, b)
+			continue
+		}
+
+		t, ok := block["type"].(string)
+		if !ok {
+			out = append(out, b)
+			continue
+		}
+
+		cap := ""
+		if t == "input_image" {
+			cap = "vision"
+		} else if t == "input_file" {
+			cap = "pdf"
+		}
+
+		if cap != "" && !capEnabled(caps, cap) {
+			removed[cap] = true
+			continue
+		}
+
+		out = append(out, block)
+	}
+
+	for cap := range removed {
+		out = append(out, map[string]any{"type": "input_text", "text": ph(cap, isLast)})
+	}
+
+	return out
+}
+
+func extractGeminiMime(p map[string]any) string {
+	mime := ""
+
+	if id, ok := p["inlineData"].(map[string]any); ok {
+		if m, ok := id["mimeType"].(string); ok {
+			mime = m
+		} else if m, ok := id["mime_type"].(string); ok {
+			mime = m
+		}
+	}
+
+	if fd, ok := p["fileData"].(map[string]any); ok {
+		if m, ok := fd["mimeType"].(string); ok {
+			mime = m
+		}
+	}
+
+	return mime
+}
+
+func stripGeminiContentParts(parts []any, caps *Capabilities, isLast bool) []any {
+	removed := map[string]bool{}
+	out := make([]any, 0, len(parts))
+
+	for _, pRaw := range parts {
+		p, ok := pRaw.(map[string]any)
+		if !ok {
+			out = append(out, pRaw)
+			continue
+		}
+
+		mime := extractGeminiMime(p)
+
+		cap := capForMime(mime)
+		if cap != "" && !capEnabled(caps, cap) {
+			removed[cap] = true
+			continue
+		}
+
+		out = append(out, p)
+	}
+
+	for cap := range removed {
+		out = append(out, map[string]any{"text": ph(cap, isLast)})
+	}
+
+	return out
 }
 
 func stripGeminiParts(contents []any, caps *Capabilities) {
@@ -231,43 +294,21 @@ func stripGeminiParts(contents []any, caps *Capabilities) {
 			continue
 		}
 
-		removed := map[string]bool{}
+		c["parts"] = stripGeminiContentParts(parts, caps, i == last)
+	}
+}
 
-		var out []any
+func stripGeminiModalities(body map[string]any, caps *Capabilities) {
+	if contents, ok := body["contents"].([]any); ok {
+		stripGeminiParts(contents, caps)
+	}
+}
 
-		for _, pRaw := range parts {
-			p, ok := pRaw.(map[string]any)
-			if !ok {
-				out = append(out, pRaw)
-				continue
-			}
-
-			mime := ""
-			if id, ok := p["inlineData"].(map[string]any); ok {
-				mime, _ = id["mimeType"].(string)
-				if mime == "" {
-					mime, _ = id["mime_type"].(string)
-				}
-			}
-
-			if fd, ok := p["fileData"].(map[string]any); ok {
-				mime, _ = fd["mimeType"].(string)
-			}
-
-			cap := capForMime(mime)
-			if cap != "" && !capEnabled(caps, cap) {
-				removed[cap] = true
-				continue
-			}
-
-			out = append(out, p)
+func stripAntigravityModalities(body map[string]any, caps *Capabilities) {
+	if req, ok := body["request"].(map[string]any); ok {
+		if contents, ok := req["contents"].([]any); ok {
+			stripGeminiParts(contents, caps)
 		}
-
-		for cap := range removed {
-			out = append(out, map[string]any{"text": ph(cap, i == last)})
-		}
-
-		c["parts"] = out
 	}
 }
 
@@ -282,6 +323,12 @@ func StripUnsupportedModalities(body map[string]any, sourceFormat string, caps *
 		return false
 	}
 
+	dispatchStripModalities(body, sourceFormat, caps)
+
+	return true
+}
+
+func dispatchStripModalities(body map[string]any, sourceFormat string, caps *Capabilities) {
 	switch sourceFormat {
 	case "openai", "ollama", "kiro", "cursor", "commandcode":
 		stripOpenAI(body, caps)
@@ -290,42 +337,42 @@ func StripUnsupportedModalities(body map[string]any, sourceFormat string, caps *
 	case "openai-responses", "openai-response", "codex", "responses":
 		stripResponses(body, caps)
 	case "gemini", "gemini-cli", "vertex":
-		if contents, ok := body["contents"].([]any); ok {
-			stripGeminiParts(contents, caps)
-		}
+		stripGeminiModalities(body, caps)
 	case "antigravity":
-		if req, ok := body["request"].(map[string]any); ok {
-			if contents, ok := req["contents"].([]any); ok {
-				stripGeminiParts(contents, caps)
-			}
-		}
+		stripAntigravityModalities(body, caps)
 	default:
 		stripOpenAI(body, caps)
 	}
-
-	return true
 }
 
 // StripUnsupportedModalitiesLegacy keeps old signature used by some callers.
-func StripUnsupportedModalitiesLegacy(body map[string]any, caps Capabilities, isCurrentTurn bool) map[string]any {
+func StripUnsupportedModalitiesLegacy(body map[string]any, caps Capabilities, _ /* isCurrentTurn */ bool) map[string]any {
 	c := caps
 	StripUnsupportedModalities(body, "openai", &c)
 
 	return body
 }
 
+// CapabilitiesFromServiceKind derives default Capabilities for a given service kind.
 func CapabilitiesFromServiceKind(kind string) *Capabilities {
+	base := defaultCaps()
+
 	switch kind {
 	case "imageToText":
-		return &Capabilities{Vision: true}
+		base.Vision = true
+		return base
 	case "image":
-		return &Capabilities{ImageOutput: true}
+		base.ImageOutput = true
+		return base
 	case "stt":
-		return &Capabilities{AudioInput: true}
+		base.AudioInput = true
+		return base
 	case "tts":
-		return &Capabilities{AudioOutput: true}
+		base.AudioOutput = true
+		return base
 	case "embedding":
-		return &Capabilities{Tools: false}
+		base.Tools = false
+		return base
 	}
 
 	return nil
@@ -342,33 +389,52 @@ type stripRule struct {
 
 var stripRules = []stripRule{
 	{
-		match: func(m string) bool { return strings.Contains(m, "claude") },
-		drop:  []string{"temperature"},
+		provider:              "",
+		match:                 func(m string) bool { return strings.Contains(m, "claude") },
+		drop:                  []string{"temperature"},
+		flattenContent:        false,
+		clampToModelMaxOutput: false,
+		maxOutputCap:          0,
 	},
 	{
-		provider: "github",
-		match:    func(m string) bool { return strings.Contains(m, "gpt-5.4") },
-		drop:     []string{"temperature"},
+		provider:              "github",
+		match:                 func(m string) bool { return strings.Contains(m, "gpt-5.4") },
+		drop:                  []string{"temperature"},
+		flattenContent:        false,
+		clampToModelMaxOutput: false,
+		maxOutputCap:          0,
 	},
 	{
 		provider: "github",
 		match: func(m string) bool {
 			return strings.Contains(m, "claude") && !strings.Contains(m, "opus") && !strings.Contains(m, "sonnet") && !strings.Contains(m, "4.6")
 		},
-		drop: []string{"thinking", "reasoning_effort"},
+		drop:                  []string{"thinking", "reasoning_effort"},
+		flattenContent:        false,
+		clampToModelMaxOutput: false,
+		maxOutputCap:          0,
 	},
 	{
-		provider:       "cloudflare-ai",
-		flattenContent: true,
+		provider:              "cloudflare-ai",
+		match:                 nil,
+		drop:                  nil,
+		flattenContent:        true,
+		clampToModelMaxOutput: false,
+		maxOutputCap:          0,
 	},
 	{
 		provider:              "volcengine-ark",
 		match:                 func(m string) bool { return strings.Contains(m, "glm-5") },
+		drop:                  nil,
+		flattenContent:        false,
 		clampToModelMaxOutput: true,
+		maxOutputCap:          0,
 	},
 	{
 		provider:              "volcengine-ark",
 		match:                 func(m string) bool { return strings.Contains(m, "kimi") },
+		drop:                  nil,
+		flattenContent:        false,
 		clampToModelMaxOutput: true,
 		maxOutputCap:          32768,
 	},
@@ -392,6 +458,76 @@ func clampNumber(body map[string]any, key string, ceiling int) {
 	}
 }
 
+func flattenMessagesContent(body map[string]any) {
+	messages, ok := body["messages"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, msgRaw := range messages {
+		msg, ok := msgRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		contentArr, ok := msg["content"].([]any)
+		if !ok {
+			continue
+		}
+
+		var parts []string
+
+		for _, b := range contentArr {
+			block, ok := b.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			if t, ok := block["type"].(string); ok && t == "text" {
+				if text, ok := block["text"].(string); ok {
+					parts = append(parts, text)
+				}
+			}
+		}
+
+		msg["content"] = strings.Join(parts, "")
+	}
+}
+
+func applyOutputClamping(provider, model string, body map[string]any, rule stripRule) {
+	if !rule.clampToModelMaxOutput && rule.maxOutputCap <= 0 {
+		return
+	}
+
+	caps := GetCapabilitiesForModel(provider, model)
+
+	var candidates []int
+
+	if rule.clampToModelMaxOutput && caps.MaxOutput > 0 {
+		candidates = append(candidates, caps.MaxOutput)
+	}
+
+	if rule.maxOutputCap > 0 {
+		candidates = append(candidates, rule.maxOutputCap)
+	}
+
+	if len(candidates) == 0 {
+		return
+	}
+
+	ceiling := candidates[0]
+	for _, c := range candidates[1:] {
+		if c < ceiling {
+			ceiling = c
+		}
+	}
+
+	clampNumber(body, "max_tokens", ceiling)
+	clampNumber(body, "max_completion_tokens", ceiling)
+	clampNumber(body, "max_output_tokens", ceiling)
+}
+
+// StripUnsupportedParams cleans up provider-incompatible parameters in request body.
 func StripUnsupportedParams(provider, model string, body map[string]any) map[string]any {
 	if body == nil || model == "" {
 		return body
@@ -411,67 +547,17 @@ func StripUnsupportedParams(provider, model string, body map[string]any) map[str
 		}
 
 		if rule.flattenContent {
-			if messages, ok := body["messages"].([]any); ok {
-				for _, msgRaw := range messages {
-					msg, ok := msgRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					if contentArr, ok := msg["content"].([]any); ok {
-						var parts []string
-
-						for _, b := range contentArr {
-							block, ok := b.(map[string]any)
-							if !ok {
-								continue
-							}
-
-							if t, ok := block["type"].(string); ok && t == "text" {
-								if text, ok := block["text"].(string); ok {
-									parts = append(parts, text)
-								}
-							}
-						}
-
-						msg["content"] = strings.Join(parts, "")
-					}
-				}
-			}
+			flattenMessagesContent(body)
 		}
 
-		if rule.clampToModelMaxOutput || rule.maxOutputCap > 0 {
-			caps := GetCapabilitiesForModel(provider, model)
-
-			var candidates []int
-
-			if rule.clampToModelMaxOutput && caps.MaxOutput > 0 {
-				candidates = append(candidates, caps.MaxOutput)
-			}
-
-			if rule.maxOutputCap > 0 {
-				candidates = append(candidates, rule.maxOutputCap)
-			}
-
-			if len(candidates) > 0 {
-				ceiling := candidates[0]
-				for _, c := range candidates[1:] {
-					if c < ceiling {
-						ceiling = c
-					}
-				}
-
-				clampNumber(body, "max_tokens", ceiling)
-				clampNumber(body, "max_completion_tokens", ceiling)
-				clampNumber(body, "max_output_tokens", ceiling)
-			}
-		}
+		applyOutputClamping(provider, model, body, rule)
 	}
 
 	return body
 }
 
-func ClampMaxTokens(model string, body map[string]any, maxOutput int) map[string]any {
+// ClampMaxTokens limits max_tokens/max_completion_tokens in body to maxOutput.
+func ClampMaxTokens(_ /* model */, body map[string]any, maxOutput int) map[string]any {
 	if body == nil || maxOutput <= 0 {
 		return body
 	}
@@ -491,6 +577,7 @@ func ClampMaxTokens(model string, body map[string]any, maxOutput int) map[string
 	return body
 }
 
+// FormatProviderError formats standard provider error string.
 func FormatProviderError(err error, provider, model string, status int) string {
 	if err == nil {
 		return ""

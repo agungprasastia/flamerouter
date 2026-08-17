@@ -13,20 +13,41 @@ func TestOpenCodeExecutorLive(t *testing.T) {
 		t.Fatal("opencode executor not found")
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"model": "laguna-s-2.1-free",
 		"messages": []map[string]string{
 			{"role": "user", "content": "hi"},
 		},
 	})
+	if err != nil {
+		t.Fatalf("marshal error: %v", err)
+	}
 
-	res, err := ex.Execute(context.Background(), Credentials{}, "laguna-s-2.1-free", body, false)
+	cred := Credentials{
+		ProviderSpecificData: nil,
+		APIKey:               "",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProjectID:            "",
+	}
+
+	res, err := ex.Execute(context.Background(), cred, "laguna-s-2.1-free", body, false)
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
-	defer res.Body.Close()
 
-	respBytes, _ := io.ReadAll(res.Body)
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			_ = err
+		}
+	}()
+
+	respBytes, readErr := io.ReadAll(res.Body)
+	if readErr != nil {
+		_ = readErr
+	}
+
 	t.Logf("Status: %d, Response: %s", res.StatusCode, string(respBytes))
 
 	if res.StatusCode != 200 {

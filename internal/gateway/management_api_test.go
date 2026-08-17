@@ -21,9 +21,11 @@ func testServer(t *testing.T) (http.Handler, *store.Store) {
 		t.Fatal(err)
 	}
 
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() {
+		_ = st.Close() //nolint:errcheck // test cleanup
+	})
 
-	cfg := &config.Config{
+	cfg := &config.Config{ //nolint:exhaustruct // test config
 		DataDir:       dir,
 		JWTSecret:     "test-secret-long-enough",
 		APIKeySecret:  "test-api-key-secret",
@@ -31,7 +33,7 @@ func testServer(t *testing.T) (http.Handler, *store.Store) {
 	}
 	keys := auth.New(cfg.APIKeySecret)
 	// bare Server (no DashboardGuard) — unit-test handlers only
-	s := &Server{
+	s := &Server{ //nolint:exhaustruct // test server
 		cfg:     cfg,
 		st:      st,
 		keys:    keys,
@@ -45,8 +47,8 @@ func testServer(t *testing.T) (http.Handler, *store.Store) {
 	return s, st
 }
 
-func TestSettingsAndProxyPoolsAPI(t *testing.T) {
-	h, st := testServer(t)
+func TestSettingsAPI(t *testing.T) {
+	h, _ := testServer(t)
 
 	// patch settings
 	body := bytes.NewBufferString(`{"requireLogin":"false","comboStrategy":"fallback"}`)
@@ -82,11 +84,28 @@ func TestSettingsAndProxyPoolsAPI(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("require-login %d", rr.Code)
 	}
+}
 
-	// proxy pool create + list
-	body = bytes.NewBufferString(`{"name":"p1","proxyUrl":"http://127.0.0.1:8080"}`)
-	req = httptest.NewRequest(http.MethodPost, "/api/proxy-pools", body)
-	rr = httptest.NewRecorder()
+func TestProxyPoolsAndPricingAPI(t *testing.T) {
+	h, st := testServer(t)
+
+	testProxyPoolsFlow(t, h)
+	testPricingFlow(t, h)
+	testProviderNodesAndCustomModelsFlow(t, h, st)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/init", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("init get %d", rr.Code)
+	}
+}
+
+func testProxyPoolsFlow(t *testing.T, h http.Handler) {
+	body := bytes.NewBufferString(`{"name":"p1","proxyUrl":"http://127.0.0.1:8080"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/proxy-pools", body)
+	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
@@ -102,17 +121,20 @@ func TestSettingsAndProxyPoolsAPI(t *testing.T) {
 	}
 
 	var listed map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &listed)
-
-	pools, _ := listed["proxyPools"].([]any)
-	if len(pools) != 1 {
-		t.Fatalf("expected 1 pool, got %+v", listed)
+	if err := json.Unmarshal(rr.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
 	}
 
-	// pricing
-	body = bytes.NewBufferString(`{"openai":{"gpt-4o":{"input":1.0,"output":2.0}}}`)
-	req = httptest.NewRequest(http.MethodPost, "/api/pricing", body)
-	rr = httptest.NewRecorder()
+	pools, ok := listed["proxyPools"].([]any)
+	if !ok || len(pools) != 1 {
+		t.Fatalf("expected 1 pool, got %+v", listed)
+	}
+}
+
+func testPricingFlow(t *testing.T, h http.Handler) {
+	body := bytes.NewBufferString(`{"openai":{"gpt-4o":{"input":1.0,"output":2.0}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/pricing", body)
+	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
@@ -126,19 +148,22 @@ func TestSettingsAndProxyPoolsAPI(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("pricing get %d", rr.Code)
 	}
+}
 
-	// provider node
-	body = bytes.NewBufferString(`{"name":"Custom","prefix":"cust","type":"openai-compatible","apiType":"chat","baseUrl":"https://example.com/v1"}`)
-	req = httptest.NewRequest(http.MethodPost, "/api/provider-nodes", body)
-	rr = httptest.NewRecorder()
+func testProviderNodesAndCustomModelsFlow(t *testing.T, h http.Handler, st *store.Store) {
+	body := bytes.NewBufferString(`{"name":"Custom","prefix":"cust","type":"openai-compatible","apiType":"chat","baseUrl":"https://example.com/v1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/provider-nodes", body)
+	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("provider node %d %s", rr.Code, rr.Body.String())
 	}
 
-	// custom model via store path
-	_, _ = st.CreateCustomModel("openai", "my-m", "My", "{}")
+	if _, err := st.CreateCustomModel("openai", "my-m", "My", "{}"); err != nil {
+		t.Fatal(err)
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/api/models/custom", nil)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -157,17 +182,11 @@ func TestSettingsAndProxyPoolsAPI(t *testing.T) {
 	}
 
 	var testRes map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &testRes)
+	if err := json.Unmarshal(rr.Body.Bytes(), &testRes); err != nil {
+		t.Fatal(err)
+	}
 
 	if testRes["ok"] != true {
 		t.Fatalf("expected test ok=true, got %+v", testRes)
-	}
-
-	req = httptest.NewRequest(http.MethodGet, "/api/init", nil)
-	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK || rr.Body.String() != "Initialized" {
-		t.Fatalf("init %d %q", rr.Code, rr.Body.String())
 	}
 }

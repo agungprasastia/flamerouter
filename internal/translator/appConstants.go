@@ -1,5 +1,7 @@
+// Package translator provides core translator registries, types, and format detection logic.
 package translator
 
+// Antigravity model constants.
 const (
 	AntigravityModelGemini3 = "gemini-3-flash-preview"
 	AntigravityModelGemini2 = "gemini-2.5-flash"
@@ -7,6 +9,7 @@ const (
 	AntigravityDefaultModel = "gemini-2.5-flash"
 )
 
+// ClaudeCodeSpoofHeaders provides headers for Claude Code requests.
 var ClaudeCodeSpoofHeaders = map[string]string{
 	"User-Agent":         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 	"Accept":             "text/event-stream",
@@ -21,12 +24,14 @@ var ClaudeCodeSpoofHeaders = map[string]string{
 	"Sec-Fetch-Site":     "same-origin",
 }
 
+// Gemini Code constants.
 const (
 	GeminiCodeMaxToolCount      = 1024
 	GeminiCodeMaxThinkingTokens = 1048576
 	GeminiCodeThinkingBudget    = 32768
 )
 
+// Copilot constants.
 const (
 	CopilotDefaultModel      = "gpt-4o"
 	CopilotRateLimitRequests = 10

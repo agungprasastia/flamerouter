@@ -10,13 +10,18 @@ import (
 
 func init() {
 	RegisterSpecialized("gemini-cli", &GeminiCLIExecutor{
+		currentModel: "",
 		Base: Base{
 			Provider: "gemini-cli",
+			Client:   nil,
+			Headers:  nil,
 			BaseURL:  "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+			BaseURLs: nil,
 		},
 	})
 }
 
+// GeminiCLIExecutor handles requests through Gemini CLI / Cloud Code API.
 type GeminiCLIExecutor struct {
 	currentModel string
 	Base
@@ -58,7 +63,7 @@ func (e *GeminiCLIExecutor) buildHeaders(cred Credentials, stream bool) http.Hea
 	return h
 }
 
-func (e *GeminiCLIExecutor) transform(model string, body map[string]any, cred Credentials) map[string]any {
+func (e *GeminiCLIExecutor) transform(model string, body map[string]any, _ Credentials) map[string]any {
 	e.currentModel = model
 	// already wrapped?
 	if body != nil {
@@ -83,6 +88,7 @@ func (e *GeminiCLIExecutor) transform(model string, body map[string]any, cred Cr
 	}
 }
 
+// Execute executes Gemini CLI requests.
 func (e *GeminiCLIExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {

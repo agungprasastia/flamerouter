@@ -28,6 +28,7 @@ type CopilotResolver struct {
 	RefreshManager *tokenrefresh.RefreshManager
 }
 
+// TTL returns cache duration for Copilot dynamic models.
 func (r *CopilotResolver) TTL() time.Duration {
 	return copilotCacheTTL
 }
@@ -84,13 +85,22 @@ func (r *CopilotResolver) fetchRaw(ctx context.Context, token string) ([]copilot
 	if err != nil {
 		return nil, 0, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return nil, 0, fmt.Errorf("nil response from upstream")
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		//nolint:errcheck // best effort close
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, resp.StatusCode, fmt.Errorf("read copilot error response: %w", err)
+		}
+
 		return nil, resp.StatusCode, fmt.Errorf("copilot /models returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -102,7 +112,7 @@ func (r *CopilotResolver) fetchRaw(ctx context.Context, token string) ([]copilot
 	return parsed.Data, resp.StatusCode, nil
 }
 
-func (r *CopilotResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
+func extractCopilotToken(conn *store.Connection) string {
 	token := conn.AccessToken
 	if token == "" && conn.ProviderSpecificData != nil {
 		if ct, ok := conn.ProviderSpecificData["copilotToken"].(string); ok && ct != "" {
@@ -114,31 +124,30 @@ func (r *CopilotResolver) Resolve(ctx context.Context, conn *store.Connection) (
 		token = conn.APIKey
 	}
 
-	if token == "" {
-		return nil, nil
+	return token
+}
+
+func (r *CopilotResolver) tryRefresh(ctx context.Context, conn *store.Connection) (string, error) {
+	if conn.RefreshToken == "" {
+		return "", fmt.Errorf("no refresh token")
 	}
 
-	raw, statusCode, err := r.fetchRaw(ctx, token)
-	if err != nil && (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) && conn.RefreshToken != "" {
-		rm := r.RefreshManager
-		if rm == nil {
-			rm = tokenrefresh.NewRefreshManager()
-		}
-
-		refreshed, refErr := rm.Refresh(ctx, "github", conn.RefreshToken)
-		if refErr == nil && refreshed != nil && refreshed.AccessToken != "" {
-			token = refreshed.AccessToken
-			raw, _, err = r.fetchRaw(ctx, token)
-		}
+	rm := r.RefreshManager
+	if rm == nil {
+		rm = tokenrefresh.NewRefreshManager()
 	}
 
-	if err != nil {
-		return nil, err
+	refreshed, err := rm.Refresh(ctx, "github", conn.RefreshToken)
+	if err != nil || refreshed == nil || refreshed.AccessToken == "" {
+		return "", err
 	}
 
+	return refreshed.AccessToken, nil
+}
+
+func filterCopilotModels(raw []copilotRawModel) []DynamicModel {
 	seen := make(map[string]bool)
-
-	var out []DynamicModel
+	out := make([]DynamicModel, 0, len(raw))
 
 	for _, m := range raw {
 		id := strings.TrimSpace(m.ID)
@@ -162,10 +171,40 @@ func (r *CopilotResolver) Resolve(ctx context.Context, conn *store.Connection) (
 		}
 
 		out = append(out, DynamicModel{
-			ID:   id,
-			Name: name,
+			ID:              id,
+			Name:            name,
+			Capabilities:    nil,
+			RawConfig:       nil,
+			UpstreamModelID: "",
+			Description:     "",
+			ContextLength:   0,
+			MaxOutputTokens: 0,
+			RateMultiplier:  0,
+			IsReasoning:     false,
+			IsVL:            false,
 		})
 	}
 
-	return out, nil
+	return out
+}
+
+// Resolve retrieves active dynamic models from GitHub Copilot.
+func (r *CopilotResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
+	token := extractCopilotToken(conn)
+	if token == "" {
+		return nil, nil
+	}
+
+	raw, statusCode, err := r.fetchRaw(ctx, token)
+	if err != nil && (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) {
+		if refreshedToken, refErr := r.tryRefresh(ctx, conn); refErr == nil {
+			raw, _, err = r.fetchRaw(ctx, refreshedToken)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return filterCopilotModels(raw), nil
 }

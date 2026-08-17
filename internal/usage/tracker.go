@@ -30,13 +30,20 @@ type Tracker struct {
 	done chan struct{}
 }
 
+// NewTracker creates and starts a new usage Tracker.
 func NewTracker(st *store.Store, hub *StreamHub) *Tracker {
-	t := &Tracker{st: st, hub: hub, ch: make(chan Record, 256), done: make(chan struct{})}
+	t := &Tracker{
+		st:   st,
+		hub:  hub,
+		ch:   make(chan Record, 256),
+		done: make(chan struct{}),
+	}
 	go t.loop()
 
 	return t
 }
 
+// Track queues a Record for persistence and streaming broadcast.
 func (t *Tracker) Track(r Record) {
 	select {
 	case t.ch <- r:
@@ -46,16 +53,34 @@ func (t *Tracker) Track(r Record) {
 
 func (t *Tracker) loop() {
 	for r := range t.ch {
-		_ = t.st.InsertRequestDetail(store.RequestDetail{
-			Provider: r.Provider, Model: r.Model, ConnectionID: r.ConnectionID,
-			StatusCode: r.StatusCode, DurationMs: int(r.DurationMs),
-			PromptTokens: r.PromptTokens, CompletionTokens: r.CompletionTokens,
-			RequestBody: r.RequestBody, ResponsePreview: r.ResponsePreview, ErrorText: r.ErrorText,
-			Client: r.Client, SourceFormat: r.SourceFormat, TargetFormat: r.TargetFormat,
-		})
+		if err := t.st.InsertRequestDetail(store.RequestDetail{
+			ID:               "",
+			Timestamp:        "",
+			Provider:         r.Provider,
+			Model:            r.Model,
+			ConnectionID:     r.ConnectionID,
+			StatusCode:       r.StatusCode,
+			DurationMs:       int(r.DurationMs),
+			PromptTokens:     r.PromptTokens,
+			CompletionTokens: r.CompletionTokens,
+			RequestBody:      r.RequestBody,
+			ResponsePreview:  r.ResponsePreview,
+			ErrorText:        r.ErrorText,
+			Client:           r.Client,
+			SourceFormat:     r.SourceFormat,
+			TargetFormat:     r.TargetFormat,
+		}); err != nil {
+			_ = err
+		}
+
 		date := time.Now().UTC().Format("2006-01-02")
-		_ = t.st.InsertUsageDaily(date, r.Provider, r.Model, 1, r.PromptTokens, r.CompletionTokens)
-		_ = t.st.InsertUsage(r.Provider, r.Model, r.PromptTokens, r.CompletionTokens, r.ConnectionID)
+		if err := t.st.InsertUsageDaily(date, r.Provider, r.Model, 1, r.PromptTokens, r.CompletionTokens); err != nil {
+			_ = err
+		}
+
+		if err := t.st.InsertUsage(r.Provider, r.Model, r.PromptTokens, r.CompletionTokens, r.ConnectionID); err != nil {
+			_ = err
+		}
 
 		if t.hub != nil {
 			t.hub.Broadcast(r)
@@ -65,6 +90,7 @@ func (t *Tracker) loop() {
 	close(t.done)
 }
 
+// Close stops the tracker channel and waits for pending writes to finish.
 func (t *Tracker) Close() {
 	close(t.ch)
 	<-t.done

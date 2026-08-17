@@ -1,3 +1,4 @@
+// Package mitm provides local HTTPS MITM proxy and certificate generation for developer tools.
 package mitm
 
 import (
@@ -18,6 +19,7 @@ type Handler interface {
 // FuncHandler adapts a function to Handler.
 type FuncHandler func(w http.ResponseWriter, r *http.Request)
 
+// HandleRequest executes the wrapped handler function.
 func (f FuncHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	f(w, r)
 }
@@ -25,7 +27,8 @@ func (f FuncHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 // PassthroughHandler responds 502 — no tool handler registered.
 type PassthroughHandler struct{}
 
-func (PassthroughHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
+// HandleRequest responds with bad gateway error.
+func (PassthroughHandler) HandleRequest(w http.ResponseWriter, _ *http.Request) {
 	http.Error(w, "mitm: no handler for host", http.StatusBadGateway)
 }
 
@@ -38,15 +41,18 @@ type ModelRewriter struct {
 	mu      sync.RWMutex
 }
 
+// NewModelRewriter creates a new ModelRewriter for a tool.
 func NewModelRewriter(name, routerBase, apiKey string) *ModelRewriter {
 	return &ModelRewriter{
 		name:    name,
 		router:  strings.TrimRight(routerBase, "/"),
 		apiKey:  apiKey,
 		aliases: make(map[string]string),
+		mu:      sync.RWMutex{},
 	}
 }
 
+// SetAlias configures an alias mapping for model rewriting.
 func (m *ModelRewriter) SetAlias(from, to string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -63,6 +69,7 @@ func (m *ModelRewriter) SetAlias(from, to string) {
 	m.aliases[from] = to
 }
 
+// SetAliases replaces all configured aliases.
 func (m *ModelRewriter) SetAliases(mapp map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -74,13 +81,15 @@ func (m *ModelRewriter) SetAliases(mapp map[string]string) {
 }
 
 // HandleRequest logs + rewrites model id when configured, then proxies to local router.
-// Skeleton: decode JSON, apply alias, POST to router /v1/chat/completions (or passthrough path).
 func (m *ModelRewriter) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[mitm:%s] %s %s", m.name, r.Method, r.URL.Path)
 
 	if r.Method == http.MethodGet && (r.URL.Path == "/_mitm_health" || strings.HasSuffix(r.URL.Path, "/_mitm_health")) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"tool":"` + m.name + `"}`))
+
+		if _, writeErr := w.Write([]byte(`{"ok":true,"tool":"` + m.name + `"}`)); writeErr != nil {
+			_ = writeErr
+		}
 
 		return
 	}
@@ -91,52 +100,73 @@ func (m *ModelRewriter) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = r.Body.Close()
-
-	rewritten := body
-
-	if len(body) > 0 && (strings.Contains(r.Header.Get("Content-Type"), "json") || looksJSON(body)) {
-		var obj map[string]any
-		if json.Unmarshal(body, &obj) == nil && obj != nil {
-			if model, ok := obj["model"].(string); ok && model != "" {
-				m.mu.RLock()
-				if to, ok := m.aliases[model]; ok && to != "" {
-					obj["model"] = to
-					log.Printf("[mitm:%s] rewrite model %s -> %s", m.name, model, to)
-				}
-				m.mu.RUnlock()
-			}
-
-			if b, err := json.Marshal(obj); err == nil {
-				rewritten = b
-			}
-		}
+	if clErr := r.Body.Close(); clErr != nil {
+		_ = clErr
 	}
+
+	rewritten := m.rewriteBody(body, r.Header.Get("Content-Type"))
 
 	if m.router == "" {
-		// log + 502 skeleton when no router configured
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte(`{"error":{"message":"mitm router not configured","type":"mitm_error","tool":"` + m.name + `"}}`))
-
+		m.writeNoRouter(w)
 		return
 	}
 
+	m.proxyToRouter(w, r, rewritten)
+}
+
+func (m *ModelRewriter) rewriteBody(body []byte, contentType string) []byte {
+	if len(body) == 0 || (!strings.Contains(contentType, "json") && !looksJSON(body)) {
+		return body
+	}
+
+	var obj map[string]any
+	if json.Unmarshal(body, &obj) != nil || obj == nil {
+		return body
+	}
+
+	m.applyModelAlias(obj)
+
+	if b, err := json.Marshal(obj); err == nil {
+		return b
+	}
+
+	return body
+}
+
+func (m *ModelRewriter) applyModelAlias(obj map[string]any) {
+	model, ok := obj["model"].(string)
+	if !ok || model == "" {
+		return
+	}
+
+	m.mu.RLock()
+	to, hasAlias := m.aliases[model]
+	m.mu.RUnlock()
+
+	if hasAlias && to != "" {
+		obj["model"] = to
+		log.Printf("[mitm:%s] rewrite model %s -> %s", m.name, model, to)
+	}
+}
+
+func (m *ModelRewriter) writeNoRouter(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+
+	if _, writeErr := w.Write([]byte(`{"error":{"message":"mitm router not configured","type":"mitm_error","tool":"` + m.name + `"}}`)); writeErr != nil {
+		_ = writeErr
+	}
+}
+
+func (m *ModelRewriter) buildProxyRequest(r *http.Request, rewritten []byte) (*http.Request, error) {
 	path := r.URL.Path
-	if path == "" {
-		path = "/v1/chat/completions"
-	}
-	// map common tool paths to OpenAI chat
-	if !strings.HasPrefix(path, "/v1/") {
+	if path == "" || !strings.HasPrefix(path, "/v1/") {
 		path = "/v1/chat/completions"
 	}
 
-	url := m.router + path
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(rewritten))
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, m.router+path, bytes.NewReader(rewritten))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -145,37 +175,60 @@ func (m *ModelRewriter) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+m.apiKey)
 	}
 
+	return req, nil
+}
+
+func (m *ModelRewriter) proxyToRouter(w http.ResponseWriter, r *http.Request, rewritten []byte) {
+	req, err := m.buildProxyRequest(r, rewritten)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("[mitm:%s] router error: %v", m.name, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte(`{"error":{"message":"` + escapeJSON(err.Error()) + `","type":"mitm_error"}}`))
-
+		m.writeProxyError(w, err.Error())
 		return
 	}
+
 	if res == nil || res.Body == nil {
-		log.Printf("[mitm:%s] empty response from router", m.name)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte(`{"error":{"message":"empty router response","type":"mitm_error"}}`))
+		m.writeProxyError(w, "empty router response")
 		return
 	}
 
-	defer res.Body.Close()
-
-	for k, vals := range res.Header {
-		if strings.EqualFold(k, "Content-Length") {
-			continue
+	defer func() {
+		if clErr := res.Body.Close(); clErr != nil {
+			_ = clErr
 		}
+	}()
 
-		for _, v := range vals {
-			w.Header().Add(k, v)
+	copyResponse(w, res)
+}
+
+func copyResponse(w http.ResponseWriter, res *http.Response) {
+	for k, vals := range res.Header {
+		if !strings.EqualFold(k, "Content-Length") {
+			for _, v := range vals {
+				w.Header().Add(k, v)
+			}
 		}
 	}
 
 	w.WriteHeader(res.StatusCode)
-	_, _ = io.Copy(w, res.Body)
+
+	if _, copyErr := io.Copy(w, res.Body); copyErr != nil {
+		_ = copyErr
+	}
+}
+
+func (m *ModelRewriter) writeProxyError(w http.ResponseWriter, msg string) {
+	log.Printf("[mitm:%s] router error: %s", m.name, msg)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+
+	if _, writeErr := w.Write([]byte(`{"error":{"message":"` + escapeJSON(msg) + `","type":"mitm_error"}}`)); writeErr != nil {
+		_ = writeErr
+	}
 }
 
 func looksJSON(b []byte) bool {
@@ -198,10 +251,10 @@ func DefaultToolHandlers(routerBase, apiKey string) map[string]Handler {
 		name  string
 		hosts []string
 	}{
-		{"antigravity", TOOL_HOSTS["antigravity"]},
-		{"copilot", TOOL_HOSTS["copilot"]},
-		{"kiro", TOOL_HOSTS["kiro"]},
-		{"cursor", TOOL_HOSTS["cursor"]},
+		{"antigravity", ToolHosts["antigravity"]},
+		{"copilot", ToolHosts["copilot"]},
+		{"kiro", ToolHosts["kiro"]},
+		{"cursor", ToolHosts["cursor"]},
 	}
 	for _, t := range tools {
 		h := NewModelRewriter(t.name, routerBase, apiKey)

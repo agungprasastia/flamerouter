@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
+	"flamerouter/internal/opensse/rtk"
 	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
 	"fmt"
@@ -21,12 +22,10 @@ func GeminiV1Beta(ctx context.Context, w http.ResponseWriter, r *http.Request, s
 	path := strings.TrimPrefix(r.URL.Path, "/v1beta/")
 	path = strings.TrimPrefix(path, "/")
 
-	// GET /v1beta/models
 	if r.Method == http.MethodGet && (path == "models" || path == "models/") {
 		return geminiListModels(w)
 	}
 
-	// POST /v1beta/models/{model}:action
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return nil
@@ -37,18 +36,13 @@ func GeminiV1Beta(ctx context.Context, w http.ResponseWriter, r *http.Request, s
 		return nil
 	}
 
+	return handleGeminiPost(ctx, w, r, path, st, exec, fb)
+}
+
+func handleGeminiPost(ctx context.Context, w http.ResponseWriter, r *http.Request, path string, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
 	rest := strings.TrimPrefix(path, "models/")
 	stream := strings.Contains(rest, ":streamGenerateContent")
-
-	modelPart := rest
-	for _, suf := range []string{":streamGenerateContent", ":generateContent"} {
-		if i := strings.Index(modelPart, suf); i >= 0 {
-			modelPart = modelPart[:i]
-			break
-		}
-	}
-
-	modelPart = strings.TrimPrefix(modelPart, "models/")
+	modelPart := parseGeminiModelPart(rest)
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -62,29 +56,50 @@ func GeminiV1Beta(ctx context.Context, w http.ResponseWriter, r *http.Request, s
 		return err
 	}
 
-	// Prefer native forward when gemini account exists
-	conn, _ := fb.SelectAccountExcluding("gemini", map[string]bool{})
-	if conn == nil {
-		conn, _ = fb.SelectAccountExcluding("gemini-cli", map[string]bool{})
-	}
-
+	conn := findGeminiAccount(fb)
 	if conn != nil && looksLikeNativeGemini(modelPart) {
 		if err := forwardGeminiNative(ctx, w, r, conn, modelPart, rest, body); err == nil {
 			return nil
 		}
-		// fall through to chat convert on forward fail without account panic
 	}
 
-	// Convert Gemini → OpenAI chat
 	model := modelPart
 	if !strings.Contains(model, "/") {
 		model = "gemini/" + model
 	}
 
 	converted := convertGeminiToInternal(geminiBody, model, stream)
-	payload, _ := json.Marshal(converted)
+	payload, _ := json.Marshal(converted) //nolint:errcheck // safe internal map marshal
 
-	return ChatWithOptions(ctx, w, payload, st, exec, fb, ChatOptions{SourceFormat: "openai"})
+	return ChatWithOptions(ctx, w, payload, st, exec, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "openai",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
+}
+
+func parseGeminiModelPart(rest string) string {
+	modelPart := rest
+	for _, suf := range []string{":streamGenerateContent", ":generateContent"} {
+		if i := strings.Index(modelPart, suf); i >= 0 {
+			modelPart = modelPart[:i]
+			break
+		}
+	}
+
+	return strings.TrimPrefix(modelPart, "models/")
+}
+
+func findGeminiAccount(fb *fallback.Fallback) *store.Connection {
+	conn, _ := fb.SelectAccountExcluding("gemini", map[string]bool{}) //nolint:errcheck // optional account
+	if conn == nil {
+		conn, _ = fb.SelectAccountExcluding("gemini-cli", map[string]bool{}) //nolint:errcheck // optional account
+	}
+
+	return conn
 }
 
 func looksLikeNativeGemini(model string) bool {
@@ -95,6 +110,40 @@ func looksLikeNativeGemini(model string) bool {
 }
 
 func forwardGeminiNative(ctx context.Context, w http.ResponseWriter, r *http.Request, conn *store.Connection, modelID, rest string, body []byte) error {
+	url := buildGeminiNativeURL(modelID, rest, r.URL.RawQuery)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	authErr := applyGeminiAuth(req, conn)
+	if authErr != nil {
+		return authErr
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	if resp == nil || resp.Body == nil {
+		return fmt.Errorf("nil response from upstream")
+	}
+
+	defer resp.Body.Close() //nolint:errcheck // best-effort body close
+
+	copyGeminiHeaders(w, resp.Header)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body) //nolint:errcheck // handler write
+
+	return nil
+}
+
+func buildGeminiNativeURL(modelID, rest, rawQuery string) string {
 	modelID = strings.TrimPrefix(modelID, "models/")
 	modelID = strings.TrimPrefix(modelID, "gemini/")
 
@@ -104,52 +153,41 @@ func forwardGeminiNative(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	url := geminiNativeBase + "/" + modelID + action
+	if rawQuery == "" {
+		return url
+	}
 
-	if q := r.URL.RawQuery; q != "" {
-		// strip client key param
-		parts := strings.Split(q, "&")
+	var keep []string
 
-		var keep []string
-
-		for _, p := range parts {
-			if strings.HasPrefix(p, "key=") {
-				continue
-			}
-
+	for _, p := range strings.Split(rawQuery, "&") {
+		if !strings.HasPrefix(p, "key=") {
 			keep = append(keep, p)
 		}
-
-		if len(keep) > 0 {
-			url += "?" + strings.Join(keep, "&")
-		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
+	if len(keep) > 0 {
+		url += "?" + strings.Join(keep, "&")
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	return url
+}
 
+func applyGeminiAuth(req *http.Request, conn *store.Connection) error {
 	if conn.APIKey != "" {
 		req.Header.Set("x-goog-api-key", conn.APIKey)
-	} else if tok := firstNonEmpty(conn.AccessToken, ""); tok != "" {
+		return nil
+	}
+
+	if tok := firstNonEmpty(conn.AccessToken, ""); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
-	} else {
-		return errNoAccount
+		return nil
 	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	if resp == nil || resp.Body == nil {
-		return fmt.Errorf("nil response from upstream")
-	}
+	return errNoAccount
+}
 
-	defer resp.Body.Close()
-
-	for k, vs := range resp.Header {
+func copyGeminiHeaders(w http.ResponseWriter, header http.Header) {
+	for k, vs := range header {
 		lk := strings.ToLower(k)
 		if lk == "content-encoding" || lk == "content-length" || lk == "transfer-encoding" {
 			continue
@@ -159,12 +197,6 @@ func forwardGeminiNative(ctx context.Context, w http.ResponseWriter, r *http.Req
 			w.Header().Add(k, v)
 		}
 	}
-
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
-
-	return nil
 }
 
 func geminiListModels(w http.ResponseWriter) error {
@@ -211,51 +243,11 @@ func geminiListModels(w http.ResponseWriter) error {
 func convertGeminiToInternal(geminiBody map[string]any, model string, stream bool) map[string]any {
 	var messages []any
 
-	if si, ok := geminiBody["systemInstruction"].(map[string]any); ok {
-		if parts, ok := si["parts"].([]any); ok {
-			var texts []string
-
-			for _, p := range parts {
-				if pm, ok := p.(map[string]any); ok {
-					if t, ok := pm["text"].(string); ok {
-						texts = append(texts, t)
-					}
-				}
-			}
-
-			if len(texts) > 0 {
-				messages = append(messages, map[string]any{"role": "system", "content": strings.Join(texts, "\n")})
-			}
-		}
+	if sysMsg := extractSystemInstruction(geminiBody); sysMsg != nil {
+		messages = append(messages, sysMsg)
 	}
 
-	if contents, ok := geminiBody["contents"].([]any); ok {
-		for _, c := range contents {
-			cm, ok := c.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			role := "user"
-			if cm["role"] == "model" {
-				role = "assistant"
-			}
-
-			var texts []string
-
-			if parts, ok := cm["parts"].([]any); ok {
-				for _, p := range parts {
-					if pm, ok := p.(map[string]any); ok {
-						if t, ok := pm["text"].(string); ok {
-							texts = append(texts, t)
-						}
-					}
-				}
-			}
-
-			messages = append(messages, map[string]any{"role": role, "content": strings.Join(texts, "\n")})
-		}
-	}
+	messages = append(messages, extractContentMessages(geminiBody)...)
 
 	out := map[string]any{
 		"model":    model,
@@ -263,19 +255,90 @@ func convertGeminiToInternal(geminiBody map[string]any, model string, stream boo
 		"stream":   stream,
 	}
 
-	if gc, ok := geminiBody["generationConfig"].(map[string]any); ok {
-		if v, ok := gc["maxOutputTokens"]; ok {
-			out["max_tokens"] = v
+	applyGenerationConfig(out, geminiBody)
+
+	return out
+}
+
+func extractSystemInstruction(geminiBody map[string]any) map[string]any {
+	si, ok := geminiBody["systemInstruction"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	parts, ok := si["parts"].([]any)
+	if !ok {
+		return nil
+	}
+
+	texts := extractTextParts(parts)
+	if len(texts) == 0 {
+		return nil
+	}
+
+	return map[string]any{"role": "system", "content": strings.Join(texts, "\n")}
+}
+
+func extractContentMessages(geminiBody map[string]any) []any {
+	contents, ok := geminiBody["contents"].([]any)
+	if !ok {
+		return nil
+	}
+
+	messages := make([]any, 0, len(contents))
+
+	for _, c := range contents {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
 		}
 
-		if v, ok := gc["temperature"]; ok {
-			out["temperature"] = v
+		role := "user"
+		if cm["role"] == "model" {
+			role = "assistant"
 		}
 
-		if v, ok := gc["topP"]; ok {
-			out["top_p"] = v
+		parts, _ := cm["parts"].([]any) //nolint:errcheck // optional cast
+		texts := extractTextParts(parts)
+
+		messages = append(messages, map[string]any{"role": role, "content": strings.Join(texts, "\n")})
+	}
+
+	return messages
+}
+
+func extractTextParts(parts []any) []string {
+	texts := make([]string, 0, len(parts))
+
+	for _, p := range parts {
+		pm, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if t, ok := pm["text"].(string); ok {
+			texts = append(texts, t)
 		}
 	}
 
-	return out
+	return texts
+}
+
+func applyGenerationConfig(out, geminiBody map[string]any) {
+	gc, ok := geminiBody["generationConfig"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	if v, ok := gc["maxOutputTokens"]; ok {
+		out["max_tokens"] = v
+	}
+
+	if v, ok := gc["temperature"]; ok {
+		out["temperature"] = v
+	}
+
+	if v, ok := gc["topP"]; ok {
+		out["top_p"] = v
+	}
 }

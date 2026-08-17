@@ -8,8 +8,10 @@ import (
 )
 
 func TestCheckVersion(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v1.2.3"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if err := json.NewEncoder(w).Encode(map[string]string{"tag_name": "v1.2.3"}); err != nil {
+			t.Errorf("encode error: %v", err)
+		}
 	}))
 	t.Cleanup(srv.Close)
 

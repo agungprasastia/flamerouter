@@ -13,135 +13,73 @@ import (
 	"testing"
 )
 
+func writeVarintField(buf *bytes.Buffer, fieldNum uint32, data []byte) {
+	tag := (uint64(fieldNum) << 3) | 2
+
+	var tagBuf [10]byte
+	n := binary.PutUvarint(tagBuf[:], tag)
+	buf.Write(tagBuf[:n])
+
+	var lenBuf [10]byte
+	ln := binary.PutUvarint(lenBuf[:], uint64(len(data)))
+	buf.Write(lenBuf[:ln])
+	buf.Write(data)
+}
+
 func buildMockCursorResponseFrame(text, thinking string) []byte {
 	var respBuf bytes.Buffer
 
 	if text != "" {
-		// Field 1: text
-		tag := uint64((1 << 3) | 2)
-
-		var tagBuf [10]byte
-		n := binary.PutUvarint(tagBuf[:], tag)
-		respBuf.Write(tagBuf[:n])
-
-		var lenBuf [10]byte
-		ln := binary.PutUvarint(lenBuf[:], uint64(len(text)))
-		respBuf.Write(lenBuf[:ln])
-		respBuf.WriteString(text)
+		writeVarintField(&respBuf, 1, []byte(text))
 	}
 
 	if thinking != "" {
-		// Field 25: thinking -> Field 1 text
 		var thBuf bytes.Buffer
 
-		tag1 := uint64((1 << 3) | 2)
-
-		var tag1Buf [10]byte
-		n1 := binary.PutUvarint(tag1Buf[:], tag1)
-		thBuf.Write(tag1Buf[:n1])
-
-		var len1Buf [10]byte
-		ln1 := binary.PutUvarint(len1Buf[:], uint64(len(thinking)))
-		thBuf.Write(len1Buf[:ln1])
-		thBuf.WriteString(thinking)
-
-		tag25 := uint64((25 << 3) | 2)
-
-		var tag25Buf [10]byte
-		n25 := binary.PutUvarint(tag25Buf[:], tag25)
-		respBuf.Write(tag25Buf[:n25])
-
-		var len25Buf [10]byte
-		ln25 := binary.PutUvarint(len25Buf[:], uint64(thBuf.Len()))
-		respBuf.Write(len25Buf[:ln25])
-		respBuf.Write(thBuf.Bytes())
+		writeVarintField(&thBuf, 1, []byte(thinking))
+		writeVarintField(&respBuf, 25, thBuf.Bytes())
 	}
 
-	// Wrap in top response: Field 2 (StreamUnifiedChatResponse)
 	var topBuf bytes.Buffer
 
-	tagTop := uint64((2 << 3) | 2)
-
-	var tagTopBuf [10]byte
-	nt := binary.PutUvarint(tagTopBuf[:], tagTop)
-	topBuf.Write(tagTopBuf[:nt])
-
-	var lenTopBuf [10]byte
-	lnt := binary.PutUvarint(lenTopBuf[:], uint64(respBuf.Len()))
-	topBuf.Write(lenTopBuf[:lnt])
-	topBuf.Write(respBuf.Bytes())
+	writeVarintField(&topBuf, 2, respBuf.Bytes())
 
 	return executor.WrapConnectRPCFrame(topBuf.Bytes())
 }
 
-func TestCursorExecutor_ProtobufAndChecksumExecution(t *testing.T) {
-	var gotChecksum string
+type cursorTestState struct {
+	gotChecksum    string
+	gotAuth        string
+	gotContentType string
+	gotBody        []byte
+}
 
-	var gotAuth string
+func verifyCursorStreamHeaders(t *testing.T, s *cursorTestState) {
+	t.Helper()
 
-	var gotContentType string
-
-	var gotBody []byte
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotChecksum = r.Header.Get("x-cursor-checksum")
-		gotAuth = r.Header.Get("authorization")
-		gotContentType = r.Header.Get("content-type")
-
-		defer r.Body.Close()
-		gotBody, _ = io.ReadAll(r.Body)
-
-		w.Header().Set("Content-Type", "application/connect+proto")
-
-		frame := buildMockCursorResponseFrame("Hello from Cursor Protobuf", "Thinking through solution")
-		_, _ = w.Write(frame)
-	}))
-	defer srv.Close()
-
-	ex := executor.GetExecutor("cursor")
-	if ex == nil {
-		t.Fatal("cursor executor not registered")
-	}
-
-	body, _ := json.Marshal(map[string]any{
-		"messages": []map[string]string{{"role": "user", "content": "hello world"}},
-	})
-
-	res, err := ex.Execute(context.Background(), executor.Credentials{
-		AccessToken: "user-token-123456",
-		BaseURL:     srv.URL,
-		ProviderSpecificData: map[string]any{
-			"machineId": "test-machine-id",
-		},
-	}, "claude-4.5-sonnet", body, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != 200 {
-		t.Fatalf("status %d", res.StatusCode)
-	}
-
-	if gotChecksum == "" {
+	if s.gotChecksum == "" {
 		t.Error("missing x-cursor-checksum header")
 	}
 
-	if gotAuth != "Bearer user-token-123456" {
-		t.Errorf("got auth %q, want Bearer user-token-123456", gotAuth)
+	if s.gotAuth != "Bearer user-token-123456" {
+		t.Errorf("got auth %q, want Bearer user-token-123456", s.gotAuth)
 	}
 
-	if gotContentType != "application/connect+proto" {
-		t.Errorf("content-type = %q", gotContentType)
+	if s.gotContentType != "application/connect+proto" {
+		t.Errorf("content-type = %q", s.gotContentType)
 	}
 
-	if len(gotBody) < 5 {
-		t.Errorf("request body too short: %d bytes", len(gotBody))
+	if len(s.gotBody) < 5 {
+		t.Errorf("request body too short: %d bytes", len(s.gotBody))
 	}
+}
 
-	outBytes, _ := io.ReadAll(res.Body)
+func verifyCursorStreamOutput(t *testing.T, body io.Reader) {
+	t.Helper()
 
+	outBytes, _ := io.ReadAll(body) // nolint:errcheck
 	outStr := string(outBytes)
+
 	if !strings.Contains(outStr, "Hello from Cursor Protobuf") {
 		t.Errorf("stream missing text: %s", outStr)
 	}
@@ -155,43 +93,110 @@ func TestCursorExecutor_ProtobufAndChecksumExecution(t *testing.T) {
 	}
 }
 
-func TestCursorExecutor_NonStreaming(t *testing.T) {
+func TestCursorExecutor_ProtobufAndChecksumExecution(t *testing.T) {
+	var state cursorTestState
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state.gotChecksum = r.Header.Get("x-cursor-checksum")
+		state.gotAuth = r.Header.Get("authorization")
+		state.gotContentType = r.Header.Get("content-type")
+
+		defer func() {
+			_ = r.Body.Close() // nolint:errcheck
+		}()
+
+		state.gotBody, _ = io.ReadAll(r.Body) // nolint:errcheck
+
 		w.Header().Set("Content-Type", "application/connect+proto")
 
-		frame := buildMockCursorResponseFrame("Unary response text", "")
-		_, _ = w.Write(frame)
+		frame := buildMockCursorResponseFrame("Hello from Cursor Protobuf", "Thinking through solution")
+		_, _ = w.Write(frame) // nolint:errcheck
 	}))
 	defer srv.Close()
 
 	ex := executor.GetExecutor("cursor")
-	body, _ := json.Marshal(map[string]any{
+	if ex == nil {
+		t.Fatal("cursor executor not registered")
+	}
+
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
+		"messages": []map[string]string{{"role": "user", "content": "hello world"}},
+	})
+
+	res, err := ex.Execute(context.Background(), executor.Credentials{
+		AccessToken: "user-token-123456",
+		BaseURL:     srv.URL,
+		ProviderSpecificData: map[string]any{
+			"machineId": "test-machine-id",
+		},
+		APIKey:       "",
+		RefreshToken: "",
+		ProjectID:    "",
+	}, "claude-4.5-sonnet", body, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		_ = res.Body.Close() // nolint:errcheck
+	}()
+
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+
+	verifyCursorStreamHeaders(t, &state)
+	verifyCursorStreamOutput(t, res.Body)
+}
+
+func TestCursorExecutor_NonStreaming(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/connect+proto")
+
+		frame := buildMockCursorResponseFrame("Unary response text", "")
+		_, _ = w.Write(frame) // nolint:errcheck
+	}))
+	defer srv.Close()
+
+	ex := executor.GetExecutor("cursor")
+
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
 		"messages": []map[string]string{{"role": "user", "content": "hello"}},
 	})
 
 	res, err := ex.Execute(context.Background(), executor.Credentials{
-		AccessToken: "token-1",
-		BaseURL:     srv.URL,
+		AccessToken:          "token-1",
+		BaseURL:              srv.URL,
+		ProviderSpecificData: nil,
+		APIKey:               "",
+		RefreshToken:         "",
+		ProjectID:            "",
 	}, "gpt-5.2-codex", body, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+
+	defer func() {
+		_ = res.Body.Close() // nolint:errcheck
+	}()
 
 	var respObj map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {
 		t.Fatal(err)
 	}
 
-	choices, _ := respObj["choices"].([]any)
-	if len(choices) == 0 {
+	choices, okChoices := respObj["choices"].([]any)
+	if !okChoices || len(choices) == 0 {
 		t.Fatal("empty choices")
 	}
 
-	first, _ := choices[0].(map[string]any)
+	first, okFirst := choices[0].(map[string]any)
+	if !okFirst {
+		t.Fatal("invalid choice element")
+	}
 
-	msg, _ := first["message"].(map[string]any)
-	if msg["content"] != "Unary response text" {
+	msg, okMsg := first["message"].(map[string]any)
+	if !okMsg || msg["content"] != "Unary response text" {
 		t.Errorf("content = %v, want Unary response text", msg["content"])
 	}
 }

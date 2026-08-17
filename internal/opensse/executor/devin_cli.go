@@ -22,12 +22,18 @@ func init() {
 		Base: Base{
 			Provider: "devin-cli",
 			BaseURL:  "devin://acp/stdio",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 	RegisterSpecialized("dv", &DevinCliExecutor{
 		Base: Base{
 			Provider: "devin-cli",
 			BaseURL:  "devin://acp/stdio",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 }
@@ -82,6 +88,53 @@ func resolveDevinBin() string {
 	return "devin"
 }
 
+func formatDevinContent(content any) string {
+	switch c := content.(type) {
+	case string:
+		return c
+	case []any:
+		var parts []string
+
+		for _, p := range c {
+			if pm, ok := p.(map[string]any); ok {
+				if t, _ := pm["type"].(string); t == "text" {
+					parts = append(parts, fmt.Sprint(pm["text"]))
+				} else if t == "tool_use" {
+					inJSON, _ := json.Marshal(pm["input"]) // nolint:errcheck
+					parts = append(parts, fmt.Sprintf("\n[Tool call %v id=%v]\n%s\n", pm["name"], pm["id"], string(inJSON)))
+				} else if t == "tool_result" {
+					parts = append(parts, fmt.Sprintf("\n[Tool result id=%v]\n%v\n", pm["tool_use_id"], pm["content"]))
+				}
+			}
+		}
+
+		return strings.Join(parts, "")
+	default:
+		return ""
+	}
+}
+
+func formatDevinToolCalls(toolCalls []any) string {
+	var tcParts []string
+
+	for _, tcRaw := range toolCalls {
+		if tc, ok := tcRaw.(map[string]any); ok {
+			fn, _ := tc["function"].(map[string]any) // nolint:errcheck
+			name := ""
+			args := ""
+
+			if fn != nil {
+				name, _ = fn["name"].(string)      // nolint:errcheck
+				args, _ = fn["arguments"].(string) // nolint:errcheck
+			}
+
+			tcParts = append(tcParts, fmt.Sprintf("[Tool call %s id=%v]\n%s", name, tc["id"], args))
+		}
+	}
+
+	return strings.Join(tcParts, "\n\n")
+}
+
 func buildDevinPromptText(messages []any) string {
 	var lines []string
 
@@ -91,53 +144,20 @@ func buildDevinPromptText(messages []any) string {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
+		role, _ := msg["role"].(string) // nolint:errcheck
 		if role == "" {
 			role = "user"
 		}
 
-		text := ""
-		switch c := msg["content"].(type) {
-		case string:
-			text = c
-		case []any:
-			var parts []string
-
-			for _, p := range c {
-				if pm, ok := p.(map[string]any); ok {
-					if t, _ := pm["type"].(string); t == "text" {
-						parts = append(parts, fmt.Sprint(pm["text"]))
-					} else if t == "tool_use" {
-						inJson, _ := json.Marshal(pm["input"])
-						parts = append(parts, fmt.Sprintf("\n[Tool call %v id=%v]\n%s\n", pm["name"], pm["id"], string(inJson)))
-					} else if t == "tool_result" {
-						parts = append(parts, fmt.Sprintf("\n[Tool result id=%v]\n%v\n", pm["tool_use_id"], pm["content"]))
-					}
-				}
-			}
-
-			text = strings.Join(parts, "")
-		}
+		text := formatDevinContent(msg["content"])
 
 		if toolCalls, ok := msg["tool_calls"].([]any); ok && len(toolCalls) > 0 {
-			var tcParts []string
-
-			for _, tcRaw := range toolCalls {
-				if tc, ok := tcRaw.(map[string]any); ok {
-					fn, _ := tc["function"].(map[string]any)
-					name := ""
-					args := ""
-
-					if fn != nil {
-						name, _ = fn["name"].(string)
-						args, _ = fn["arguments"].(string)
-					}
-
-					tcParts = append(tcParts, fmt.Sprintf("[Tool call %s id=%v]\n%s", name, tc["id"], args))
-				}
+			tcStr := formatDevinToolCalls(toolCalls)
+			if text != "" && tcStr != "" {
+				text = text + "\n\n" + tcStr
+			} else if tcStr != "" {
+				text = tcStr
 			}
-
-			text = strings.Join(append([]string{text}, tcParts...), "\n\n")
 		}
 
 		if strings.TrimSpace(text) == "" {
@@ -247,6 +267,77 @@ func sendJSONRPC(w io.Writer, method string, params any, id int) {
 	_, _ = w.Write(b)
 }
 
+func handleDevinSessionUpdate(params map[string]any, cid, model string, created int64, roleEmitted *bool, totalText *string, writeSSE func(map[string]any)) bool {
+	update, _ := params["update"].(map[string]any) // nolint:errcheck
+	if update == nil {
+		update = params
+	}
+
+	upType, _ := update["sessionUpdate"].(string) // nolint:errcheck
+	if upType == "" {
+		upType, _ = update["type"].(string) // nolint:errcheck
+	}
+
+	deltaText := ""
+	if c, ok := update["content"].(string); ok {
+		deltaText = c
+	} else if cm, ok := update["content"].(map[string]any); ok {
+		deltaText, _ = cm["text"].(string) // nolint:errcheck
+	} else if d, ok := update["delta"].(string); ok {
+		deltaText = d
+	}
+
+	if upType == "agent_message_chunk" || upType == "message_delta" || upType == "text_delta" || upType == "content_delta" {
+		if deltaText != "" {
+			if !*roleEmitted {
+				writeSSE(map[string]any{
+					"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+					"choices": []any{map[string]any{
+						"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil,
+					}},
+				})
+
+				*roleEmitted = true
+			}
+
+			*totalText += deltaText
+			writeSSE(map[string]any{
+				"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
+				"choices": []any{map[string]any{
+					"index": 0, "delta": map[string]any{"content": deltaText}, "finish_reason": nil,
+				}},
+			})
+		}
+	} else if upType == "message_stop" || upType == "stop" || upType == "done" {
+		return true
+	}
+
+	return false
+}
+
+func handleDevinPermissionRequest(msg map[string]any, stdin io.Writer) {
+	reqID := msg["id"]
+	params, _ := msg["params"].(map[string]any) // nolint:errcheck
+	options, _ := params["options"].([]any)     // nolint:errcheck
+	optID := "allow"
+
+	if len(options) > 0 {
+		if first, ok := options[0].(map[string]any); ok {
+			if idStr, ok := first["optionId"].(string); ok {
+				optID = idStr
+			}
+		}
+	}
+
+	resp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqID,
+		"result":  map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": optID}},
+	}
+	b, _ := json.Marshal(resp) // nolint:errcheck
+	_, _ = stdin.Write(append(b, '\n'))
+}
+
 func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadCloser, model, cid string, created int64, promptText string) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
@@ -268,7 +359,7 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 		defer cleanup()
 
 		writeSSE := func(obj map[string]any) {
-			b, _ := json.Marshal(obj)
+			b, _ := json.Marshal(obj) // nolint:errcheck
 			_, _ = pw.Write([]byte("data: "))
 			_, _ = pw.Write(b)
 			_, _ = pw.Write([]byte("\n\n"))
@@ -326,7 +417,7 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 			// session/new response
 			if initDone && !sessionCreated && msg["result"] != nil && msg["method"] == nil {
 				if res, ok := msg["result"].(map[string]any); ok {
-					sessionID, _ = res["sessionId"].(string)
+					sessionID, _ = res["sessionId"].(string) // nolint:errcheck
 				}
 
 				if sessionID == "" {
@@ -346,27 +437,7 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 
 			// auto-approve permission requests
 			if meth, _ := msg["method"].(string); meth == "session/request_permission" {
-				reqID := msg["id"]
-				params, _ := msg["params"].(map[string]any)
-				options, _ := params["options"].([]any)
-				optID := "allow"
-
-				if len(options) > 0 {
-					if first, ok := options[0].(map[string]any); ok {
-						if idStr, ok := first["optionId"].(string); ok {
-							optID = idStr
-						}
-					}
-				}
-
-				resp := map[string]any{
-					"jsonrpc": "2.0",
-					"id":      reqID,
-					"result":  map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": optID}},
-				}
-				b, _ := json.Marshal(resp)
-				_, _ = stdin.Write(append(b, '\n'))
-
+				handleDevinPermissionRequest(msg, stdin)
 				continue
 			}
 
@@ -377,49 +448,8 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 
 			// streaming notifications
 			if meth, _ := msg["method"].(string); meth == "session/update" || meth == "$/update" {
-				params, _ := msg["params"].(map[string]any)
-				update, _ := params["update"].(map[string]any)
-
-				if update == nil {
-					update = params
-				}
-
-				upType, _ := update["sessionUpdate"].(string)
-				if upType == "" {
-					upType, _ = update["type"].(string)
-				}
-
-				deltaText := ""
-				if c, ok := update["content"].(string); ok {
-					deltaText = c
-				} else if cm, ok := update["content"].(map[string]any); ok {
-					deltaText, _ = cm["text"].(string)
-				} else if d, ok := update["delta"].(string); ok {
-					deltaText = d
-				}
-
-				if upType == "agent_message_chunk" || upType == "message_delta" || upType == "text_delta" || upType == "content_delta" {
-					if deltaText != "" {
-						if !roleEmitted {
-							writeSSE(map[string]any{
-								"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-								"choices": []any{map[string]any{
-									"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil,
-								}},
-							})
-
-							roleEmitted = true
-						}
-
-						totalText += deltaText
-						writeSSE(map[string]any{
-							"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
-							"choices": []any{map[string]any{
-								"index": 0, "delta": map[string]any{"content": deltaText}, "finish_reason": nil,
-							}},
-						})
-					}
-				} else if upType == "message_stop" || upType == "stop" || upType == "done" {
+				params, _ := msg["params"].(map[string]any) // nolint:errcheck
+				if handleDevinSessionUpdate(params, cid, model, created, &roleEmitted, &totalText, writeSSE) {
 					break
 				}
 			}
@@ -446,6 +476,43 @@ func wrapDevinACPStream(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadClose
 	}()
 
 	return pr
+}
+
+func processDevinACPNonStreamingUpdate(msg map[string]any, totalText *string) bool {
+	if meth, _ := msg["method"].(string); meth == "_cognition.ai/agent_stopped" || meth == "$/agent_stopped" {
+		return true
+	}
+
+	if meth, _ := msg["method"].(string); meth == "session/update" || meth == "$/update" {
+		params, _ := msg["params"].(map[string]any) // nolint:errcheck
+		update, _ := params["update"].(map[string]any) // nolint:errcheck
+
+		if update == nil {
+			update = params
+		}
+
+		upType, _ := update["sessionUpdate"].(string) // nolint:errcheck
+		if upType == "" {
+			upType, _ = update["type"].(string) // nolint:errcheck
+		}
+
+		deltaText := ""
+		if c, ok := update["content"].(string); ok {
+			deltaText = c
+		} else if cm, ok := update["content"].(map[string]any); ok {
+			deltaText, _ = cm["text"].(string) // nolint:errcheck
+		} else if d, ok := update["delta"].(string); ok {
+			deltaText = d
+		}
+
+		if upType == "agent_message_chunk" || upType == "message_delta" || upType == "text_delta" || upType == "content_delta" {
+			*totalText += deltaText
+		} else if upType == "message_stop" || upType == "stop" || upType == "done" {
+			return true
+		}
+	}
+
+	return false
 }
 
 func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.ReadCloser, model, cid string, created int64, promptText string) ([]byte, error) {
@@ -509,7 +576,7 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 
 		if initDone && !sessionCreated && msg["result"] != nil && msg["method"] == nil {
 			if res, ok := msg["result"].(map[string]any); ok {
-				sessionID, _ = res["sessionId"].(string)
+				sessionID, _ = res["sessionId"].(string) // nolint:errcheck
 			}
 
 			if sessionID == "" {
@@ -526,37 +593,8 @@ func collectDevinACPNonStreaming(cmd *exec.Cmd, stdin io.WriteCloser, stdout io.
 			continue
 		}
 
-		if meth, _ := msg["method"].(string); meth == "_cognition.ai/agent_stopped" || meth == "$/agent_stopped" {
+		if processDevinACPNonStreamingUpdate(msg, &totalText) {
 			break
-		}
-
-		if meth, _ := msg["method"].(string); meth == "session/update" || meth == "$/update" {
-			params, _ := msg["params"].(map[string]any)
-			update, _ := params["update"].(map[string]any)
-
-			if update == nil {
-				update = params
-			}
-
-			upType, _ := update["sessionUpdate"].(string)
-			if upType == "" {
-				upType, _ = update["type"].(string)
-			}
-
-			deltaText := ""
-			if c, ok := update["content"].(string); ok {
-				deltaText = c
-			} else if cm, ok := update["content"].(map[string]any); ok {
-				deltaText, _ = cm["text"].(string)
-			} else if d, ok := update["delta"].(string); ok {
-				deltaText = d
-			}
-
-			if upType == "agent_message_chunk" || upType == "message_delta" || upType == "text_delta" || upType == "content_delta" {
-				totalText += deltaText
-			} else if upType == "message_stop" || upType == "stop" || upType == "done" {
-				break
-			}
 		}
 
 		if msg["error"] != nil {

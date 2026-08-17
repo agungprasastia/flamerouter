@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/opensse/testutil"
+	"flamerouter/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,15 +13,13 @@ import (
 )
 
 func TestResponsesStringInputAndInstructions(t *testing.T) {
-	st := newTestStore(t)
-	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
-		t.Fatalf("CreateConnection: %v", err)
-	}
+	st := setupResponsesTestStore(t)
 
 	fake := testutil.NewFakeExecutor(testutil.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-resp-1","choices":[{"message":{"role":"assistant","content":"responses answer"}}]}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
@@ -31,6 +30,23 @@ func TestResponsesStringInputAndInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Responses err = %v", err)
 	}
+
+	assertResponsesOutput(t, rec, fake)
+}
+
+func setupResponsesTestStore(t *testing.T) *store.Store {
+	t.Helper()
+
+	st := newTestStore(t)
+	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
+		t.Fatalf("CreateConnection: %v", err)
+	}
+
+	return st
+}
+
+func assertResponsesOutput(t *testing.T, rec *httptest.ResponseRecorder, fake *testutil.FakeExecutor) {
+	t.Helper()
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -51,12 +67,12 @@ func TestResponsesStringInputAndInstructions(t *testing.T) {
 		t.Fatalf("expected at least 2 messages (system + user), got %v", msgs)
 	}
 
-	sysMsg := msgs[0].(map[string]any)
+	sysMsg := msgs[0].(map[string]any) //nolint:errcheck // test type assertion
 	if sysMsg["role"] != "system" || sysMsg["content"] != "be concise" {
 		t.Fatalf("system message = %v", sysMsg)
 	}
 
-	userMsg := msgs[1].(map[string]any)
+	userMsg := msgs[1].(map[string]any) //nolint:errcheck // test type assertion
 	if userMsg["role"] != "user" || userMsg["content"] != "explain gravity" {
 		t.Fatalf("user message = %v", userMsg)
 	}
@@ -72,6 +88,7 @@ func TestResponsesArrayInput(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-resp-2","choices":[{"message":{"role":"assistant","content":"array answer"}}]}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
@@ -98,6 +115,7 @@ func TestResponsesStreamingSSE(t *testing.T) {
 	fake := testutil.NewFakeExecutor(testutil.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       nil,
 		StreamBody: []byte(streamData),
 	})
 	fb := fallback.New(st)
@@ -125,34 +143,37 @@ func TestResponsesStreamingSSE(t *testing.T) {
 }
 
 func TestCompactResponsesSetsFlag(t *testing.T) {
-	st := newTestStore(t)
-	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
-		t.Fatalf("CreateConnection: %v", err)
-	}
+	storeObj := newTestStore(t)
+	_, _ = storeObj.CreateConnection("openai", "api_key", "compact-conn", "sk-compact", "") //nolint:errcheck // test fixture
 
-	fake := testutil.NewFakeExecutor(testutil.Response{
+	fakeExecutor := testutil.NewFakeExecutor(testutil.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       []byte(`{"id":"chatcmpl-resp-4","choices":[{"message":{"role":"assistant","content":"compact answer"}}]}`),
+		Body:       []byte(`{"id":"chatcmpl-resp-compact","choices":[{"message":{"role":"assistant","content":"compact-handled"}}]}`),
+		StreamBody: nil,
 	})
-	fb := fallback.New(st)
+	fallbackObj := fallback.New(storeObj)
 
-	reqBody := []byte(`{"model":"openai/gpt-4o","input":"compact test"}`)
-	rec := httptest.NewRecorder()
+	compactPayload := []byte(`{"model":"openai/gpt-4o","input":"compact test request"}`)
+	responseWriter := httptest.NewRecorder()
 
-	err := CompactResponses(context.Background(), rec, reqBody, st, fake, fb)
-	if err != nil {
+	if err := CompactResponses(context.Background(), responseWriter, compactPayload, storeObj, fakeExecutor, fallbackObj); err != nil {
 		t.Fatalf("CompactResponses err = %v", err)
 	}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	if responseWriter.Code != http.StatusOK {
+		t.Fatalf("status = %d", responseWriter.Code)
 	}
 }
 
 func TestResponsesInvalidJSONReturns400(t *testing.T) {
 	st := newTestStore(t)
-	fake := testutil.NewFakeExecutor()
+	fake := testutil.NewFakeExecutor(testutil.Response{
+		StatusCode: http.StatusOK,
+		Header:     nil,
+		Body:       nil,
+		StreamBody: nil,
+	})
 	fb := fallback.New(st)
 
 	rec := httptest.NewRecorder()

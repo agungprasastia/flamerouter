@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
+	"flamerouter/internal/opensse/rtk"
 	"flamerouter/internal/store"
 	"net/http"
 	"strings"
@@ -25,8 +26,19 @@ func VercelAIChat(ctx context.Context, w http.ResponseWriter, body []byte, st *s
 	}
 
 	// Capture chat response then transform if JSON completion
-	cw := &captureWriter{header: make(http.Header), code: 200}
-	err := ChatWithOptions(ctx, cw, body, st, exec, fb, ChatOptions{})
+	cw := &captureWriter{
+		header: make(http.Header),
+		code:   200,
+		buf:    bytes.Buffer{},
+	}
+	err := ChatWithOptions(ctx, cw, body, st, exec, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
 
 	if err != nil && len(cw.buf.Bytes()) == 0 {
 		return err
@@ -37,7 +49,7 @@ func VercelAIChat(ctx context.Context, w http.ResponseWriter, body []byte, st *s
 		// stream as-is
 		copyHeader(w.Header(), cw.header)
 		w.WriteHeader(cw.code)
-		_, _ = w.Write(cw.buf.Bytes())
+		_, _ = w.Write(cw.buf.Bytes()) //nolint:errcheck // best effort write
 
 		return nil
 	}
@@ -46,7 +58,7 @@ func VercelAIChat(ctx context.Context, w http.ResponseWriter, body []byte, st *s
 	if err := json.Unmarshal(cw.buf.Bytes(), &openai); err != nil {
 		copyHeader(w.Header(), cw.header)
 		w.WriteHeader(cw.code)
-		_, _ = w.Write(cw.buf.Bytes())
+		_, _ = w.Write(cw.buf.Bytes()) //nolint:errcheck // best effort write
 
 		return err
 	}
@@ -61,19 +73,7 @@ func VercelAIChat(ctx context.Context, w http.ResponseWriter, body []byte, st *s
 }
 
 func transformToOllama(openai map[string]any, modelName string) map[string]any {
-	content := ""
-
-	if choices, ok := openai["choices"].([]any); ok && len(choices) > 0 {
-		if c0, ok := choices[0].(map[string]any); ok {
-			if msg, ok := c0["message"].(map[string]any); ok {
-				if s, ok := msg["content"].(string); ok {
-					content = s
-				}
-			} else if s, ok := c0["text"].(string); ok {
-				content = s
-			}
-		}
-	}
+	content := extractChoiceContent(openai)
 
 	out := map[string]any{
 		"model":      modelName,
@@ -90,6 +90,30 @@ func transformToOllama(openai map[string]any, modelName string) map[string]any {
 	}
 
 	return out
+}
+
+func extractChoiceContent(openai map[string]any) string {
+	choices, ok := openai["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return ""
+	}
+
+	c0, ok := choices[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	if msg, ok := c0["message"].(map[string]any); ok {
+		if s, ok := msg["content"].(string); ok {
+			return s
+		}
+	}
+
+	if s, ok := c0["text"].(string); ok {
+		return s
+	}
+
+	return ""
 }
 
 type captureWriter struct {

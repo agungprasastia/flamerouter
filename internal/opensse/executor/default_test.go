@@ -22,28 +22,41 @@ func TestDefaultExecutor_ForwardsChat(t *testing.T) {
 			t.Errorf("path %s", r.URL.Path)
 		}
 
-		defer r.Body.Close()
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		defer func() {
+			_ = r.Body.Close() // nolint:errcheck
+		}()
+
+		_ = json.NewDecoder(r.Body).Decode(&gotBody) // nolint:errcheck
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"1","choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+		_, _ = w.Write([]byte(`{"id":"1","choices":[{"message":{"role":"assistant","content":"hi"}}]}`)) // nolint:errcheck
 	}))
 	defer srv.Close()
 
 	ex := executor.NewDefault(srv.Client())
-	body, _ := json.Marshal(map[string]any{
+
+	body, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{{"role": "user", "content": "hey"}},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	res, err := ex.Execute(context.Background(), executor.Credentials{
-		APIKey:  "sk-test",
-		BaseURL: srv.URL + "/v1",
+		APIKey:               "sk-test",
+		BaseURL:              srv.URL + "/v1",
+		ProviderSpecificData: nil,
+		AccessToken:          "",
+		RefreshToken:         "",
+		ProjectID:            "",
 	}, "gpt-4o-mini", body, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close() // nolint:errcheck
+	}()
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
@@ -57,8 +70,8 @@ func TestDefaultExecutor_ForwardsChat(t *testing.T) {
 		t.Fatalf("model field %+v", gotBody["model"])
 	}
 
-	b, _ := io.ReadAll(res.Body)
-	if len(b) == 0 {
-		t.Fatal("empty body")
+	b, err := io.ReadAll(res.Body)
+	if err != nil || len(b) == 0 {
+		t.Fatal("empty body or read error")
 	}
 }

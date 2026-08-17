@@ -1,3 +1,4 @@
+// Package mitm provides local HTTPS MITM proxy and certificate generation for developer tools.
 package mitm
 
 import (
@@ -15,6 +16,63 @@ import (
 	"time"
 )
 
+func newRootCATemplate(serial *big.Int) *x509.Certificate {
+	return &x509.Certificate{
+		Raw:                         nil,
+		RawTBSCertificate:           nil,
+		RawSubjectPublicKeyInfo:     nil,
+		RawSubject:                  nil,
+		RawIssuer:                   nil,
+		Signature:                   nil,
+		SignatureAlgorithm:          0,
+		PublicKeyAlgorithm:          0,
+		PublicKey:                   nil,
+		Version:                     0,
+		SerialNumber:                serial,
+		Issuer:                      pkix.Name{Country: nil, Organization: nil, OrganizationalUnit: nil, Locality: nil, Province: nil, StreetAddress: nil, PostalCode: nil, SerialNumber: "", CommonName: "", Names: nil, ExtraNames: nil},
+		Subject:                     pkix.Name{Country: nil, Organization: []string{"FlameRouter MITM CA"}, OrganizationalUnit: nil, Locality: nil, Province: nil, StreetAddress: nil, PostalCode: nil, SerialNumber: "", CommonName: "FlameRouter MITM Root CA", Names: nil, ExtraNames: nil},
+		NotBefore:                   time.Now().Add(-time.Hour),
+		NotAfter:                    time.Now().AddDate(10, 0, 0),
+		KeyUsage:                    x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		Extensions:                  nil,
+		ExtraExtensions:             nil,
+		UnhandledCriticalExtensions: nil,
+		ExtKeyUsage:                 nil,
+		UnknownExtKeyUsage:          nil,
+		BasicConstraintsValid:       true,
+		IsCA:                        true,
+		MaxPathLen:                  0,
+		MaxPathLenZero:              true,
+		SubjectKeyId:                nil,
+		AuthorityKeyId:              nil,
+		OCSPServer:                  nil,
+		IssuingCertificateURL:       nil,
+		DNSNames:                    nil,
+		EmailAddresses:              nil,
+		IPAddresses:                 nil,
+		URIs:                        nil,
+		PermittedDNSDomainsCritical: false,
+		PermittedDNSDomains:         nil,
+		ExcludedDNSDomains:          nil,
+		PermittedIPRanges:           nil,
+		ExcludedIPRanges:            nil,
+		PermittedEmailAddresses:     nil,
+		ExcludedEmailAddresses:      nil,
+		PermittedURIDomains:         nil,
+		ExcludedURIDomains:          nil,
+		CRLDistributionPoints:       nil,
+		PolicyIdentifiers:           nil,
+		Policies:                    nil,
+		InhibitAnyPolicy:            0,
+		InhibitAnyPolicyZero:        false,
+		InhibitPolicyMapping:        0,
+		InhibitPolicyMappingZero:    false,
+		RequireExplicitPolicy:       0,
+		RequireExplicitPolicyZero:   false,
+		PolicyMappings:              nil,
+	}
+}
+
 // GenerateRootCA creates a self-signed root CA certificate.
 func GenerateRootCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -27,17 +85,7 @@ func GenerateRootCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 		return nil, nil, err
 	}
 
-	template := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{Organization: []string{"FlameRouter MITM CA"}, CommonName: "FlameRouter MITM Root CA"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().AddDate(10, 0, 0),
-		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-		MaxPathLen:            0,
-		MaxPathLenZero:        true,
-	}
+	template := newRootCATemplate(serial)
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
@@ -50,6 +98,63 @@ func GenerateRootCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	}
 
 	return cert, key, nil
+}
+
+func newHostCertTemplate(host string, serial *big.Int) *x509.Certificate {
+	return &x509.Certificate{
+		Raw:                         nil,
+		RawTBSCertificate:           nil,
+		RawSubjectPublicKeyInfo:     nil,
+		RawSubject:                  nil,
+		RawIssuer:                   nil,
+		Signature:                   nil,
+		SignatureAlgorithm:          0,
+		PublicKeyAlgorithm:          0,
+		PublicKey:                   nil,
+		Version:                     0,
+		SerialNumber:                serial,
+		Issuer:                      pkix.Name{Country: nil, Organization: nil, OrganizationalUnit: nil, Locality: nil, Province: nil, StreetAddress: nil, PostalCode: nil, SerialNumber: "", CommonName: "", Names: nil, ExtraNames: nil},
+		Subject:                     pkix.Name{Country: nil, Organization: []string{"FlameRouter MITM"}, OrganizationalUnit: nil, Locality: nil, Province: nil, StreetAddress: nil, PostalCode: nil, SerialNumber: "", CommonName: host, Names: nil, ExtraNames: nil},
+		NotBefore:                   time.Now().Add(-time.Hour),
+		NotAfter:                    time.Now().AddDate(1, 0, 0),
+		KeyUsage:                    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		Extensions:                  nil,
+		ExtraExtensions:             nil,
+		UnhandledCriticalExtensions: nil,
+		ExtKeyUsage:                 []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		UnknownExtKeyUsage:          nil,
+		BasicConstraintsValid:       false,
+		IsCA:                        false,
+		MaxPathLen:                  0,
+		MaxPathLenZero:              false,
+		SubjectKeyId:                nil,
+		AuthorityKeyId:              nil,
+		OCSPServer:                  nil,
+		IssuingCertificateURL:       nil,
+		DNSNames:                    []string{host},
+		EmailAddresses:              nil,
+		IPAddresses:                 nil,
+		URIs:                        nil,
+		PermittedDNSDomainsCritical: false,
+		PermittedDNSDomains:         nil,
+		ExcludedDNSDomains:          nil,
+		PermittedIPRanges:           nil,
+		ExcludedIPRanges:            nil,
+		PermittedEmailAddresses:     nil,
+		ExcludedEmailAddresses:      nil,
+		PermittedURIDomains:         nil,
+		ExcludedURIDomains:          nil,
+		CRLDistributionPoints:       nil,
+		PolicyIdentifiers:           nil,
+		Policies:                    nil,
+		InhibitAnyPolicy:            0,
+		InhibitAnyPolicyZero:        false,
+		InhibitPolicyMapping:        0,
+		InhibitPolicyMappingZero:    false,
+		RequireExplicitPolicy:       0,
+		RequireExplicitPolicyZero:   false,
+		PolicyMappings:              nil,
+	}
 }
 
 // GenerateHostCert creates a certificate for a specific hostname signed by the root CA.
@@ -68,15 +173,7 @@ func GenerateHostCert(host string, rootCert *x509.Certificate, rootKey *ecdsa.Pr
 		return nil, err
 	}
 
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: host, Organization: []string{"FlameRouter MITM"}},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().AddDate(1, 0, 0),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{host},
-	}
+	template := newHostCertTemplate(host, serial)
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, rootCert, &key.PublicKey, rootKey)
 	if err != nil {
@@ -84,9 +181,12 @@ func GenerateHostCert(host string, rootCert *x509.Certificate, rootKey *ecdsa.Pr
 	}
 
 	return &tls.Certificate{
-		Certificate: [][]byte{certDER, rootCert.Raw},
-		PrivateKey:  key,
-		Leaf:        nil,
+		Certificate:                  [][]byte{certDER, rootCert.Raw},
+		PrivateKey:                   key,
+		SupportedSignatureAlgorithms: nil,
+		OCSPStaple:                   nil,
+		SignedCertificateTimestamps:  nil,
+		Leaf:                         nil,
 	}, nil
 }
 
@@ -113,11 +213,13 @@ func LoadOrCreateRootCA(certPath, keyPath string) (*x509.Certificate, *ecdsa.Pri
 }
 
 func loadRootCA(certPath, keyPath string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	/* #nosec G304 */
 	certPEM, err := os.ReadFile(certPath)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	/* #nosec G304 */
 	keyPEM, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, nil, err
@@ -155,28 +257,38 @@ func writeRootCA(certPath, keyPath string, cert *x509.Certificate, key *ecdsa.Pr
 		return err
 	}
 
+	/* #nosec G304 */
 	certOut, err := os.OpenFile(certPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
 
-	defer certOut.Close()
+	defer func() {
+		if clErr := certOut.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}); err != nil {
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Headers: nil, Bytes: cert.Raw}); err != nil {
 		return err
 	}
 
-	keyBytes, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return err
+	keyBytes, errMarshal := x509.MarshalECPrivateKey(key)
+	if errMarshal != nil {
+		return errMarshal
 	}
 
-	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
+	/* #nosec G304 */
+	keyOut, errKey := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if errKey != nil {
+		return errKey
 	}
 
-	defer keyOut.Close()
+	defer func() {
+		if clErr := keyOut.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
-	return pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+	return pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Headers: nil, Bytes: keyBytes})
 }

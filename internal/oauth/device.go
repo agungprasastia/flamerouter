@@ -1,3 +1,5 @@
+// Package oauth provides OAuth authentication flows, token lifecycle helpers,
+// and specialized third-party login providers.
 package oauth
 
 import (
@@ -11,19 +13,12 @@ import (
 	"time"
 )
 
-func StartDeviceFlow(ctx context.Context, config *OAuthConfig) (*DeviceCodeResponse, error) {
-	if config == nil {
-		return nil, fmt.Errorf("oauth config is nil")
-	}
-	if config.DeviceURL == "" {
-		return nil, fmt.Errorf("provider %s does not support device flow", config.Provider)
-	}
-
+func doStartDeviceFlowRequest(ctx context.Context, config *OAuthConfig) ([]byte, error) {
 	data := url.Values{}
 	data.Set("client_id", config.ClientID)
 	data.Set("scope", strings.Join(config.Scopes, " "))
 
-	req, err := http.NewRequestWithContext(ctx, "POST", config.DeviceURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.DeviceURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -35,10 +30,16 @@ func StartDeviceFlow(ctx context.Context, config *OAuthConfig) (*DeviceCodeRespo
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return nil, fmt.Errorf("empty device flow response")
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -49,6 +50,24 @@ func StartDeviceFlow(ctx context.Context, config *OAuthConfig) (*DeviceCodeRespo
 		return nil, fmt.Errorf("device flow failed: %s", string(body))
 	}
 
+	return body, nil
+}
+
+// StartDeviceFlow initiates an OAuth device authorization request.
+func StartDeviceFlow(ctx context.Context, config *OAuthConfig) (*DeviceCodeResponse, error) {
+	if config == nil {
+		return nil, fmt.Errorf("oauth config is nil")
+	}
+
+	if config.DeviceURL == "" {
+		return nil, fmt.Errorf("provider %s does not support device flow", config.Provider)
+	}
+
+	body, err := doStartDeviceFlowRequest(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
 	var result DeviceCodeResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, err
@@ -57,10 +76,74 @@ func StartDeviceFlow(ctx context.Context, config *OAuthConfig) (*DeviceCodeRespo
 	return &result, nil
 }
 
+type deviceTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	Scope        string `json:"scope"`
+	ExpiresIn    int    `json:"expires_in"`
+}
+
+type deviceErrorResponse struct {
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
+}
+
+func doPollDeviceTokenRequest(ctx context.Context, tokenURL string, data url.Values) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return 0, nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	if resp == nil || resp.Body == nil {
+		return 0, nil, fmt.Errorf("empty response")
+	}
+
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	return resp.StatusCode, body, nil
+}
+
+func handleDevicePollResponse(body []byte) (int, error) {
+	var errResp deviceErrorResponse
+	if err := json.Unmarshal(body, &errResp); err == nil {
+		if errResp.Error == "authorization_pending" {
+			return 0, nil
+		}
+
+		if errResp.Error == "slow_down" {
+			return 5, nil
+		}
+
+		return 0, fmt.Errorf("device flow error: %s", errResp.Error)
+	}
+
+	return 0, nil
+}
+
+// PollDeviceToken polls the OAuth token endpoint until authorized or context canceled.
 func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string, interval int) (*Token, error) {
 	if config == nil {
 		return nil, fmt.Errorf("oauth config is nil")
 	}
+
 	data := url.Values{}
 	data.Set("client_id", config.ClientID)
 	data.Set("device_code", deviceCode)
@@ -73,36 +156,15 @@ func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string
 		case <-time.After(time.Duration(interval) * time.Second):
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, strings.NewReader(data.Encode()))
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.Header.Set("Accept", "application/json")
-
-		resp, err := http.DefaultClient.Do(req)
+		statusCode, body, err := doPollDeviceTokenRequest(ctx, config.TokenURL, data)
 		if err != nil {
 			continue
 		}
-		if resp == nil || resp.Body == nil {
-			continue
-		}
 
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK {
-			var tokenResp struct {
-				AccessToken  string `json:"access_token"`
-				RefreshToken string `json:"refresh_token"`
-				TokenType    string `json:"token_type"`
-				Scope        string `json:"scope"`
-				ExpiresIn    int    `json:"expires_in"`
-			}
-
-			if err := json.Unmarshal(body, &tokenResp); err != nil {
-				return nil, err
+		if statusCode == http.StatusOK {
+			var tokenResp deviceTokenResponse
+			if unmarshalErr := json.Unmarshal(body, &tokenResp); unmarshalErr != nil {
+				return nil, unmarshalErr
 			}
 
 			return &Token{
@@ -111,25 +173,15 @@ func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string
 				TokenType:    tokenResp.TokenType,
 				ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
 				Scope:        tokenResp.Scope,
+				IDToken:      "",
 			}, nil
 		}
 
-		var errResp struct {
-			Error            string `json:"error"`
-			ErrorDescription string `json:"error_description"`
+		incInterval, err := handleDevicePollResponse(body)
+		if err != nil {
+			return nil, err
 		}
 
-		if err := json.Unmarshal(body, &errResp); err == nil {
-			if errResp.Error == "authorization_pending" {
-				continue
-			}
-
-			if errResp.Error == "slow_down" {
-				interval += 5
-				continue
-			}
-
-			return nil, fmt.Errorf("device flow error: %s", errResp.Error)
-		}
+		interval += incInterval
 	}
 }

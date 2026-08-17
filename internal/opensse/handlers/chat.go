@@ -38,6 +38,7 @@ func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken str
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
+
 	if res == nil {
 		return "", "", time.Time{}, fmt.Errorf("nil refresh result")
 	}
@@ -82,27 +83,34 @@ var (
 	errUpstreamFailed = errors.New("upstream request failed")
 )
 
-// ChatOptions optional chat flags (token savers, source override).
-// UsageSink optional async usage (gateway wires usage.Tracker).
+// UsageSink is an optional async usage interface (gateway wires usage.Tracker).
 type UsageSink interface {
 	OnUsage(provider, model, connectionID string, prompt, completion, statusCode int)
 }
 
+// ChatOptions specifies optional chat flags (token savers, source override).
 type ChatOptions struct {
-	TokenSaver    rtk.TokenSaverOptions
-	SourceFormat  string // force source format (e.g. claude for /v1/messages)
-	ClientHeaders http.Header
-	Usage         UsageSink
-	// AccountStrategy: ""|"fill-first"|"round-robin" — SelectAccountWithStrategy
+	Usage           UsageSink
+	ClientHeaders   http.Header
+	SourceFormat    string
 	AccountStrategy string
-	// StickyLimit for round-robin (0 → fallback default 3)
-	StickyLimit int
+	TokenSaver      rtk.TokenSaverOptions
+	StickyLimit     int
 }
 
+// Chat handles standard chat completions.
 func Chat(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
-	return ChatWithOptions(ctx, w, body, st, exec, fb, ChatOptions{})
+	return ChatWithOptions(ctx, w, body, st, exec, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
 }
 
+// ChatWithOptions handles chat completions with explicit options.
 func ChatWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback, opts ChatOptions) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
@@ -115,12 +123,26 @@ func ChatWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st
 		sourceFormat = translator.DetectSourceFormat(m)
 	}
 
-	modelStr, _ := m["model"].(string)
-	streamReq, _ := m["stream"].(bool)
+	modelStr, _ := m["model"].(string) //nolint:errcheck // optional type assertion
+	streamReq, _ := m["stream"].(bool) //nolint:errcheck // optional type assertion
+	ts := resolveTokenSaverOptions(opts)
 
-	// Token saver master switch from header (x-9router-token-saver / x-flamerouter-token-saver)
+	if handled, err := tryHandleComboOrSynth(ctx, w, body, modelStr, m, st, exec, fb, streamReq, sourceFormat, ts); handled {
+		return err
+	}
+
+	providerID, modelClean, err := resolveChatModel(modelStr, st)
+	if err != nil {
+		http.Error(w, `{"error":"model must be provider/model format"}`, http.StatusBadRequest)
+		return err
+	}
+
+	return handleWithFallback(ctx, w, body, providerID, modelClean, st, exec, fb, streamReq, sourceFormat, ts, opts.AccountStrategy, opts.StickyLimit, opts.Usage)
+}
+
+func resolveTokenSaverOptions(opts ChatOptions) rtk.TokenSaverOptions {
 	ts := opts.TokenSaver
-	if !ts.Enabled && opts.TokenSaver == (rtk.TokenSaverOptions{}) {
+	if !ts.Enabled && opts.TokenSaver == rtk.EmptyTokenSaver() {
 		ts = rtk.DefaultTokenSaver()
 	}
 
@@ -135,25 +157,34 @@ func ChatWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st
 		}
 	}
 
-	cDef, _ := st.GetComboByName(modelStr)
+	return ts
+}
+
+func tryHandleComboOrSynth(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, m map[string]any, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions) (bool, error) {
+	cDef, _ := st.GetComboByName(modelStr) //nolint:errcheck // optional combo
 	if cDef != nil && len(cDef.Models) > 0 {
-		return handleCombo(ctx, w, body, cDef, st, exec, fb, streamReq, sourceFormat, ts)
+		return true, handleCombo(ctx, w, body, cDef, st, exec, fb, streamReq, sourceFormat, ts)
 	}
 
 	capConfig := combo.LoadCapacityAdapterConfig(st)
 	reqCaps := combo.DetectRequiredCapabilities(m)
-
 	soloAugmented := combo.AugmentModelsWithCapacityAdapter([]string{modelStr}, reqCaps, capConfig)
+
 	if len(soloAugmented) > 1 {
 		synthCombo := &store.Combo{
+			ID:     "",
 			Name:   modelStr,
 			Models: soloAugmented,
 		}
 
-		return handleCombo(ctx, w, body, synthCombo, st, exec, fb, streamReq, sourceFormat, ts)
+		return true, handleCombo(ctx, w, body, synthCombo, st, exec, fb, streamReq, sourceFormat, ts)
 	}
 
-	aliases, _ := st.ListAliases()
+	return false, nil
+}
+
+func resolveChatModel(modelStr string, st *store.Store) (string, string, error) {
+	aliases, _ := st.ListAliases() //nolint:errcheck // optional alias list
 	mref := model.ParseModel(modelStr)
 
 	if mref.IsAlias {
@@ -163,13 +194,12 @@ func ChatWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st
 	}
 
 	if mref.Provider == "" {
-		http.Error(w, `{"error":"model must be provider/model format"}`, http.StatusBadRequest)
-		return nil
+		return "", "", errInvalidModel
 	}
 
-	providerID := model.ResolveProviderAlias(mref.Provider, provider.ProviderAliases())
+	providerID := model.ResolveProviderAlias(mref.Provider, provider.Aliases())
 
-	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, opts.AccountStrategy, opts.StickyLimit, opts.Usage)
+	return providerID, mref.Model, nil
 }
 
 func handleCombo(ctx context.Context, w http.ResponseWriter, body []byte, c *store.Combo, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions) error {
@@ -179,11 +209,14 @@ func handleCombo(ctx context.Context, w http.ResponseWriter, body []byte, c *sto
 	start := combo.Resolve(strategyName, nil, c.Name)
 
 	opts := combo.Options{
-		SourceFormat: sourceFormat,
-		Stream:       streamReq,
-		ComboName:    c.Name,
-		StickyLimit:  sticky,
-		JudgeModel:   judge,
+		SourceFormat:   sourceFormat,
+		Stream:         streamReq,
+		ComboName:      c.Name,
+		StickyLimit:    sticky,
+		JudgeModel:     judge,
+		ClientHeaders:  nil,
+		TargetFormat:   "",
+		TokenSaverJSON: "",
 		SingleModel: func(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, stream bool) error {
 			return runComboModel(ctx, w, body, modelStr, st, exec, fb, stream, sourceFormat, ts)
 		},
@@ -194,7 +227,7 @@ func handleCombo(ctx context.Context, w http.ResponseWriter, body []byte, c *sto
 
 func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions) error {
 	mref := model.ParseModel(modelStr)
-	aliases, _ := st.ListAliases()
+	aliases, _ := st.ListAliases() //nolint:errcheck // optional alias list
 
 	if mref.IsAlias {
 		if resolved, ok := model.ResolveModelAlias(mref.Model, aliases); ok {
@@ -206,15 +239,14 @@ func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, mode
 		return fmt.Errorf("%w: %q", errInvalidModel, modelStr)
 	}
 
-	providerID := model.ResolveProviderAlias(mref.Provider, provider.ProviderAliases())
+	providerID := model.ResolveProviderAlias(mref.Provider, provider.Aliases())
 
 	if streamReq {
-		// SSE headers only after first successful upstream stream (see streamModel).
-		// Avoid WriteHeader(200) before success so total-fail can still http.Error cleanly.
 		if flusher, ok := w.(http.Flusher); ok {
 			err := streamModel(ctx, w, flusher, body, providerID, mref.Model, st, exec, fb, sourceFormat, ts)
 			if err == nil {
-				w.Write([]byte("data: [DONE]\n\n"))
+				_, _ = w.Write([]byte("data: [DONE]\n\n")) //nolint:errcheck // stream write
+
 				flusher.Flush()
 			}
 
@@ -223,6 +255,177 @@ func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, mode
 	}
 
 	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, "", 0, nil)
+}
+
+func prepareChatPayload(body []byte, providerID, modelName string, streamReq bool, sourceFormat, targetFormat string, conn *store.Connection, ts rtk.TokenSaverOptions) []byte {
+	var translatedBody map[string]any
+
+	if translator.NeedsTranslation(sourceFormat, targetFormat) {
+		var bodyMap map[string]any
+		if err := json.Unmarshal(body, &bodyMap); err != nil || bodyMap == nil {
+			bodyMap = make(map[string]any)
+		}
+
+		translatedBody = translator.DefaultRegistry.TranslateRequest(sourceFormat, targetFormat, bodyMap, translator.TranslateOptions{
+			Model:      modelName,
+			Stream:     streamReq,
+			Provider:   providerID,
+			ClientTool: false,
+			StripList:  nil,
+			Credentials: map[string]any{
+				"apiKey":               conn.APIKey,
+				"accessToken":          firstNonEmpty(conn.AccessToken, conn.APIKey),
+				"refreshToken":         conn.RefreshToken,
+				"providerSpecificData": conn.ProviderSpecificData,
+			},
+			ConnectionID: conn.ID,
+		})
+	} else {
+		var bodyMap map[string]any
+		_ = json.Unmarshal(body, &bodyMap) //nolint:errcheck // best-effort body unmarshal
+
+		caps := concerns.GetCapabilitiesForModel(providerID, modelName)
+		if caps != nil {
+			concerns.StripUnsupportedModalities(bodyMap, sourceFormat, caps)
+		}
+
+		concerns.PrefetchRemoteImages(bodyMap, sourceFormat, targetFormat)
+		translatedBody = bodyMap
+	}
+
+	if translatedBody != nil {
+		ts.Model = modelName
+		ts.Format = targetFormat
+		translatedBody = rtk.ApplyTokenSavers(translatedBody, ts)
+
+		payload, _ := json.Marshal(translatedBody) //nolint:errcheck // best-effort marshal
+
+		return payload
+	}
+
+	return body
+}
+
+func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.Reader, sourceFormat, targetFormat string) {
+	state := concerns.NewResponseState()
+	scanner := bufio.NewScanner(body)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk map[string]any
+		if json.Unmarshal([]byte(data), &chunk) != nil {
+			continue
+		}
+
+		translated := translator.DefaultRegistry.TranslateResponse(targetFormat, sourceFormat, chunk, state)
+		for _, t := range translated {
+			j, _ := json.Marshal(t)                               //nolint:errcheck // best-effort marshal
+			_, _ = w.Write([]byte("data: " + string(j) + "\n\n")) //nolint:errcheck // stream write
+
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
+
+	_, _ = w.Write([]byte("data: [DONE]\n\n")) //nolint:errcheck // stream write
+
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+func writeTranslatedNonStream(w http.ResponseWriter, respBody []byte, sourceFormat, targetFormat string) {
+	if !translator.NeedsTranslation(sourceFormat, targetFormat) {
+		_, _ = w.Write(respBody) //nolint:errcheck // handler write
+		return
+	}
+
+	var respMap map[string]any
+	if json.Unmarshal(respBody, &respMap) == nil {
+		translated := translator.DefaultRegistry.TranslateResponse(targetFormat, sourceFormat, respMap, concerns.NewResponseState())
+		if len(translated) > 0 {
+			j, _ := json.Marshal(translated[0]) //nolint:errcheck // best-effort marshal
+			_, _ = w.Write(j)                   //nolint:errcheck // handler write
+
+			return
+		}
+	}
+
+	_, _ = w.Write(respBody) //nolint:errcheck // handler write
+}
+
+func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, connID string, statusCode int, usageSink UsageSink) {
+	var rm map[string]any
+	if json.Unmarshal(respBody, &rm) != nil {
+		return
+	}
+
+	usage, ok := rm["usage"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	prompt, _ := usage["prompt_tokens"].(float64)                                   //nolint:errcheck // optional type assertion
+	completion, _ := usage["completion_tokens"].(float64)                           //nolint:errcheck // optional type assertion
+	_ = st.InsertUsage(providerID, modelName, int(prompt), int(completion), connID) //nolint:errcheck // best-effort usage insert
+
+	if usageSink != nil {
+		usageSink.OnUsage(providerID, modelName, connID, int(prompt), int(completion), statusCode)
+	}
+}
+
+func resolveChatExecutor(exec executor.Executor, providerID string) executor.Executor {
+	if exec == nil || executor.HasSpecializedExecutor(providerID) {
+		return executor.GetExecutor(providerID)
+	}
+
+	return exec
+}
+
+func getFallbackConn(fb *fallback.Fallback, providerID, strategy string, stickyLimit int, excludeIDs map[string]bool) *store.Connection {
+	conn, _ := fb.SelectAccountWithStrategy(providerID, strategy, stickyLimit, excludeIDs) //nolint:errcheck // error handled via nil check
+	if conn != nil {
+		return conn
+	}
+
+	pDef := provider.GetProvider(providerID)
+	if pDef == nil {
+		pDef = provider.GetProviderByAlias(providerID)
+	}
+
+	if pDef != nil && (pDef.Category == "free" || pDef.HasFree || providerID == "opencode" || providerID == "mimo-free") && len(excludeIDs) == 0 {
+		return &store.Connection{
+			ID:                   "synthetic-" + providerID,
+			Provider:             providerID,
+			IsActive:             true,
+			BaseURL:              pDef.Transport.BaseURL,
+			AuthType:             "",
+			Name:                 "",
+			APIKey:               "",
+			AccessToken:          "",
+			RefreshToken:         "",
+			ExpiresAt:            "",
+			RateLimitedUntil:     "",
+			LastError:            "",
+			LastUsedAt:           "",
+			ConsecutiveUseCount:  0,
+			Priority:             0,
+			TestStatus:           "",
+			ProviderSpecificData: nil,
+		}
+	}
+
+	return nil
 }
 
 func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte, providerID, modelName string, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions, strategy string, stickyLimit int, usageSink UsageSink) error {
@@ -237,101 +440,16 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 	targetFormat := getTargetFormat(providerID)
 
 	for {
-		conn, _ := fb.SelectAccountWithStrategy(providerID, strategy, stickyLimit, excludeIDs)
+		conn := getFallbackConn(fb, providerID, strategy, stickyLimit, excludeIDs)
 		if conn == nil {
-			pDef := provider.GetProvider(providerID)
-			if pDef == nil {
-				pDef = provider.GetProviderByAlias(providerID)
-			}
-
-			if pDef != nil && (pDef.Category == "free" || pDef.HasFree || providerID == "opencode" || providerID == "mimo-free") && len(excludeIDs) == 0 {
-				conn = &store.Connection{
-					ID:       "synthetic-" + providerID,
-					Provider: providerID,
-					IsActive: true,
-					BaseURL:  pDef.Transport.BaseURL,
-				}
-			}
-		}
-
-		if conn == nil {
-			if len(excludeIDs) == 0 {
-				http.Error(w, `{"error":"no active connection for provider `+providerID+`"}`, http.StatusBadRequest)
-				return nil
-			}
-
-			if lastStatus >= 400 && len(lastBody) > 0 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(lastStatus)
-				w.Write(lastBody)
-
-				return lastErr
-			}
-
-			http.Error(w, `{"error":"all accounts unavailable"}`, http.StatusServiceUnavailable)
-
-			return lastErr
+			return handleFallbackExhausted(w, providerID, excludeIDs, lastStatus, lastBody, lastErr)
 		}
 
 		conn = ensureFreshConn(ctx, st, conn)
-		cred := connCredentials(conn)
+		payload := prepareChatPayload(body, providerID, modelName, streamReq, sourceFormat, targetFormat, conn, ts)
+		ex := resolveChatExecutor(exec, providerID)
 
-		var translatedBody map[string]any
-
-		if translator.NeedsTranslation(sourceFormat, targetFormat) {
-			var bodyMap map[string]any
-			if err := json.Unmarshal(body, &bodyMap); err != nil || bodyMap == nil {
-				bodyMap = make(map[string]any)
-			}
-			// Pre-pass modality/prefetch also runs inside TranslateRequest
-			translatedBody = translator.DefaultRegistry.TranslateRequest(sourceFormat, targetFormat, bodyMap, translator.TranslateOptions{
-				Model:    modelName,
-				Stream:   streamReq,
-				Provider: providerID,
-				Credentials: map[string]any{
-					"apiKey":               conn.APIKey,
-					"accessToken":          firstNonEmpty(conn.AccessToken, conn.APIKey),
-					"refreshToken":         conn.RefreshToken,
-					"providerSpecificData": conn.ProviderSpecificData,
-				},
-				ConnectionId: conn.ID,
-			})
-		} else {
-			// Still strip modalities / prefetch even on passthrough
-			var bodyMap map[string]any
-			_ = json.Unmarshal(body, &bodyMap)
-
-			caps := concerns.GetCapabilitiesForModel(providerID, modelName)
-			if caps != nil {
-				concerns.StripUnsupportedModalities(bodyMap, sourceFormat, caps)
-			}
-
-			concerns.PrefetchRemoteImages(bodyMap, sourceFormat, targetFormat)
-			translatedBody = bodyMap
-		}
-
-		// Token savers on final body (matches 9router chatCore post-translate)
-		if translatedBody != nil {
-			ts.Model = modelName
-			ts.Format = targetFormat
-			translatedBody = rtk.ApplyTokenSavers(translatedBody, ts)
-		}
-
-		var payload []byte
-		if translatedBody != nil {
-			payload, _ = json.Marshal(translatedBody)
-		} else {
-			payload = body
-		}
-
-		ex := exec
-		if ex == nil {
-			ex = executor.GetExecutor(providerID)
-		} else if executor.HasSpecializedExecutor(providerID) {
-			ex = executor.GetExecutor(providerID)
-		}
-
-		res, err := ex.Execute(ctx, cred, modelName, payload, streamReq)
+		res, err := ex.Execute(ctx, connCredentials(conn), modelName, payload, streamReq)
 		if err != nil {
 			shouldFallback, _ := fb.MarkUnavailable(conn.ID, 502, err.Error(), 0)
 			if !shouldFallback {
@@ -345,12 +463,11 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 			continue
 		}
 
-		defer res.Body.Close()
+		defer res.Body.Close() //nolint:errcheck // best-effort body close
 
 		if res.StatusCode >= 400 {
-			respBody, _ := io.ReadAll(res.Body)
-			lastStatus = res.StatusCode
-			lastBody = respBody
+			respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
+			lastStatus, lastBody = res.StatusCode, respBody
 
 			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, string(respBody), 0)
 			if shouldFallback {
@@ -362,97 +479,130 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(res.StatusCode)
-			w.Write(respBody)
+			_, _ = w.Write(respBody) //nolint:errcheck // handler write
 
 			return fmt.Errorf("%w: status %d", errUpstreamFailed, res.StatusCode)
 		}
 
-		if streamReq {
-			stream.WriteSSEHeaders(w)
-			flusher, _ := w.(http.Flusher)
-
-			if translator.NeedsTranslation(sourceFormat, targetFormat) {
-				state := concerns.NewResponseState()
-
-				scanner := bufio.NewScanner(res.Body)
-				for scanner.Scan() {
-					line := scanner.Text()
-					if !strings.HasPrefix(line, "data: ") {
-						continue
-					}
-
-					data := strings.TrimPrefix(line, "data: ")
-					if data == "[DONE]" {
-						break
-					}
-
-					var chunk map[string]any
-					if json.Unmarshal([]byte(data), &chunk) != nil {
-						continue
-					}
-
-					translated := translator.DefaultRegistry.TranslateResponse(targetFormat, sourceFormat, chunk, state)
-					for _, t := range translated {
-						j, _ := json.Marshal(t)
-						w.Write([]byte("data: " + string(j) + "\n\n"))
-
-						if flusher != nil {
-							flusher.Flush()
-						}
-					}
-				}
-
-				w.Write([]byte("data: [DONE]\n\n"))
-
-				if flusher != nil {
-					flusher.Flush()
-				}
-			} else {
-				_ = stream.Pipe(w, res.Body)
-			}
-
-			fb.ClearError(conn.ID)
-
-			return nil
-		}
-
-		respBody, _ := io.ReadAll(res.Body)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(res.StatusCode)
-		fb.ClearError(conn.ID)
-
-		if translator.NeedsTranslation(sourceFormat, targetFormat) {
-			var respMap map[string]any
-			if json.Unmarshal(respBody, &respMap) == nil {
-				translated := translator.DefaultRegistry.TranslateResponse(targetFormat, sourceFormat, respMap, concerns.NewResponseState())
-				if len(translated) > 0 {
-					j, _ := json.Marshal(translated[0])
-					w.Write(j)
-				} else {
-					w.Write(respBody)
-				}
-			} else {
-				w.Write(respBody)
-			}
-		} else {
-			w.Write(respBody)
-		}
-
-		var rm map[string]any
-		if json.Unmarshal(respBody, &rm) == nil {
-			if usage, ok := rm["usage"].(map[string]any); ok {
-				prompt, _ := usage["prompt_tokens"].(float64)
-				completion, _ := usage["completion_tokens"].(float64)
-				_ = st.InsertUsage(providerID, modelName, int(prompt), int(completion), conn.ID)
-
-				if usageSink != nil {
-					usageSink.OnUsage(providerID, modelName, conn.ID, int(prompt), int(completion), res.StatusCode)
-				}
-			}
-		}
+		completeChatResponse(w, res, conn.ID, providerID, modelName, st, fb, streamReq, sourceFormat, targetFormat, usageSink)
 
 		return nil
+	}
+}
+
+func handleFallbackExhausted(w http.ResponseWriter, providerID string, excludeIDs map[string]bool, lastStatus int, lastBody []byte, lastErr error) error {
+	if len(excludeIDs) == 0 {
+		http.Error(w, `{"error":"no active connection for provider `+providerID+`"}`, http.StatusBadRequest)
+		return nil
+	}
+
+	if lastStatus >= 400 && len(lastBody) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(lastStatus)
+		_, _ = w.Write(lastBody) //nolint:errcheck // handler write
+
+		return lastErr
+	}
+
+	http.Error(w, `{"error":"all accounts unavailable"}`, http.StatusServiceUnavailable)
+
+	return lastErr
+}
+
+func completeChatResponse(w http.ResponseWriter, res *executor.Result, connID, providerID, modelName string, st *store.Store, fb *fallback.Fallback, streamReq bool, sourceFormat, targetFormat string, usageSink UsageSink) {
+	if streamReq {
+		stream.WriteSSEHeaders(w)
+		flusher, _ := w.(http.Flusher) //nolint:errcheck // optional flusher assertion
+
+		if translator.NeedsTranslation(sourceFormat, targetFormat) {
+			writeTranslatedStream(w, flusher, res.Body, sourceFormat, targetFormat)
+		} else {
+			_ = stream.Pipe(w, res.Body) //nolint:errcheck // stream pipe
+		}
+
+		fb.ClearError(connID)
+
+		return
+	}
+
+	respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(res.StatusCode)
+	fb.ClearError(connID)
+
+	writeTranslatedNonStream(w, respBody, sourceFormat, targetFormat)
+	recordUsageSink(st, respBody, providerID, modelName, connID, res.StatusCode, usageSink)
+}
+
+func prepareStreamModelPayload(body []byte, providerID, modelName, sourceFormat, targetFormat string, conn *store.Connection, ts rtk.TokenSaverOptions) []byte {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil || m == nil {
+		m = make(map[string]any)
+	}
+
+	m["model"] = providerID + "/" + modelName
+	m["stream"] = true
+
+	var translatedBody map[string]any
+	if translator.NeedsTranslation(sourceFormat, targetFormat) {
+		translatedBody = translator.DefaultRegistry.TranslateRequest(sourceFormat, targetFormat, m, translator.TranslateOptions{
+			Model:      modelName,
+			Stream:     true,
+			Provider:   providerID,
+			ClientTool: false,
+			StripList:  nil,
+			Credentials: map[string]any{
+				"apiKey":               conn.APIKey,
+				"accessToken":          firstNonEmpty(conn.AccessToken, conn.APIKey),
+				"refreshToken":         conn.RefreshToken,
+				"providerSpecificData": conn.ProviderSpecificData,
+			},
+			ConnectionID: conn.ID,
+		})
+	} else {
+		caps := concerns.GetCapabilitiesForModel(providerID, modelName)
+		if caps != nil {
+			concerns.StripUnsupportedModalities(m, sourceFormat, caps)
+		}
+
+		concerns.PrefetchRemoteImages(m, sourceFormat, targetFormat)
+		translatedBody = m
+	}
+
+	if translatedBody != nil {
+		ts.Model = modelName
+		ts.Format = targetFormat
+		translatedBody = rtk.ApplyTokenSavers(translatedBody, ts)
+	}
+
+	payload, _ := json.Marshal(translatedBody) //nolint:errcheck // best-effort marshal
+
+	return payload
+}
+
+func pipeRawStream(w http.ResponseWriter, flusher http.Flusher, body io.Reader) {
+	buf := make([]byte, 32*1024)
+
+	for {
+		n, readErr := body.Read(buf)
+		if n > 0 {
+			lines := strings.Split(string(buf[:n]), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+
+				_, _ = w.Write([]byte(line + "\n\n")) //nolint:errcheck // stream write
+
+				flusher.Flush()
+			}
+		}
+
+		if readErr != nil {
+			break
+		}
 	}
 }
 
@@ -461,61 +611,16 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 	targetFormat := getTargetFormat(providerID)
 
 	for {
-		conn, _ := fb.SelectAccountWithStrategy(providerID, "", 0, excludeIDs)
+		conn, _ := fb.SelectAccountWithStrategy(providerID, "", 0, excludeIDs) //nolint:errcheck // error handled via nil check
 		if conn == nil {
 			return errNoAccount
 		}
 
 		conn = ensureFreshConn(ctx, st, conn)
-		cred := connCredentials(conn)
+		payload := prepareStreamModelPayload(body, providerID, modelName, sourceFormat, targetFormat, conn, ts)
+		ex := resolveChatExecutor(exec, providerID)
 
-		var m map[string]any
-		if err := json.Unmarshal(body, &m); err != nil || m == nil {
-			m = make(map[string]any)
-		}
-		m["model"] = providerID + "/" + modelName
-		m["stream"] = true
-
-		var translatedBody map[string]any
-		if translator.NeedsTranslation(sourceFormat, targetFormat) {
-			translatedBody = translator.DefaultRegistry.TranslateRequest(sourceFormat, targetFormat, m, translator.TranslateOptions{
-				Model:    modelName,
-				Stream:   true,
-				Provider: providerID,
-				Credentials: map[string]any{
-					"apiKey":               conn.APIKey,
-					"accessToken":          firstNonEmpty(conn.AccessToken, conn.APIKey),
-					"refreshToken":         conn.RefreshToken,
-					"providerSpecificData": conn.ProviderSpecificData,
-				},
-				ConnectionId: conn.ID,
-			})
-		} else {
-			caps := concerns.GetCapabilitiesForModel(providerID, modelName)
-			if caps != nil {
-				concerns.StripUnsupportedModalities(m, sourceFormat, caps)
-			}
-
-			concerns.PrefetchRemoteImages(m, sourceFormat, targetFormat)
-			translatedBody = m
-		}
-
-		if translatedBody != nil {
-			ts.Model = modelName
-			ts.Format = targetFormat
-			translatedBody = rtk.ApplyTokenSavers(translatedBody, ts)
-		}
-
-		payload, _ := json.Marshal(translatedBody)
-
-		ex := exec
-		if ex == nil {
-			ex = executor.GetExecutor(providerID)
-		} else if executor.HasSpecializedExecutor(providerID) {
-			ex = executor.GetExecutor(providerID)
-		}
-
-		res, err := ex.Execute(ctx, cred, modelName, payload, true)
+		res, err := ex.Execute(ctx, connCredentials(conn), modelName, payload, true)
 		if err != nil {
 			shouldFallback, _ := fb.MarkUnavailable(conn.ID, 502, err.Error(), 0)
 			if !shouldFallback {
@@ -527,10 +632,10 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 			continue
 		}
 
-		defer res.Body.Close()
+		defer res.Body.Close() //nolint:errcheck // best-effort body close
 
 		if res.StatusCode >= 400 {
-			respBody, _ := io.ReadAll(res.Body)
+			respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
 
 			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, string(respBody), 0)
 			if shouldFallback {
@@ -549,53 +654,9 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 		fb.ClearError(conn.ID)
 
 		if translator.NeedsTranslation(sourceFormat, targetFormat) {
-			state := concerns.NewResponseState()
-
-			scanner := bufio.NewScanner(res.Body)
-			for scanner.Scan() {
-				line := scanner.Text()
-				if !strings.HasPrefix(line, "data: ") {
-					continue
-				}
-
-				data := strings.TrimPrefix(line, "data: ")
-				if data == "[DONE]" {
-					break
-				}
-
-				var chunk map[string]any
-				if json.Unmarshal([]byte(data), &chunk) != nil {
-					continue
-				}
-
-				translated := translator.DefaultRegistry.TranslateResponse(targetFormat, sourceFormat, chunk, state)
-				for _, t := range translated {
-					j, _ := json.Marshal(t)
-					w.Write([]byte("data: " + string(j) + "\n\n"))
-				}
-			}
+			writeTranslatedStream(w, nil, res.Body, sourceFormat, targetFormat)
 		} else {
-			buf := make([]byte, 32*1024)
-
-			for {
-				n, readErr := res.Body.Read(buf)
-				if n > 0 {
-					lines := strings.Split(string(buf[:n]), "\n")
-					for _, line := range lines {
-						line = strings.TrimSpace(line)
-						if line == "" {
-							continue
-						}
-
-						w.Write([]byte(line + "\n\n"))
-						flusher.Flush()
-					}
-				}
-
-				if readErr != nil {
-					break
-				}
-			}
+			pipeRawStream(w, flusher, res.Body)
 		}
 
 		return nil
@@ -609,6 +670,7 @@ func connCredentials(conn *store.Connection) executor.Credentials {
 		RefreshToken:         conn.RefreshToken,
 		BaseURL:              conn.BaseURL,
 		ProviderSpecificData: conn.ProviderSpecificData,
+		ProjectID:            "",
 	}
 }
 

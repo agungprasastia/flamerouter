@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"flamerouter/internal/netutil"
@@ -28,26 +29,60 @@ var (
 	kiloCacheAt time.Time
 )
 
-// Safe connection fields for browser (no secrets).
-func sanitizeConnClient(c store.Connection) map[string]any {
-	name := c.Name
-	if len(name) > 16 {
-		// mask long token-like names
-		ok := false
+func maskLongTokenName(name string) string {
+	if len(name) <= 16 {
+		return name
+	}
 
-		for _, ch := range name {
-			if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
-				ok = true
-			} else {
-				ok = false
-				break
-			}
-		}
+	if !isAlphanumericOrUnderscore(name) {
+		return name
+	}
 
-		if ok && len(name) >= 32 {
-			name = name[:8] + "***"
+	if len(name) >= 32 {
+		return name[:8] + "***"
+	}
+
+	return name
+}
+
+func isAlphanumericOrUnderscore(s string) bool {
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-') {
+			return false
 		}
 	}
+
+	return true
+}
+
+func extractSafePSD(psd map[string]any, baseURL string) map[string]any {
+	safePSD := map[string]any{}
+
+	for _, f := range []string{
+		"baseUrl", "azureEndpoint", "deployment", "apiVersion", "accountId",
+		"region", "projectId", "resourceUrl", "proxyPoolId",
+		"connectionProxyEnabled", "connectionProxyUrl", "connectionNoProxy",
+		"githubLogin", "githubName", "githubEmail", "githubUserId",
+		"username", "firstName", "lastName", "authMethod", "authKind", "profileArn",
+	} {
+		if v, ok := psd[f]; ok {
+			safePSD[f] = v
+		}
+	}
+
+	if baseURL != "" {
+		if _, has := safePSD["baseUrl"]; !has {
+			safePSD["baseUrl"] = baseURL
+		}
+	}
+
+	return safePSD
+}
+
+// Safe connection fields for browser (no secrets).
+func sanitizeConnClient(c store.Connection) map[string]any {
+	name := maskLongTokenName(c.Name)
 
 	out := map[string]any{
 		"id": c.ID, "provider": c.Provider, "authType": c.AuthType, "name": name,
@@ -56,37 +91,97 @@ func sanitizeConnClient(c store.Connection) map[string]any {
 		"lastUsedAt": c.LastUsedAt, "consecutiveUseCount": c.ConsecutiveUseCount,
 	}
 
-	if c.ProviderSpecificData != nil {
-		safePSD := map[string]any{}
-
-		for _, f := range []string{
-			"baseUrl", "azureEndpoint", "deployment", "apiVersion", "accountId",
-			"region", "projectId", "resourceUrl", "proxyPoolId",
-			"connectionProxyEnabled", "connectionProxyUrl", "connectionNoProxy",
-			"githubLogin", "githubName", "githubEmail", "githubUserId",
-			"username", "firstName", "lastName", "authMethod", "authKind", "profileArn",
-		} {
-			if v, ok := c.ProviderSpecificData[f]; ok {
-				safePSD[f] = v
-			}
-		}
-
-		if len(safePSD) > 0 {
-			out["providerSpecificData"] = safePSD
-		}
-	}
-
-	if c.BaseURL != "" {
-		if psd, ok := out["providerSpecificData"].(map[string]any); ok {
-			if _, has := psd["baseUrl"]; !has {
-				psd["baseUrl"] = c.BaseURL
-			}
-		} else {
-			out["providerSpecificData"] = map[string]any{"baseUrl": c.BaseURL}
-		}
+	safePSD := extractSafePSD(c.ProviderSpecificData, c.BaseURL)
+	if len(safePSD) > 0 {
+		out["providerSpecificData"] = safePSD
 	}
 
 	return out
+}
+
+func filterConns(all []store.Connection, providerFilter, accountStatus string) ([]store.Connection, []string) {
+	providerOptsSet := map[string]struct{}{}
+	filtered := make([]store.Connection, 0, len(all))
+
+	for _, c := range all {
+		providerOptsSet[c.Provider] = struct{}{}
+
+		if providerFilter != "all" && c.Provider != providerFilter {
+			continue
+		}
+
+		if accountStatus == "active" && !c.IsActive {
+			continue
+		}
+
+		if accountStatus == "inactive" && c.IsActive {
+			continue
+		}
+
+		filtered = append(filtered, c)
+	}
+
+	providerOptions := make([]string, 0, len(providerOptsSet))
+	for p := range providerOptsSet {
+		providerOptions = append(providerOptions, p)
+	}
+
+	sort.Strings(providerOptions)
+
+	return filtered, providerOptions
+}
+
+func filterAndSortConns(all []store.Connection, providerFilter, accountStatus, sortBy string) ([]store.Connection, []string) {
+	filtered, providerOptions := filterConns(all, providerFilter, accountStatus)
+
+	if sortBy == "provider" {
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].Provider < filtered[j].Provider
+		})
+	} else {
+		sort.Slice(filtered, func(i, j int) bool {
+			if filtered[i].Priority != filtered[j].Priority {
+				return filtered[i].Priority < filtered[j].Priority
+			}
+
+			return filtered[i].Provider < filtered[j].Provider
+		})
+	}
+
+	return filtered, providerOptions
+}
+
+func computeTotalPages(total, pageSize int) int {
+	totalPages := total / pageSize
+	if total%pageSize != 0 || totalPages == 0 {
+		if total == 0 {
+			totalPages = 1
+		} else if total%pageSize != 0 {
+			totalPages++
+		}
+	}
+
+	return totalPages
+}
+
+func slicePage(filtered []store.Connection, page, pageSize, total int) []map[string]any {
+	offset := (page - 1) * pageSize
+	end := offset + pageSize
+
+	if offset > total {
+		offset = total
+	}
+
+	if end > total {
+		end = total
+	}
+
+	pageConns := make([]map[string]any, 0, end-offset)
+	for _, c := range filtered[offset:end] {
+		pageConns = append(pageConns, sanitizeConnClient(c))
+	}
+
+	return pageConns
 }
 
 // GET /api/providers/client — sanitized connections for dashboard.
@@ -119,85 +214,17 @@ func (s *Server) handleProvidersClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// eligible: all connections (usage filter soft — registry has no features.usage yet)
-	eligible := all
-	providerOptsSet := map[string]struct{}{}
-
-	for _, c := range eligible {
-		providerOptsSet[c.Provider] = struct{}{}
-	}
-
-	var providerOptions []string
-	for p := range providerOptsSet {
-		providerOptions = append(providerOptions, p)
-	}
-
-	sort.Strings(providerOptions)
-
-	filtered := make([]store.Connection, 0, len(eligible))
-
-	for _, c := range eligible {
-		if providerFilter != "all" && c.Provider != providerFilter {
-			continue
-		}
-
-		if accountStatus == "active" && !c.IsActive {
-			continue
-		}
-
-		if accountStatus == "inactive" && c.IsActive {
-			continue
-		}
-
-		filtered = append(filtered, c)
-	}
-
-	if sortBy == "provider" {
-		sort.Slice(filtered, func(i, j int) bool {
-			return filtered[i].Provider < filtered[j].Provider
-		})
-	} else {
-		sort.Slice(filtered, func(i, j int) bool {
-			if filtered[i].Priority != filtered[j].Priority {
-				return filtered[i].Priority < filtered[j].Priority
-			}
-
-			return filtered[i].Provider < filtered[j].Provider
-		})
-	}
+	filtered, providerOptions := filterAndSortConns(all, providerFilter, accountStatus, sortBy)
 
 	total := len(filtered)
-	totalPages := total / pageSize
-
-	if total%pageSize != 0 || totalPages == 0 {
-		if total == 0 {
-			totalPages = 1
-		} else if total%pageSize != 0 {
-			totalPages++
-		}
-	}
+	totalPages := computeTotalPages(total, pageSize)
 
 	if page > totalPages {
 		page = totalPages
 	}
 
-	offset := (page - 1) * pageSize
-	end := offset + pageSize
+	pageConns := slicePage(filtered, page, pageSize, total)
 
-	if offset > total {
-		offset = total
-	}
-
-	if end > total {
-		end = total
-	}
-
-	pageConns := make([]map[string]any, 0, end-offset)
-	for _, c := range filtered[offset:end] {
-		pageConns = append(pageConns, sanitizeConnClient(c))
-	}
-
-	// also include registry summary counts (brief step 1)
 	reg := provider.ListProviders()
 	writeJSONOK(w, map[string]any{
 		"connections":     pageConns,
@@ -206,7 +233,7 @@ func (s *Server) handleProvidersClient(w http.ResponseWriter, r *http.Request) {
 			"page": page, "pageSize": pageSize, "total": total, "totalPages": totalPages,
 		},
 		"totals": map[string]any{
-			"eligibleConnections":         len(eligible),
+			"eligibleConnections":         len(all),
 			"providerFilteredConnections": len(filtered),
 			"registryProviders":           len(reg),
 		},
@@ -220,6 +247,43 @@ func parsePositiveInt(s string, fallback int) int {
 	}
 
 	return n
+}
+
+func fetchModelsJSON(ctx context.Context, u string) any {
+	client := &http.Client{
+		Timeout:       15 * time.Second,
+		Transport:     nil,
+		CheckRedirect: nil,
+		Jar:           nil,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil
+	}
+
+	resp, err := netutil.DoHTTP(client, req)
+	if err != nil || resp.StatusCode >= 400 {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close() //nolint:errcheck,gosec // best-effort body close
+		}
+
+		return nil
+	}
+
+	defer resp.Body.Close() //nolint:errcheck // best-effort body close
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	var jsonAny any
+	if err := json.Unmarshal(body, &jsonAny); err != nil {
+		return nil
+	}
+
+	return jsonAny
 }
 
 // GET /api/providers/suggested-models?url=&type=.
@@ -238,31 +302,8 @@ func (s *Server) handleSuggestedModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
-	if err != nil {
-		writeJSONOK(w, map[string]any{"data": []any{}})
-		return
-	}
-
-	resp, err := netutil.DoHTTP(client, req)
-	if err != nil || resp.StatusCode >= 400 {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-
-		writeJSONOK(w, map[string]any{"data": []any{}})
-
-		return
-	}
-
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	var jsonAny any
-
-	if err := json.Unmarshal(body, &jsonAny); err != nil {
+	jsonAny := fetchModelsJSON(r.Context(), u)
+	if jsonAny == nil {
 		writeJSONOK(w, map[string]any{"data": []any{}})
 		return
 	}
@@ -304,10 +345,10 @@ var suggestedFilters = map[string]func([]map[string]any) []map[string]any{
 	"openrouter-free": func(models []map[string]any) []map[string]any {
 		var out []map[string]any
 		for _, m := range models {
-			pricing, _ := m["pricing"].(map[string]any)
-			prompt, _ := pricing["prompt"].(string)
-			comp, _ := pricing["completion"].(string)
-			ctxLen, _ := asFloat(m["context_length"])
+			pricing, _ := m["pricing"].(map[string]any) //nolint:errcheck // safe type assertion
+			prompt, _ := pricing["prompt"].(string)     //nolint:errcheck // safe type assertion
+			comp, _ := pricing["completion"].(string)   //nolint:errcheck // safe type assertion
+			ctxLen := asFloat(m["context_length"])
 			if prompt == "0" && comp == "0" && ctxLen >= 200000 {
 				out = append(out, map[string]any{
 					"id": m["id"], "name": m["name"], "contextLength": ctxLen,
@@ -315,8 +356,8 @@ var suggestedFilters = map[string]func([]map[string]any) []map[string]any{
 			}
 		}
 		sort.Slice(out, func(i, j int) bool {
-			a, _ := asFloat(out[i]["contextLength"])
-			b, _ := asFloat(out[j]["contextLength"])
+			a := asFloat(out[i]["contextLength"])
+			b := asFloat(out[j]["contextLength"])
 			return a > b
 		})
 		return out
@@ -325,7 +366,7 @@ var suggestedFilters = map[string]func([]map[string]any) []map[string]any{
 		known := map[string]bool{"big-pickle": true}
 		var out []map[string]any
 		for _, m := range models {
-			id, _ := m["id"].(string)
+			id, _ := m["id"].(string) //nolint:errcheck // safe type assertion
 			if strings.HasSuffix(id, "-free") || known[id] {
 				out = append(out, map[string]any{"id": id, "name": id})
 			}
@@ -335,8 +376,8 @@ var suggestedFilters = map[string]func([]map[string]any) []map[string]any{
 	"mimo-free": func(models []map[string]any) []map[string]any {
 		var out []map[string]any
 		for _, m := range models {
-			id, _ := m["id"].(string)
-			name, _ := m["name"].(string)
+			id, _ := m["id"].(string)     //nolint:errcheck // safe type assertion
+			name, _ := m["name"].(string) //nolint:errcheck // safe type assertion
 			if strings.HasPrefix(id, "mimo") || strings.Contains(strings.ToLower(name), "mimo") {
 				if name == "" {
 					name = id
@@ -348,98 +389,120 @@ var suggestedFilters = map[string]func([]map[string]any) []map[string]any{
 	},
 }
 
-func asFloat(v any) (float64, bool) {
+func asFloat(v any) float64 {
 	switch t := v.(type) {
 	case float64:
-		return t, true
+		return t
 	case int:
-		return float64(t), true
+		return float64(t)
 	case json.Number:
-		f, err := t.Float64()
-		return f, err == nil
+		if f, err := t.Float64(); err == nil {
+			return f
+		}
+
+		return 0
 	default:
-		return 0, false
+		return 0
 	}
 }
 
-// POST /api/providers/test-batch — body {ids:[]} or {mode, providerId}.
-func (s *Server) handleProviderTestBatch(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Mode       string   `json:"mode"`
-		ProviderID string   `json:"providerId"`
-		IDs        []string `json:"ids"`
+func matchTestBatchMode(c store.Connection, mode, providerID string) (bool, bool) {
+	switch mode {
+	case "all":
+		return true, true
+	case "provider":
+		return providerID != "" && c.Provider == providerID, true
+	case "oauth":
+		return c.AuthType == "oauth", true
+	case "apikey":
+		return c.AuthType == "api_key" || c.AuthType == "apikey", true
+	default:
+		return matchTestBatchModeExtra(c, mode)
+	}
+}
+
+func matchTestBatchModeExtra(c store.Connection, mode string) (bool, bool) {
+	switch mode {
+	case "free":
+		p := provider.GetProvider(c.Provider)
+		return p != nil && p.HasFree, true
+	case "compatible":
+		return strings.HasPrefix(c.Provider, openaiCompatiblePrefix) || strings.HasPrefix(c.Provider, anthropicCompatiblePrefix), true
+	default:
+		return false, false
+	}
+}
+
+func (s *Server) selectConnsForBatchTest(ids []string, mode, providerID string) ([]store.Connection, bool, error) {
+	if len(ids) > 0 {
+		return s.selectConnsByID(ids), true, nil
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json")
-		return
+	if mode == "" {
+		return nil, false, nil
 	}
 
-	var toTest []store.Connection
+	return s.selectConnsByMode(mode, providerID)
+}
 
-	if len(body.IDs) > 0 {
-		for _, id := range body.IDs {
-			c, err := s.st.GetConnection(id)
-			if err != nil || c == nil {
-				continue
-			}
+func (s *Server) selectConnsByID(ids []string) []store.Connection {
+	toTest := make([]store.Connection, 0, len(ids))
 
-			toTest = append(toTest, *c)
-		}
-	} else {
-		if body.Mode == "" {
-			writeErr(w, http.StatusBadRequest, "mode is required")
-			return
+	for _, id := range ids {
+		c, err := s.st.GetConnection(id)
+		if err != nil || c == nil {
+			continue
 		}
 
-		all, err := s.st.ListAllConnections()
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "Batch test failed")
-			return
+		toTest = append(toTest, *c)
+	}
+
+	return toTest
+}
+
+func (s *Server) selectConnsByMode(mode, providerID string) ([]store.Connection, bool, error) {
+	all, err := s.st.ListAllConnections()
+	if err != nil {
+		return nil, true, err
+	}
+
+	toTest := make([]store.Connection, 0, len(all))
+
+	for _, c := range all {
+		if !c.IsActive {
+			continue
 		}
 
-		for _, c := range all {
-			if !c.IsActive {
-				continue
-			}
+		match, validMode := matchTestBatchMode(c, mode, providerID)
+		if !validMode {
+			return nil, false, nil
+		}
 
-			switch body.Mode {
-			case "all":
-				toTest = append(toTest, c)
-			case "provider":
-				if body.ProviderID != "" && c.Provider == body.ProviderID {
-					toTest = append(toTest, c)
-				}
-			case "oauth":
-				if c.AuthType == "oauth" {
-					toTest = append(toTest, c)
-				}
-			case "apikey":
-				if c.AuthType == "api_key" || c.AuthType == "apikey" {
-					toTest = append(toTest, c)
-				}
-			case "free":
-				if p := provider.GetProvider(c.Provider); p != nil && p.HasFree {
-					toTest = append(toTest, c)
-				}
-			case "compatible":
-				if strings.HasPrefix(c.Provider, openaiCompatiblePrefix) || strings.HasPrefix(c.Provider, anthropicCompatiblePrefix) {
-					toTest = append(toTest, c)
-				}
-			default:
-				writeErr(w, http.StatusBadRequest, "Invalid mode. Use: provider, oauth, free, apikey, compatible, all")
-				return
-			}
+		if match {
+			toTest = append(toTest, c)
 		}
 	}
 
+	return toTest, true, nil
+}
+
+type batchTestReq struct {
+	Mode       string   `json:"mode"`
+	ProviderID string   `json:"providerId"`
+	IDs        []string `json:"ids"`
+}
+
+func formatBatchTestResults(toTest []store.Connection) ([]map[string]any, int) {
 	results := make([]map[string]any, 0, len(toTest))
+	passed := 0
 
 	for _, conn := range toTest {
 		valid := conn.APIKey != "" || conn.AccessToken != ""
+		if valid {
+			passed++
+		}
 
 		var errMsg any
-
 		if !valid {
 			errMsg = "no credentials"
 		}
@@ -461,13 +524,34 @@ func (s *Server) handleProviderTestBatch(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	passed := 0
+	return results, passed
+}
 
-	for _, r := range results {
-		if r["valid"] == true {
-			passed++
-		}
+// POST /api/providers/test-batch — body {ids:[]} or {mode, providerId}.
+func (s *Server) handleProviderTestBatch(w http.ResponseWriter, r *http.Request) {
+	var body batchTestReq
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
 	}
+
+	toTest, ok, err := s.selectConnsForBatchTest(body.IDs, body.Mode, body.ProviderID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Batch test failed")
+		return
+	}
+
+	if !ok {
+		if body.Mode == "" && len(body.IDs) == 0 {
+			writeErr(w, http.StatusBadRequest, "mode is required")
+		} else {
+			writeErr(w, http.StatusBadRequest, "Invalid mode. Use: provider, oauth, free, apikey, compatible, all")
+		}
+
+		return
+	}
+
+	results, passed := formatBatchTestResults(toTest)
 
 	writeJSONOK(w, map[string]any{
 		"mode":       body.Mode,
@@ -488,6 +572,57 @@ func nullIfEmpty(s string) any {
 	return s
 }
 
+func requestKiloModels(ctx context.Context) ([]map[string]any, error) {
+	client := &http.Client{
+		Timeout:       10 * time.Second,
+		Transport:     nil,
+		CheckRedirect: nil,
+		Jar:           nil,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, kiloModelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := netutil.DoHTTP(client, req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close() //nolint:errcheck // best-effort body close
+
+	if resp.StatusCode >= 400 {
+		return nil, sql.ErrConnDone
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var payload struct {
+		Data []map[string]any `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+
+	free := make([]map[string]any, 0)
+
+	for _, m := range payload.Data {
+		if isFree, _ := m["isFree"].(bool); isFree { //nolint:errcheck // safe type assertion
+			ctxLen := asFloat(m["context_length"])
+			free = append(free, map[string]any{
+				"id": m["id"], "name": m["name"], "isFree": true, "context_length": ctxLen,
+			})
+		}
+	}
+
+	return free, nil
+}
+
 // GET /api/providers/kilo/free-models.
 func (s *Server) handleKiloFreeModels(w http.ResponseWriter, r *http.Request) {
 	kiloMu.Lock()
@@ -499,9 +634,7 @@ func (s *Server) handleKiloFreeModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, kiloModelsURL, nil)
+	free, err := requestKiloModels(r.Context())
 	if err != nil {
 		if kiloCache != nil {
 			writeJSONOK(w, map[string]any{"models": kiloCache, "cached": true, "warning": err.Error()})
@@ -513,65 +646,6 @@ func (s *Server) handleKiloFreeModels(w http.ResponseWriter, r *http.Request) {
 		})
 
 		return
-	}
-
-	resp, err := netutil.DoHTTP(client, req)
-	if err != nil {
-		if kiloCache != nil {
-			writeJSONOK(w, map[string]any{"models": kiloCache, "cached": true, "warning": err.Error()})
-			return
-		}
-
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"models": []any{}, "error": "Failed to fetch Kilo models: " + err.Error(),
-		})
-
-		return
-	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		if kiloCache != nil {
-			writeJSONOK(w, map[string]any{"models": kiloCache, "cached": true, "warning": "Kilo API returned " + strconv.Itoa(resp.StatusCode)})
-			return
-		}
-
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"models": []any{}, "error": "Failed to fetch Kilo models: status " + strconv.Itoa(resp.StatusCode),
-		})
-
-		return
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-
-	var payload struct {
-		Data []map[string]any `json:"data"`
-	}
-
-	if err := json.Unmarshal(body, &payload); err != nil {
-		if kiloCache != nil {
-			writeJSONOK(w, map[string]any{"models": kiloCache, "cached": true, "warning": err.Error()})
-			return
-		}
-
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"models": []any{}, "error": "Failed to fetch Kilo models: " + err.Error(),
-		})
-
-		return
-	}
-
-	free := make([]map[string]any, 0)
-
-	for _, m := range payload.Data {
-		if isFree, _ := m["isFree"].(bool); isFree {
-			ctxLen, _ := asFloat(m["context_length"])
-			free = append(free, map[string]any{
-				"id": m["id"], "name": m["name"], "isFree": true, "context_length": ctxLen,
-			})
-		}
 	}
 
 	kiloCache = free
@@ -580,8 +654,33 @@ func (s *Server) handleKiloFreeModels(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]any{"models": free, "cached": false})
 }
 
+func buildRegistryNotice(notice *provider.Notice) map[string]any {
+	if notice == nil {
+		return nil
+	}
+
+	n := map[string]any{}
+	if notice.Text != "" {
+		n["text"] = notice.Text
+	}
+
+	if notice.SignupURL != "" {
+		n["signupUrl"] = notice.SignupURL
+	}
+
+	if notice.APIKeyURL != "" {
+		n["apiKeyUrl"] = notice.APIKeyURL
+	}
+
+	if len(n) == 0 {
+		return nil
+	}
+
+	return n
+}
+
 // GET /api/providers/registry — expose full provider registry.
-func (s *Server) handleProviderRegistry(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleProviderRegistry(w http.ResponseWriter, _ *http.Request) {
 	all := provider.ListProviders()
 	out := make([]map[string]any, 0, len(all))
 
@@ -605,28 +704,14 @@ func (s *Server) handleProviderRegistry(w http.ResponseWriter, r *http.Request) 
 			"textIcon": p.Display.TextIcon,
 			"website":  p.Display.Website,
 		}
+
 		if p.Display.Deprecated {
 			entry["deprecated"] = true
 			entry["deprecationNotice"] = p.Display.DeprecNotice
 		}
 
-		if p.Display.Notice != nil {
-			n := map[string]any{}
-			if p.Display.Notice.Text != "" {
-				n["text"] = p.Display.Notice.Text
-			}
-
-			if p.Display.Notice.SignupURL != "" {
-				n["signupUrl"] = p.Display.Notice.SignupURL
-			}
-
-			if p.Display.Notice.APIKeyURL != "" {
-				n["apiKeyUrl"] = p.Display.Notice.APIKeyURL
-			}
-
-			if len(n) > 0 {
-				entry["notice"] = n
-			}
+		if n := buildRegistryNotice(p.Display.Notice); n != nil {
+			entry["notice"] = n
 		}
 
 		out = append(out, entry)

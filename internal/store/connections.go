@@ -1,3 +1,4 @@
+// Package store provides SQLite persistent storage for flamerouter state.
 package store
 
 import (
@@ -7,6 +8,7 @@ import (
 	"time"
 )
 
+// Connection describes a provider connection credential and state.
 type Connection struct {
 	ProviderSpecificData map[string]any
 	RateLimitedUntil     string
@@ -46,7 +48,9 @@ func scanConnection(rows interface {
 	}
 
 	c.IsActive = active != 0
-	_ = json.Unmarshal([]byte(psdJSON), &c.ProviderSpecificData)
+	if err := json.Unmarshal([]byte(psdJSON), &c.ProviderSpecificData); err != nil {
+		c.ProviderSpecificData = nil
+	}
 
 	return c, nil
 }
@@ -59,13 +63,18 @@ const connectionSelect = `SELECT id, provider, auth_type, name, priority, is_act
 		        COALESCE(consecutive_use_count,0), COALESCE(last_used_at,'')
 		 FROM provider_connections`
 
+// ListActiveByProvider returns all active connections for a given provider.
 func (s *Store) ListActiveByProvider(provider string) ([]Connection, error) {
 	rows, err := s.db.Query(connectionSelect+` WHERE provider=? AND is_active=1 ORDER BY priority DESC`, provider)
 	if err != nil {
 		return nil, err
 	}
 
-	defer rows.Close()
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	var out []Connection
 
@@ -81,13 +90,18 @@ func (s *Store) ListActiveByProvider(provider string) ([]Connection, error) {
 	return out, rows.Err()
 }
 
+// ListConnectionsByProvider returns all connections (active or inactive) for a provider.
 func (s *Store) ListConnectionsByProvider(provider string) ([]Connection, error) {
 	rows, err := s.db.Query(connectionSelect+` WHERE provider=? ORDER BY priority DESC`, provider)
 	if err != nil {
 		return nil, err
 	}
 
-	defer rows.Close()
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	var out []Connection
 
@@ -103,13 +117,18 @@ func (s *Store) ListConnectionsByProvider(provider string) ([]Connection, error)
 	return out, rows.Err()
 }
 
+// ListAllConnections returns all connections across all providers.
 func (s *Store) ListAllConnections() ([]Connection, error) {
 	rows, err := s.db.Query(connectionSelect + ` ORDER BY priority DESC, provider ASC`)
 	if err != nil {
 		return nil, err
 	}
 
-	defer rows.Close()
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	var out []Connection
 
@@ -125,14 +144,11 @@ func (s *Store) ListAllConnections() ([]Connection, error) {
 	return out, rows.Err()
 }
 
+// GetConnection returns a connection by ID or sql.ErrNoRows if not found.
 func (s *Store) GetConnection(id string) (*Connection, error) {
 	row := s.db.QueryRow(connectionSelect+` WHERE id=?`, id)
 
 	c, err := scanConnection(row)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +156,7 @@ func (s *Store) GetConnection(id string) (*Connection, error) {
 	return &c, nil
 }
 
+// CreateConnection inserts a new provider connection.
 func (s *Store) CreateConnection(provider, authType, name, apiKey, baseURL string) (string, error) {
 	id := newID()
 	_, err := s.db.Exec(
@@ -175,6 +192,7 @@ func (s *Store) CreateOAuthConnection(provider, authType, name, accessToken, ref
 	return id, err
 }
 
+// MarkConnectionUnavailable sets the rate limited until timestamp for a connection.
 func (s *Store) MarkConnectionUnavailable(connID string, cooldownMs int64) error {
 	until := GetUnavailableUntil(cooldownMs)
 	_, err := s.db.Exec(
@@ -185,6 +203,7 @@ func (s *Store) MarkConnectionUnavailable(connID string, cooldownMs int64) error
 	return err
 }
 
+// ClearConnectionError resets error and rate limit status for a connection.
 func (s *Store) ClearConnectionError(connID string) error {
 	_, err := s.db.Exec(
 		`UPDATE provider_connections SET rate_limited_until='', last_error='' WHERE id=?`,
@@ -194,6 +213,7 @@ func (s *Store) ClearConnectionError(connID string) error {
 	return err
 }
 
+// UpdateConnectionTokens updates OAuth token credentials for a connection.
 func (s *Store) UpdateConnectionTokens(connID, accessToken, refreshToken, expiresAt string) error {
 	_, err := s.db.Exec(
 		`UPDATE provider_connections SET access_token=?, refresh_token=?, expires_at=? WHERE id=?`,
@@ -203,6 +223,7 @@ func (s *Store) UpdateConnectionTokens(connID, accessToken, refreshToken, expire
 	return err
 }
 
+// UpdateConnectionPSD updates provider specific data for a connection.
 func (s *Store) UpdateConnectionPSD(connID string, psdJSON string) error {
 	_, err := s.db.Exec(
 		`UPDATE provider_connections SET provider_specific_data=? WHERE id=?`,
@@ -212,6 +233,7 @@ func (s *Store) UpdateConnectionPSD(connID string, psdJSON string) error {
 	return err
 }
 
+// InsertUsage records a token usage entry.
 func (s *Store) InsertUsage(provider, model string, prompt, completion int, connectionID string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO usage_entries(provider, model, prompt_tokens, completion_tokens, connection_id, created_at)
@@ -222,6 +244,7 @@ func (s *Store) InsertUsage(provider, model string, prompt, completion int, conn
 	return err
 }
 
+// UpdateConnection updates connection settings.
 func (s *Store) UpdateConnection(id string, isActive bool, name string, priority int, baseURL string) error {
 	_, err := s.db.Exec(
 		`UPDATE provider_connections SET is_active=?, name=?, priority=?, base_url=? WHERE id=?`,
@@ -231,13 +254,18 @@ func (s *Store) UpdateConnection(id string, isActive bool, name string, priority
 	return err
 }
 
+// DeleteConnection deletes a connection by id.
 func (s *Store) DeleteConnection(id string) error {
 	res, err := s.db.Exec(`DELETE FROM provider_connections WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
 
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
 	if n == 0 {
 		return sql.ErrNoRows
 	}
@@ -245,6 +273,7 @@ func (s *Store) DeleteConnection(id string) error {
 	return nil
 }
 
+// GetUnavailableUntil computes ISO timestamp for a cooldown duration.
 func GetUnavailableUntil(cooldownMs int64) string {
 	return time.Now().Add(time.Duration(cooldownMs) * time.Millisecond).UTC().Format(time.RFC3339)
 }

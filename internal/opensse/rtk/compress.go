@@ -5,16 +5,106 @@ import (
 	"strings"
 )
 
+// Hit represents a compression event with filter and saved byte count.
 type Hit struct {
 	Shape  string
 	Filter string
 	Saved  int
 }
 
+// Stats collects compression metrics across message items.
 type Stats struct {
 	Hits        []Hit
 	BytesBefore int
 	BytesAfter  int
+}
+
+func compressFieldStringOrParts(obj map[string]any, fieldKey string, isMatch func(string) bool, stats *Stats, strShape, arrShape string) {
+	if s, ok := obj[fieldKey].(string); ok {
+		obj[fieldKey] = compressText(s, stats, strShape)
+		return
+	}
+
+	arr, ok := obj[fieldKey].([]any)
+	if !ok {
+		return
+	}
+
+	for _, p := range arr {
+		part, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if pt, ok := part["type"].(string); ok && isMatch(pt) {
+			if text, ok := part["text"].(string); ok {
+				part["text"] = compressText(text, stats, arrShape)
+			}
+		}
+	}
+}
+
+func compressFunctionCallOutput(msg map[string]any, stats *Stats) {
+	compressFieldStringOrParts(msg, "output", func(t string) bool { return t == "input_text" }, stats, "openai-responses-string", "openai-responses-array")
+}
+
+func compressToolRole(msg map[string]any, stats *Stats) bool {
+	role, ok := msg["role"].(string)
+	if !ok || role != "tool" {
+		return false
+	}
+
+	if s, contentOk := msg["content"].(string); contentOk {
+		msg["content"] = compressText(s, stats, "openai-tool")
+		return true
+	}
+
+	compressFieldStringOrParts(msg, "content", func(t string) bool { return t == "text" }, stats, "openai-tool", "openai-tool-array")
+
+	return true
+}
+
+func compressClaudeBlockContent(block map[string]any, stats *Stats) {
+	compressFieldStringOrParts(block, "content", func(t string) bool { return t == "text" }, stats, "claude-string", "claude-array")
+}
+
+func compressClaudeContentBlocks(content []any, stats *Stats) {
+	for _, blockRaw := range content {
+		block, ok := blockRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if t, ok := block["type"].(string); !ok || t != "tool_result" {
+			continue
+		}
+
+		if isErr, ok := block["is_error"].(bool); ok && isErr {
+			continue
+		}
+
+		compressClaudeBlockContent(block, stats)
+	}
+}
+
+func compressMessageItem(msgRaw any, stats *Stats) {
+	msg, ok := msgRaw.(map[string]any)
+	if !ok {
+		return
+	}
+
+	if t, ok := msg["type"].(string); ok && t == "function_call_output" {
+		compressFunctionCallOutput(msg, stats)
+		return
+	}
+
+	if compressToolRole(msg, stats) {
+		return
+	}
+
+	if content, ok := msg["content"].([]any); ok {
+		compressClaudeContentBlocks(content, stats)
+	}
 }
 
 // CompressMessages compresses tool_result content in-place. Fail-open: returns nil on error.
@@ -23,7 +113,10 @@ func CompressMessages(body map[string]any, enabled bool) *Stats {
 		return nil
 	}
 
-	defer func() { recover() }()
+	defer func() {
+		//nolint:errcheck // recovery cleanup
+		_ = recover()
+	}()
 
 	if body["conversationState"] != nil {
 		return compressKiroFormat(body)
@@ -38,96 +131,77 @@ func CompressMessages(body map[string]any, enabled bool) *Stats {
 		return nil
 	}
 
-	stats := &Stats{}
+	stats := &Stats{
+		Hits:        nil,
+		BytesBefore: 0,
+		BytesAfter:  0,
+	}
 
 	for _, msgRaw := range items {
-		msg, ok := msgRaw.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		if t, _ := msg["type"].(string); t == "function_call_output" {
-			if s, ok := msg["output"].(string); ok {
-				msg["output"] = compressText(s, stats, "openai-responses-string")
-			} else if arr, ok := msg["output"].([]any); ok {
-				for _, p := range arr {
-					if part, ok := p.(map[string]any); ok {
-						if pt, _ := part["type"].(string); pt == "input_text" {
-							if text, ok := part["text"].(string); ok {
-								part["text"] = compressText(text, stats, "openai-responses-array")
-							}
-						}
-					}
-				}
-			}
-
-			continue
-		}
-
-		role, _ := msg["role"].(string)
-		if role == "tool" {
-			if s, ok := msg["content"].(string); ok {
-				msg["content"] = compressText(s, stats, "openai-tool")
-				continue
-			}
-
-			if arr, ok := msg["content"].([]any); ok {
-				for _, p := range arr {
-					if part, ok := p.(map[string]any); ok {
-						if pt, _ := part["type"].(string); pt == "text" {
-							if text, ok := part["text"].(string); ok {
-								part["text"] = compressText(text, stats, "openai-tool-array")
-							}
-						}
-					}
-				}
-
-				continue
-			}
-		}
-
-		content, ok := msg["content"].([]any)
-		if !ok {
-			continue
-		}
-
-		for _, blockRaw := range content {
-			block, ok := blockRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			if t, _ := block["type"].(string); t != "tool_result" {
-				continue
-			}
-
-			if err, _ := block["is_error"].(bool); err {
-				continue
-			}
-
-			if s, ok := block["content"].(string); ok {
-				block["content"] = compressText(s, stats, "claude-string")
-			} else if arr, ok := block["content"].([]any); ok {
-				for _, p := range arr {
-					if part, ok := p.(map[string]any); ok {
-						if pt, _ := part["type"].(string); pt == "text" {
-							if text, ok := part["text"].(string); ok {
-								part["text"] = compressText(text, stats, "claude-array")
-							}
-						}
-					}
-				}
-			}
-		}
+		compressMessageItem(msgRaw, stats)
 	}
 
 	return stats
 }
 
-func compressKiroFormat(body map[string]any) *Stats {
-	stats := &Stats{}
-	state, ok := body["conversationState"].(map[string]any)
+func compressKiroToolResult(trRaw any, stats *Stats) {
+	tr, ok := trRaw.(map[string]any)
+	if !ok {
+		return
+	}
 
+	if st, statusOk := tr["status"].(string); statusOk && st == "error" {
+		return
+	}
+
+	content, ok := tr["content"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, p := range content {
+		if part, partOk := p.(map[string]any); partOk {
+			if text, textOk := part["text"].(string); textOk {
+				part["text"] = compressText(text, stats, "kiro-tool-result")
+			}
+		}
+	}
+}
+
+func compressKiroMessage(msgRaw any, stats *Stats) {
+	msg, ok := msgRaw.(map[string]any)
+	if !ok {
+		return
+	}
+
+	uim, ok := msg["userInputMessage"].(map[string]any)
+	if !ok || uim == nil {
+		return
+	}
+
+	ctx, ok := uim["userInputMessageContext"].(map[string]any)
+	if !ok || ctx == nil {
+		return
+	}
+
+	toolResults, ok := ctx["toolResults"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, trRaw := range toolResults {
+		compressKiroToolResult(trRaw, stats)
+	}
+}
+
+func compressKiroFormat(body map[string]any) *Stats {
+	stats := &Stats{
+		Hits:        nil,
+		BytesBefore: 0,
+		BytesAfter:  0,
+	}
+
+	state, ok := body["conversationState"].(map[string]any)
 	if !ok {
 		return stats
 	}
@@ -142,41 +216,7 @@ func compressKiroFormat(body map[string]any) *Stats {
 	}
 
 	for _, msgRaw := range all {
-		msg, ok := msgRaw.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		uim, _ := msg["userInputMessage"].(map[string]any)
-		if uim == nil {
-			continue
-		}
-
-		ctx, _ := uim["userInputMessageContext"].(map[string]any)
-		if ctx == nil {
-			continue
-		}
-
-		toolResults, _ := ctx["toolResults"].([]any)
-		for _, trRaw := range toolResults {
-			tr, ok := trRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			if st, _ := tr["status"].(string); st == "error" {
-				continue
-			}
-
-			content, _ := tr["content"].([]any)
-			for _, p := range content {
-				if part, ok := p.(map[string]any); ok {
-					if text, ok := part["text"].(string); ok {
-						part["text"] = compressText(text, stats, "kiro-tool-result")
-					}
-				}
-			}
-		}
+		compressKiroMessage(msgRaw, stats)
 	}
 
 	return stats

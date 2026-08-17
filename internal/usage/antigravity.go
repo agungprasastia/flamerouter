@@ -19,104 +19,39 @@ func init() {
 	RegisterQuotaHandler("antigravity", fetchAntigravityUsage)
 }
 
-func fetchAntigravityUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error) {
-	if opts.AccessToken == "" {
-		return &QuotaResult{Plan: "Unknown", Message: "Antigravity access token not available."}, nil
+type antigravityQuotaInfo struct {
+	ResetTime         any     `json:"resetTime"`
+	RemainingFraction float64 `json:"remainingFraction"`
+}
+
+type antigravityModelInfo struct {
+	QuotaInfo   *antigravityQuotaInfo `json:"quotaInfo"`
+	DisplayName string                `json:"displayName"`
+	IsInternal  bool                  `json:"isInternal"`
+}
+
+type antigravityResponse struct {
+	Models map[string]antigravityModelInfo `json:"models"`
+}
+
+func isImportantAntigravityModel(modelKey string) bool {
+	switch modelKey {
+	case "gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low",
+		"gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low",
+		"gemini-3.5-flash-low", "gemini-3.5-flash-extra-low", "gemini-pro-agent",
+		"gemini-3.1-pro-low", "claude-sonnet-4-6", "claude-opus-4-6-thinking",
+		"gpt-oss-120b-medium", "gemini-3.1-flash-image":
+		return true
+	default:
+		return false
 	}
+}
 
-	subInfo := getGoogleSubscriptionInfo(ctx, opts.HTTPClient, opts.AccessToken, antigravityLoadProjectURL)
-	projectID := extractProjectFromSubInfo(subInfo)
-	plan := "Unknown"
-
-	if subInfo != nil {
-		if tierName := extractTierName(subInfo); tierName != "" {
-			plan = tierName
-		}
-	}
-
-	url := "https://cloudcode-pa.googleapis.com/v1alpha:retrieveUserQuota"
-	if projectID != "" {
-		url = strings.ReplaceAll(antigravityQuotaURL, "{project}", projectID)
-	}
-
-	reqBodyMap := map[string]any{}
-	if projectID != "" {
-		reqBodyMap["project"] = projectID
-	}
-
-	reqBytes, _ := json.Marshal(reqBodyMap)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBytes))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
-	req.Header.Set("User-Agent", "antigravity/1.0.0")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Client-Name", "antigravity")
-	req.Header.Set("X-Client-Version", "1.0.0")
-
-	res, err := doHTTP(opts.HTTPClient, req)
-	if err != nil {
-		return &QuotaResult{Message: fmt.Sprintf("Antigravity error: %v", err)}, nil
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode == 403 {
-		return &QuotaResult{
-			Message: "Antigravity quota API access forbidden. Chat may still work.",
-			Quotas:  map[string]QuotaItem{},
-		}, nil
-	}
-
-	if res.StatusCode == 401 {
-		return &QuotaResult{
-			Message: "Antigravity quota API authentication expired. Chat may still work.",
-			Quotas:  map[string]QuotaItem{},
-		}, nil
-	}
-
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return &QuotaResult{Message: fmt.Sprintf("Antigravity error: API error %d", res.StatusCode)}, nil
-	}
-
-	var data struct {
-		Models map[string]struct {
-			DisplayName string `json:"displayName"`
-			IsInternal  bool   `json:"isInternal"`
-			QuotaInfo   *struct {
-				RemainingFraction float64 `json:"remainingFraction"`
-				ResetTime         any     `json:"resetTime"`
-			} `json:"quotaInfo"`
-		} `json:"models"`
-	}
-
-	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
-		return &QuotaResult{Message: "Antigravity error: invalid response JSON"}, nil
-	}
-
-	importantModels := map[string]bool{
-		"gemini-3.7-flash-high":      true,
-		"gemini-3.7-flash-medium":    true,
-		"gemini-3.7-flash-low":       true,
-		"gemini-3.6-flash-high":      true,
-		"gemini-3.6-flash-medium":    true,
-		"gemini-3.6-flash-low":       true,
-		"gemini-3.5-flash-low":       true,
-		"gemini-3.5-flash-extra-low": true,
-		"gemini-pro-agent":           true,
-		"gemini-3.1-pro-low":         true,
-		"claude-sonnet-4-6":          true,
-		"claude-opus-4-6-thinking":   true,
-		"gpt-oss-120b-medium":        true,
-		"gemini-3.1-flash-image":     true,
-	}
-
+func parseAntigravityModels(data antigravityResponse, plan string) *QuotaResult {
 	quotas := make(map[string]QuotaItem)
 
 	for modelKey, info := range data.Models {
-		if info.QuotaInfo == nil || info.IsInternal || !importantModels[modelKey] {
+		if info.QuotaInfo == nil || info.IsInternal || !isImportantAntigravityModel(modelKey) {
 			continue
 		}
 
@@ -132,21 +67,229 @@ func fetchAntigravityUsage(ctx context.Context, opts FetchOptions) (*QuotaResult
 		}
 
 		quotas[modelKey] = QuotaItem{
+			ResetAt:             resetAt,
+			Recurring:           nil,
+			DisplayName:         disp,
+			Unit:                "",
 			Used:                used,
 			Total:               total,
 			Remaining:           rem,
 			RemainingPercentage: remFrac * 100.0,
-			ResetAt:             resetAt,
-			DisplayName:         disp,
 			Unlimited:           false,
 		}
 	}
 
 	return &QuotaResult{
-		Provider: "antigravity",
-		Plan:     plan,
-		Quotas:   quotas,
-	}, nil
+		Provider:           "antigravity",
+		Plan:               plan,
+		Limit:              0,
+		Used:               0,
+		Remaining:          0,
+		TotalUsagePct:      0,
+		LimitReached:       nil,
+		ReviewLimitReached: nil,
+		IsQuotaExceeded:    nil,
+		ResetCredits:       nil,
+		ResetsAt:           nil,
+		Message:            "",
+		Details:            nil,
+		Quotas:             quotas,
+	}
+}
+
+func checkAntigravityStatus(res *http.Response) *QuotaResult {
+	if res.StatusCode == 403 {
+		return &QuotaResult{
+			Provider:           "antigravity",
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            "Antigravity quota API access forbidden. Chat may still work.",
+			Details:            nil,
+			Quotas:             map[string]QuotaItem{},
+		}
+	}
+
+	if res.StatusCode == 401 {
+		return &QuotaResult{
+			Provider:           "antigravity",
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            "Antigravity quota API authentication expired. Chat may still work.",
+			Details:            nil,
+			Quotas:             map[string]QuotaItem{},
+		}
+	}
+
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return &QuotaResult{
+			Provider:           "antigravity",
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            fmt.Sprintf("Antigravity error: API error %d", res.StatusCode),
+			Details:            nil,
+			Quotas:             nil,
+		}
+	}
+
+	return nil
+}
+
+func executeAntigravityRequest(ctx context.Context, opts FetchOptions, projectID string) (*http.Response, *QuotaResult, error) {
+	url := "https://cloudcode-pa.googleapis.com/v1alpha:retrieveUserQuota"
+	if projectID != "" {
+		url = strings.ReplaceAll(antigravityQuotaURL, "{project}", projectID)
+	}
+
+	reqBodyMap := map[string]any{}
+	if projectID != "" {
+		reqBodyMap["project"] = projectID
+	}
+
+	reqBytes, err := json.Marshal(reqBodyMap)
+	if err != nil {
+		reqBytes = []byte("{}")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBytes))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
+	req.Header.Set("User-Agent", "antigravity/1.0.0")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Client-Name", "antigravity")
+	req.Header.Set("X-Client-Version", "1.0.0")
+
+	res, err := doHTTP(opts.HTTPClient, req)
+	if err != nil {
+		return nil, &QuotaResult{
+			Provider:           "antigravity",
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            fmt.Sprintf("Antigravity error: %v", err),
+			Details:            nil,
+			Quotas:             nil,
+		}, nil
+	}
+
+	return res, nil, nil
+}
+
+func determineAntigravityPlan(ctx context.Context, opts FetchOptions) (string, string) {
+	subInfo := getGoogleSubscriptionInfo(ctx, opts.HTTPClient, opts.AccessToken, antigravityLoadProjectURL)
+	projectID := extractProjectFromSubInfo(subInfo)
+	plan := "Unknown"
+
+	if subInfo != nil {
+		if tierName := extractTierName(subInfo); tierName != "" {
+			plan = tierName
+		}
+	}
+
+	return projectID, plan
+}
+
+func parseAntigravityResponse(res *http.Response, plan string) *QuotaResult {
+	var data antigravityResponse
+	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
+		return &QuotaResult{
+			Provider:           "antigravity",
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            "Antigravity error: invalid response JSON",
+			Details:            nil,
+			Quotas:             nil,
+		}
+	}
+
+	return parseAntigravityModels(data, plan)
+}
+
+func fetchAntigravityUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error) {
+	if opts.AccessToken == "" {
+		return &QuotaResult{
+			Provider:           "antigravity",
+			Plan:               "Unknown",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            "Antigravity access token not available.",
+			Details:            nil,
+			Quotas:             nil,
+		}, nil
+	}
+
+	projectID, plan := determineAntigravityPlan(ctx, opts)
+
+	res, errRes, err := executeAntigravityRequest(ctx, opts, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	if errRes != nil || res == nil {
+		return errRes, nil
+	}
+
+	defer func() {
+		if res != nil && res.Body != nil {
+			if err := res.Body.Close(); err != nil {
+				_ = err
+			}
+		}
+	}()
+
+	if statusRes := checkAntigravityStatus(res); statusRes != nil {
+		return statusRes, nil
+	}
+
+	return parseAntigravityResponse(res, plan), nil
 }
 
 func extractGoogleProjectID(psd map[string]any) string {
@@ -181,7 +324,11 @@ func getGoogleSubscriptionInfo(ctx context.Context, client *http.Client, token, 
 		return nil
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			_ = err
+		}
+	}()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil

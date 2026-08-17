@@ -1,3 +1,4 @@
+// Package mitm provides local HTTPS MITM proxy and certificate generation for developer tools.
 package mitm
 
 import (
@@ -26,6 +27,7 @@ type Server struct {
 	mu        sync.RWMutex
 }
 
+// New creates a new MITM server using the specified root CA certificates.
 func New(certPath, keyPath string) (*Server, error) {
 	cert, key, err := LoadOrCreateRootCA(certPath, keyPath)
 	if err != nil {
@@ -33,14 +35,18 @@ func New(certPath, keyPath string) (*Server, error) {
 	}
 
 	s := &Server{
+		ln:        nil,
 		rootCA:    cert,
 		rootKey:   key,
 		hosts:     make(map[string]Handler),
-		status:    "stopped",
 		dns:       NewDNSOverride(),
 		certCache: make(map[string]*tls.Certificate),
+		restarter: nil,
+		status:    "stopped",
 		certPath:  certPath,
 		keyPath:   keyPath,
+		addr:      "",
+		mu:        sync.RWMutex{},
 	}
 	s.restarter = NewRestarter(func(addr string) error {
 		return s.Start(addr)
@@ -49,21 +55,28 @@ func New(certPath, keyPath string) (*Server, error) {
 	return s, nil
 }
 
+// CertPath returns the path to the root CA cert.
 func (s *Server) CertPath() string { return s.certPath }
+
+// Addr returns the listening address.
 func (s *Server) Addr() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	return s.addr
 }
+
+// Restarter returns the restarter instance.
 func (s *Server) Restarter() *Restarter { return s.restarter }
 
+// Register adds a handler for a target host.
 func (s *Server) Register(host string, h Handler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.hosts[host] = h
 }
 
+// Status returns current server status.
 func (s *Server) Status() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -71,7 +84,46 @@ func (s *Server) Status() string {
 	return s.status
 }
 
+// DNS returns the DNS override instance.
 func (s *Server) DNS() *DNSOverride { return s.dns }
+
+func (s *Server) buildTLSConfig() *tls.Config {
+	/* #nosec G402 */
+	return &tls.Config{
+		Rand:                                nil,
+		Time:                                nil,
+		Certificates:                        nil,
+		NameToCertificate:                   nil,
+		GetCertificate:                      s.getCertificate,
+		GetClientCertificate:                nil,
+		GetConfigForClient:                  nil,
+		VerifyPeerCertificate:               nil,
+		VerifyConnection:                    nil,
+		RootCAs:                             nil,
+		NextProtos:                          nil,
+		ServerName:                          "",
+		ClientAuth:                          tls.NoClientCert,
+		ClientCAs:                           nil,
+		InsecureSkipVerify:                  false,
+		CipherSuites:                        nil,
+		PreferServerCipherSuites:            false,
+		SessionTicketsDisabled:              false,
+		SessionTicketKey:                    [32]byte{},
+		ClientSessionCache:                  nil,
+		UnwrapSession:                       nil,
+		WrapSession:                         nil,
+		MinVersion:                          tls.VersionTLS12,
+		MaxVersion:                          0,
+		CurvePreferences:                    nil,
+		DynamicRecordSizingDisabled:         false,
+		Renegotiation:                       0,
+		KeyLogWriter:                        nil,
+		EncryptedClientHelloConfigList:      nil,
+		EncryptedClientHelloRejectionVerify: nil,
+		GetEncryptedClientHelloKeys:         nil,
+		EncryptedClientHelloKeys:            nil,
+	}
+}
 
 // Start listens on addr. Full live MITM skeleton: TLS with SNI host certs, dispatch to handlers.
 func (s *Server) Start(addr string) error {
@@ -81,12 +133,7 @@ func (s *Server) Start(addr string) error {
 		return fmt.Errorf("already running")
 	}
 
-	cfg := &tls.Config{
-		MinVersion:     tls.VersionTLS12,
-		GetCertificate: s.getCertificate,
-	}
-
-	ln, err := tls.Listen("tcp", addr, cfg)
+	ln, err := tls.Listen("tcp", addr, s.buildTLSConfig())
 	if err != nil {
 		s.mu.Unlock()
 		return err
@@ -102,24 +149,45 @@ func (s *Server) Start(addr string) error {
 	}
 	s.mu.Unlock()
 
-	go func() {
-		err := http.Serve(ln, http.HandlerFunc(s.serveHTTP))
-		s.mu.Lock()
-		s.ln = nil
-		s.status = "stopped"
-		s.mu.Unlock()
-
-		if err != nil {
-			// unexpected exit → schedule restart
-			if s.restarter != nil {
-				s.restarter.ScheduleRestart()
-			}
-		}
-	}()
+	go s.serveListener(ln)
 
 	return nil
 }
 
+func (s *Server) serveListener(ln net.Listener) {
+	server := &http.Server{
+		Addr:                         "",
+		Handler:                      http.HandlerFunc(s.serveHTTP),
+		DisableGeneralOptionsHandler: false,
+		TLSConfig:                    nil,
+		ReadTimeout:                  0,
+		ReadHeaderTimeout:            0,
+		WriteTimeout:                 0,
+		IdleTimeout:                  0,
+		MaxHeaderBytes:               0,
+		TLSNextProto:                 nil,
+		ConnState:                    nil,
+		ErrorLog:                     nil,
+		BaseContext:                  nil,
+		ConnContext:                  nil,
+		HTTP2:                        nil,
+		Protocols:                    nil,
+	}
+
+	/* #nosec G114 */
+	err := server.Serve(ln)
+
+	s.mu.Lock()
+	s.ln = nil
+	s.status = "stopped"
+	s.mu.Unlock()
+
+	if err != nil && s.restarter != nil {
+		s.restarter.ScheduleRestart()
+	}
+}
+
+// Stop halts the running MITM server.
 func (s *Server) Stop() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

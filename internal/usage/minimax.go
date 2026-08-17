@@ -23,6 +23,8 @@ var minimaxUsageURLs = map[string][]string{
 	},
 }
 
+var authPattern = regexp.MustCompile(`(?i)(token plan|coding plan|invalid api key|invalid key|unauthorized|inactive)`)
+
 func init() {
 	RegisterQuotaHandler("minimax", fetchMiniMaxUsage)
 	RegisterQuotaHandler("minimax-cn", fetchMiniMaxCnUsage)
@@ -36,6 +38,81 @@ func fetchMiniMaxCnUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, 
 	return queryMiniMax(ctx, opts, "minimax-cn")
 }
 
+type miniMaxStatus struct {
+	msg  string
+	code int
+}
+
+func extractMiniMaxBaseStatus(payload map[string]any) miniMaxStatus {
+	var baseResp map[string]any
+	if val, ok := payload["base_resp"].(map[string]any); ok {
+		baseResp = val
+	} else if val, ok := payload["baseResp"].(map[string]any); ok {
+		baseResp = val
+	}
+
+	apiStatusCode := int(toFiniteFloat(baseResp["status_code"], 0))
+	if apiStatusCode == 0 {
+		apiStatusCode = int(toFiniteFloat(baseResp["statusCode"], 0))
+	}
+
+	var apiStatusMsg string
+	if val, ok := baseResp["status_msg"].(string); ok {
+		apiStatusMsg = val
+	} else if val, ok := baseResp["statusMsg"].(string); ok {
+		apiStatusMsg = val
+	}
+
+	return miniMaxStatus{code: apiStatusCode, msg: apiStatusMsg}
+}
+
+func parseMiniMaxModelRemains(payload map[string]any, isCodingPlan bool, nowMs int64) map[string]QuotaItem {
+	var remList []any
+	if val, ok := payload["model_remains"].([]any); ok {
+		remList = val
+	} else if val, ok := payload["modelRemains"].([]any); ok {
+		remList = val
+	}
+
+	if len(remList) == 0 {
+		return nil
+	}
+
+	quotas := make(map[string]QuotaItem)
+
+	for _, item := range remList {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		disp := formatMiniMaxQuotaName(m)
+		addMiniMaxIntervalQuota(quotas, disp+" (5h)", m, nowMs, isCodingPlan)
+		addMiniMaxWeeklyQuota(quotas, disp+" (7d)", m, nowMs, isCodingPlan)
+	}
+
+	return quotas
+}
+
+func makeMiniMaxResult(provider, msg string, quotas map[string]QuotaItem) *QuotaResult {
+	return &QuotaResult{
+		Provider:           provider,
+		Plan:               "",
+		Limit:              0,
+		Used:               0,
+		Remaining:          0,
+		TotalUsagePct:      0,
+		LimitReached:       nil,
+		ReviewLimitReached: nil,
+		IsQuotaExceeded:    nil,
+		ResetCredits:       nil,
+		ResetsAt:           nil,
+		Message:            msg,
+		Details:            nil,
+		Quotas:             quotas,
+	}
+}
+
 func queryMiniMax(ctx context.Context, opts FetchOptions, provider string) (*QuotaResult, error) {
 	apiKey := opts.APIKey
 	if apiKey == "" {
@@ -43,7 +120,7 @@ func queryMiniMax(ctx context.Context, opts FetchOptions, provider string) (*Quo
 	}
 
 	if apiKey == "" {
-		return &QuotaResult{Message: "MiniMax API key not available."}, nil
+		return makeMiniMaxResult(provider, "MiniMax API key not available.", nil), nil
 	}
 
 	urls := minimaxUsageURLs[provider]
@@ -51,119 +128,135 @@ func queryMiniMax(ctx context.Context, opts FetchOptions, provider string) (*Quo
 	var lastErr string
 
 	for i, u := range urls {
-		canFallback := i < len(urls)-1
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		req.Header.Set("Accept", "application/json")
-
-		res, err := doHTTP(opts.HTTPClient, req)
+		qRes, cont, err := executeMiniMaxRequest(ctx, opts, apiKey, u, i < len(urls)-1, provider)
 		if err != nil {
 			lastErr = err.Error()
 
-			if !canFallback {
+			if i >= len(urls)-1 {
 				break
 			}
 
 			continue
 		}
-		defer res.Body.Close()
 
-		rawBytes, _ := io.ReadAll(io.LimitReader(res.Body, 64*1024))
-
-		var payload map[string]any
-		_ = json.Unmarshal(rawBytes, &payload)
-
-		baseResp, _ := payload["base_resp"].(map[string]any)
-		if baseResp == nil {
-			baseResp, _ = payload["baseResp"].(map[string]any)
-		}
-
-		apiStatusCode := int(toFiniteFloat(baseResp["status_code"], 0))
-		if apiStatusCode == 0 {
-			apiStatusCode = int(toFiniteFloat(baseResp["statusCode"], 0))
-		}
-
-		apiStatusMsg, _ := baseResp["status_msg"].(string)
-		if apiStatusMsg == "" {
-			apiStatusMsg, _ = baseResp["statusMsg"].(string)
-		}
-
-		combined := fmt.Sprintf("%s %s", apiStatusMsg, string(rawBytes))
-		authLike := regexp.MustCompile(`(?i)(token plan|coding plan|invalid api key|invalid key|unauthorized|inactive)`).MatchString(combined)
-
-		if res.StatusCode == 401 || res.StatusCode == 403 || apiStatusCode == 1004 || authLike {
-			return &QuotaResult{Message: "MiniMax API key invalid or inactive. Use an active Token/Coding Plan key."}, nil
-		}
-
-		if res.StatusCode < 200 || res.StatusCode >= 300 {
-			lastErr = fmt.Sprintf("MiniMax usage endpoint error (%d)", res.StatusCode)
-
-			if (res.StatusCode == 404 || res.StatusCode == 405 || res.StatusCode >= 500) && canFallback {
-				continue
+		if cont {
+			if qRes != nil {
+				lastErr = qRes.Message
 			}
 
-			return &QuotaResult{Message: fmt.Sprintf("MiniMax connected. %s", lastErr)}, nil
+			continue
 		}
 
-		if apiStatusCode != 0 {
-			msg := apiStatusMsg
-			if msg == "" {
-				msg = "Upstream quota API error"
-			}
-
-			return &QuotaResult{Message: fmt.Sprintf("MiniMax connected. %s", msg)}, nil
-		}
-
-		remList, _ := payload["model_remains"].([]any)
-		if remList == nil {
-			remList, _ = payload["modelRemains"].([]any)
-		}
-
-		if len(remList) == 0 {
-			return &QuotaResult{Message: "MiniMax connected. No quota data was returned."}, nil
-		}
-
-		quotas := make(map[string]QuotaItem)
-		nowMs := time.Now().UnixMilli()
-		countMeansRemaining := strings.Contains(u, "/coding_plan/remains")
-
-		for _, item := range remList {
-			m, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			disp := formatMiniMaxQuotaName(m)
-			addMiniMaxQuota(quotas, disp+" (5h)", m, "current_interval_total_count", "currentIntervalTotalCount", "current_interval_usage_count", "currentIntervalUsageCount", "current_interval_remaining_percent", "currentIntervalRemainingPercent", "remains_time", "remainsTime", "end_time", "endTime", nowMs, countMeansRemaining)
-			addMiniMaxQuota(quotas, disp+" (7d)", m, "current_weekly_total_count", "currentWeeklyTotalCount", "current_weekly_usage_count", "currentWeeklyUsageCount", "current_weekly_remaining_percent", "currentWeeklyRemainingPercent", "weekly_remains_time", "weeklyRemainsTime", "weekly_end_time", "weeklyEndTime", nowMs, countMeansRemaining)
-		}
-
-		if len(quotas) == 0 {
-			return &QuotaResult{Message: "MiniMax connected. Unable to extract quota usage."}, nil
-		}
-
-		return &QuotaResult{
-			Provider: provider,
-			Quotas:   quotas,
-		}, nil
+		return qRes, nil
 	}
 
+	msg := "MiniMax connected. Unable to fetch usage."
 	if lastErr != "" {
-		return &QuotaResult{Message: fmt.Sprintf("MiniMax connected. Unable to fetch usage: %s", lastErr)}, nil
+		msg = fmt.Sprintf("MiniMax connected. Unable to fetch usage: %s", lastErr)
 	}
 
-	return &QuotaResult{Message: "MiniMax connected. Unable to fetch usage."}, nil
+	return makeMiniMaxResult(provider, msg, nil), nil
+}
+
+func parseMiniMaxHTTPResponse(res *http.Response) ([]byte, map[string]any) {
+	rawBytes, readErr := io.ReadAll(io.LimitReader(res.Body, 64*1024))
+	if readErr != nil {
+		rawBytes = nil
+	}
+
+	var payload map[string]any
+	if unmarshalErr := json.Unmarshal(rawBytes, &payload); unmarshalErr != nil {
+		payload = nil
+	}
+
+	return rawBytes, payload
+}
+
+func isMiniMaxAuthError(res *http.Response, rawBytes []byte, st miniMaxStatus) bool {
+	combined := fmt.Sprintf("%s %s", st.msg, string(rawBytes))
+	authLike := authPattern.MatchString(combined)
+
+	return res.StatusCode == 401 || res.StatusCode == 403 || st.code == 1004 || authLike
+}
+
+func handleMiniMaxHTTPStatusError(res *http.Response, provider string, canFallback bool) (*QuotaResult, bool, bool) {
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		return nil, false, false
+	}
+
+	errStr := fmt.Sprintf("MiniMax usage endpoint error (%d)", res.StatusCode)
+	if (res.StatusCode == 404 || res.StatusCode == 405 || res.StatusCode >= 500) && canFallback {
+		return makeMiniMaxResult(provider, errStr, nil), true, true
+	}
+
+	return makeMiniMaxResult(provider, fmt.Sprintf("MiniMax connected. %s", errStr), nil), false, true
+}
+
+func checkMiniMaxErrors(res *http.Response, rawBytes []byte, payload map[string]any, provider string, canFallback bool) (*QuotaResult, bool, bool) {
+	st := extractMiniMaxBaseStatus(payload)
+	if isMiniMaxAuthError(res, rawBytes, st) {
+		return makeMiniMaxResult(provider, "MiniMax API key invalid or inactive. Use an active Token/Coding Plan key.", nil), false, true
+	}
+
+	if errRes, cont, matched := handleMiniMaxHTTPStatusError(res, provider, canFallback); matched {
+		return errRes, cont, true
+	}
+
+	if st.code != 0 {
+		msg := st.msg
+		if msg == "" {
+			msg = "Upstream quota API error"
+		}
+
+		return makeMiniMaxResult(provider, fmt.Sprintf("MiniMax connected. %s", msg), nil), false, true
+	}
+
+	return nil, false, false
+}
+
+func executeMiniMaxRequest(ctx context.Context, opts FetchOptions, apiKey, u string, canFallback bool, provider string) (*QuotaResult, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, false, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	res, err := doHTTP(opts.HTTPClient, req)
+	if err != nil {
+		return nil, false, err
+	}
+
+	defer func() {
+		if closeErr := res.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
+
+	rawBytes, payload := parseMiniMaxHTTPResponse(res)
+
+	if errResult, cont, matched := checkMiniMaxErrors(res, rawBytes, payload, provider, canFallback); matched {
+		return errResult, cont, nil
+	}
+
+	nowMs := time.Now().UnixMilli()
+	countMeansRemaining := strings.Contains(u, "/coding_plan/remains")
+	quotas := parseMiniMaxModelRemains(payload, countMeansRemaining, nowMs)
+
+	if len(quotas) == 0 {
+		return makeMiniMaxResult(provider, "MiniMax connected. No quota data was returned.", nil), false, nil
+	}
+
+	return makeMiniMaxResult(provider, "", quotas), false, nil
 }
 
 func formatMiniMaxQuotaName(model map[string]any) string {
-	rawName, _ := model["model_name"].(string)
-	if rawName == "" {
-		rawName, _ = model["modelName"].(string)
+	var rawName string
+	if val, ok := model["model_name"].(string); ok {
+		rawName = val
+	} else if val, ok := model["modelName"].(string); ok {
+		rawName = val
 	}
 
 	rawName = strings.TrimSpace(rawName)
@@ -181,15 +274,15 @@ func formatMiniMaxQuotaName(model map[string]any) string {
 	return titleCase(res)
 }
 
-func addMiniMaxQuota(quotas map[string]QuotaItem, key string, model map[string]any, totSnake, totCamel, cntSnake, cntCamel, pctSnake, pctCamel, remTSnake, remTCamel, endSnake, endCamel string, nowMs int64, countMeansRemaining bool) {
-	tot := toFiniteFloat(getVal(model, nil, totCamel, totSnake), math.NaN())
-	provPct := toFiniteFloat(getVal(model, nil, pctCamel, pctSnake), math.NaN())
+func addMiniMaxIntervalQuota(quotas map[string]QuotaItem, key string, model map[string]any, nowMs int64, countMeansRemaining bool) {
+	addMiniMaxQuota(quotas, key, model, "current_interval_total_count", "currentIntervalTotalCount", "current_interval_usage_count", "currentIntervalUsageCount", "current_interval_remaining_percent", "currentIntervalRemainingPercent", "remains_time", "remainsTime", "end_time", "endTime", nowMs, countMeansRemaining)
+}
 
-	if (math.IsNaN(tot) || tot <= 0) && math.IsNaN(provPct) {
-		return
-	}
+func addMiniMaxWeeklyQuota(quotas map[string]QuotaItem, key string, model map[string]any, nowMs int64, countMeansRemaining bool) {
+	addMiniMaxQuota(quotas, key, model, "current_weekly_total_count", "currentWeeklyTotalCount", "current_weekly_usage_count", "currentWeeklyUsageCount", "current_weekly_remaining_percent", "currentWeeklyRemainingPercent", "weekly_remains_time", "weeklyRemainsTime", "weekly_end_time", "weeklyEndTime", nowMs, countMeansRemaining)
+}
 
-	cnt := toFiniteFloat(getVal(model, nil, cntCamel, cntSnake), 0)
+func calculateMiniMaxEffValues(tot, provPct, cnt float64, countMeansRemaining bool) (float64, float64) {
 	effTot := tot
 	effCnt := cnt
 
@@ -202,10 +295,23 @@ func addMiniMaxQuota(quotas map[string]QuotaItem, key string, model map[string]a
 		}
 	}
 
+	return effTot, effCnt
+}
+
+func addMiniMaxQuota(quotas map[string]QuotaItem, key string, model map[string]any, totSnake, totCamel, cntSnake, cntCamel, pctSnake, pctCamel, remTSnake, remTCamel, endSnake, endCamel string, nowMs int64, countMeansRemaining bool) {
+	tot := toFiniteFloat(getVal(model, nil, totCamel, totSnake), math.NaN())
+	provPct := toFiniteFloat(getVal(model, nil, pctCamel, pctSnake), math.NaN())
+
+	if (math.IsNaN(tot) || tot <= 0) && math.IsNaN(provPct) {
+		return
+	}
+
+	cnt := toFiniteFloat(getVal(model, nil, cntCamel, cntSnake), 0)
+	effTot, effCnt := calculateMiniMaxEffValues(tot, provPct, cnt, countMeansRemaining)
+
 	safeTot := math.Max(0, effTot)
 
 	var used float64
-
 	if countMeansRemaining {
 		used = math.Max(0, safeTot-effCnt)
 	} else {
@@ -232,11 +338,14 @@ func addMiniMaxQuota(quotas map[string]QuotaItem, key string, model map[string]a
 	}
 
 	quotas[key] = QuotaItem{
+		ResetAt:             resetAt,
+		Recurring:           nil,
+		DisplayName:         "",
+		Unit:                "",
 		Used:                used,
 		Total:               safeTot,
 		Remaining:           rem,
 		RemainingPercentage: remPct,
-		ResetAt:             resetAt,
 		Unlimited:           false,
 	}
 }

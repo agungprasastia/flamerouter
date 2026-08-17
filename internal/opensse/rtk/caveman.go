@@ -21,6 +21,7 @@ const (
 	sharedNoDecor     = "No decorative emoji. No narrating tool calls (\"I will now search\", \"I used X to find Y\"). No status phrases (\"Sure!\", \"Of course!\", \"I'd be happy to\"). No causal arrow shorthand (\"A -> B -> fails\"). State the thing, the action, the reason. Then next step."
 )
 
+// CavemanPrompts maps caveman compression levels to prompt instructions.
 var CavemanPrompts = map[string]string{
 	CavemanLite: "Respond tersely. Keep grammar and full sentences but drop filler, hedging and pleasantries (just/really/basically/sure/of course/I'd be happy to). Pattern: state the thing, the action, the reason. Then next step. " +
 		sharedExamples + " " + sharedBoundaries + " " + sharedAutoClarity + " " + sharedPersistence + " " + sharedNoAbbrev + " " + sharedLang + " " + sharedNoSelf + " " + sharedNoDecor,

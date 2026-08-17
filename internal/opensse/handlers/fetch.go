@@ -14,32 +14,45 @@ import (
 	"time"
 )
 
-func Fetch(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
+// Fetch handles web fetch requests.
+func Fetch(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, _ executor.Executor, fb *fallback.Fallback) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
 		return err
 	}
 
-	rawURL, _ := m["url"].(string)
+	rawURL, _ := m["url"].(string) //nolint:errcheck // optional type assertion
 	if rawURL == "" {
 		jsonError(w, http.StatusBadRequest, "missing required field: url")
 		return nil
 	}
 
-	// Direct fetch when no model / provider is "fetch" / "jina" / "local"
-	modelStr, _ := m["model"].(string)
-	if modelStr == "" || strings.HasPrefix(modelStr, "local/") || strings.HasPrefix(modelStr, "fetch/") {
+	modelStr, _ := m["model"].(string) //nolint:errcheck // optional type assertion
+	if shouldDirectFetch(modelStr) {
 		return directFetch(ctx, w, rawURL, m)
 	}
 
+	return fetchViaProvider(ctx, w, rawURL, modelStr, m, st, fb)
+}
+
+func shouldDirectFetch(modelStr string) bool {
+	return modelStr == "" || strings.HasPrefix(modelStr, "local/") || strings.HasPrefix(modelStr, "fetch/")
+}
+
+func fetchViaProvider(ctx context.Context, w http.ResponseWriter, rawURL, modelStr string, m map[string]any, st *store.Store, fb *fallback.Fallback) error {
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
 	if errMsg != "" || conn == nil {
 		return directFetch(ctx, w, rawURL, m)
 	}
 
 	cred := mediaCredentials(conn)
-	payload, _ := json.Marshal(m)
+
+	payload, err := json.Marshal(m)
+	if err != nil {
+		return directFetch(ctx, w, rawURL, m)
+	}
+
 	ex := executor.GetExecutor(providerID)
 
 	res, err := ex.Execute(ctx, cred, modelName, payload, false)
@@ -51,51 +64,21 @@ func Fetch(ctx context.Context, w http.ResponseWriter, body []byte, st *store.St
 		fb.ClearError(conn.ID)
 	}
 
-	return writeResult(w, res, true)
+	return writeResult(w, res)
 }
 
-func directFetch(ctx context.Context, w http.ResponseWriter, rawURL string, opts map[string]any) error {
+func directFetch(ctx context.Context, w http.ResponseWriter, rawURL string, _ map[string]any) error {
 	if err := netutil.AssertPublicURL(rawURL); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("User-Agent", "FlameRouter/1.0")
-
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("too many redirects")
-			}
-			return nil
-		},
-	}
-
-	resp, err := client.Do(req)
+	body, ct, status, err := doFetchRequest(ctx, rawURL)
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return err
 	}
-	if resp == nil || resp.Body == nil {
-		jsonError(w, http.StatusBadGateway, "nil response from upstream")
-		return fmt.Errorf("nil response from upstream")
-	}
 
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
-	if err != nil {
-		return err
-	}
-
-	ct := resp.Header.Get("Content-Type")
-	// Prefer text extraction for HTML
 	text := string(body)
 	if strings.Contains(ct, "html") {
 		text = stripHTML(text)
@@ -103,17 +86,62 @@ func directFetch(ctx context.Context, w http.ResponseWriter, rawURL string, opts
 
 	out := map[string]any{
 		"url":         rawURL,
-		"status":      resp.StatusCode,
+		"status":      status,
 		"contentType": ct,
 		"content":     text,
 	}
-	j, _ := json.Marshal(out)
+
+	j, err := json.Marshal(out)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "failed to marshal response")
+		return err
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(j)
+	_, _ = w.Write(j) //nolint:errcheck // best effort write
 
 	return nil
+}
+
+func doFetchRequest(ctx context.Context, rawURL string) ([]byte, string, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, "", 0, err
+	}
+
+	req.Header.Set("User-Agent", "FlameRouter/1.0")
+
+	client := &http.Client{
+		Transport: nil,
+		Jar:       nil,
+		Timeout:   30 * time.Second,
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many redirects")
+			}
+
+			return nil
+		},
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", 0, err
+	}
+
+	if resp == nil || resp.Body == nil {
+		return nil, "", 0, fmt.Errorf("nil response from upstream")
+	}
+
+	defer resp.Body.Close() //nolint:errcheck // best-effort body close
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
+	if err != nil {
+		return nil, "", 0, err
+	}
+
+	return body, resp.Header.Get("Content-Type"), resp.StatusCode, nil
 }
 
 func stripHTML(s string) string {

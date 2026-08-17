@@ -7,16 +7,13 @@ import (
 	"testing"
 )
 
-// Critical backend paths must be registered (not 404).
-// Full 9router diff documented in .superpowers/sdd/full-parity-task-15-report.md.
-func TestRouteTable_CriticalPathsRegistered(t *testing.T) {
-	h, _ := testServer(t)
+type routeCase struct {
+	method string
+	path   string
+}
 
-	// method, path — expect not 404 (auth/method errors OK)
-	cases := []struct {
-		method string
-		path   string
-	}{
+func getCriticalAPIRoutes() []routeCase {
+	return []routeCase{
 		{"GET", "/api/health"},
 		{"POST", "/api/auth/login"},
 		{"GET", "/api/auth/status"},
@@ -37,22 +34,6 @@ func TestRouteTable_CriticalPathsRegistered(t *testing.T) {
 		{"POST", "/api/version/shutdown"},
 		{"GET", "/api/usage/stream"},
 		{"GET", "/api/usage/stats"},
-		{"GET", "/v1/models"},
-		{"GET", "/v1/models/info"},
-		{"POST", "/v1/chat/completions"},
-		{"POST", "/v1/messages"},
-		{"POST", "/v1/responses"},
-		{"POST", "/v1/embeddings"},
-		{"POST", "/v1/images/generations"},
-		{"POST", "/v1/audio/speech"},
-		{"POST", "/v1/audio/transcriptions"},
-		{"GET", "/v1/audio/voices"},
-		// POST /v1/videos/* needs Fallback in full New(); registration covered by build
-		{"POST", "/v1/search"},
-		{"POST", "/v1/web/fetch"},
-		{"POST", "/v1/messages/count_tokens"},
-		{"POST", "/v1/api/chat"},
-		{"GET", "/v1beta/models"},
 		{"POST", "/api/providers/connections"},
 		{"GET", "/api/providers/client"},
 		{"GET", "/api/proxy-pools"},
@@ -65,8 +46,6 @@ func TestRouteTable_CriticalPathsRegistered(t *testing.T) {
 		{"POST", "/api/translator/translate"},
 		{"GET", "/api/translator/load"},
 		{"POST", "/api/translator/save"},
-		// console-logs/stream is long-lived SSE — covered by TestTranslatorConsoleStream
-		// proxy-pools/{id}/test returns 404 for missing id — covered by TestProxyPoolTestNotFound
 		{"GET", "/api/providers"},
 		{"GET", "/api/models"},
 		{"GET", "/api/pricing"},
@@ -74,6 +53,34 @@ func TestRouteTable_CriticalPathsRegistered(t *testing.T) {
 		{"GET", "/api/locale"},
 		{"GET", "/api/init"},
 	}
+}
+
+func getCriticalV1Routes() []routeCase {
+	return []routeCase{
+		{"GET", "/v1/models"},
+		{"GET", "/v1/models/info"},
+		{"POST", "/v1/chat/completions"},
+		{"POST", "/v1/messages"},
+		{"POST", "/v1/responses"},
+		{"POST", "/v1/embeddings"},
+		{"POST", "/v1/images/generations"},
+		{"POST", "/v1/audio/speech"},
+		{"POST", "/v1/audio/transcriptions"},
+		{"GET", "/v1/audio/voices"},
+		{"POST", "/v1/search"},
+		{"POST", "/v1/web/fetch"},
+		{"POST", "/v1/messages/count_tokens"},
+		{"POST", "/v1/api/chat"},
+		{"GET", "/v1beta/models"},
+	}
+}
+
+// Critical backend paths must be registered (not 404).
+// Full 9router diff documented in .superpowers/sdd/full-parity-task-15-report.md.
+func TestRouteTable_CriticalPathsRegistered(t *testing.T) {
+	h, _ := testServer(t)
+
+	cases := append(getCriticalAPIRoutes(), getCriticalV1Routes()...)
 
 	for _, tc := range cases {
 		t.Run(tc.method+"_"+strings.ReplaceAll(tc.path, "/", "_"), func(t *testing.T) {

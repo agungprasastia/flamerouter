@@ -39,7 +39,9 @@ func TestTTSElevenLabsNoConnection(t *testing.T) {
 	}
 
 	var m map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &m)
+	if err := json.Unmarshal(rr.Body.Bytes(), &m); err != nil && rr.Code == http.StatusOK {
+		t.Fatal(err)
+	}
 
 	if rr.Code == http.StatusOK {
 		if _, ok := m["languages"]; !ok {

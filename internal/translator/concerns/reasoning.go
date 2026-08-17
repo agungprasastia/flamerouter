@@ -1,5 +1,6 @@
 package concerns
 
+// ReasoningDelta builds a streaming reasoning delta map.
 func ReasoningDelta(text string, withRole bool) map[string]any {
 	delta := map[string]any{
 		"type":              "reasoning_content",
@@ -12,6 +13,24 @@ func ReasoningDelta(text string, withRole bool) map[string]any {
 	return delta
 }
 
+func extractDetailsItemText(item any) string {
+	switch v := item.(type) {
+	case string:
+		return v
+	case map[string]any:
+		if t, ok := v["text"].(string); ok {
+			return t
+		}
+
+		if c, ok := v["content"].(string); ok {
+			return c
+		}
+	}
+
+	return ""
+}
+
+// ExtractReasoningText extracts reasoning content from a delta payload.
 func ExtractReasoningText(delta map[string]any) string {
 	if delta == nil {
 		return ""
@@ -27,18 +46,8 @@ func ExtractReasoningText(delta map[string]any) string {
 
 	if rd, ok := delta["reasoning_details"].([]any); ok {
 		var text string
-
 		for _, item := range rd {
-			switch v := item.(type) {
-			case string:
-				text += v
-			case map[string]any:
-				if t, ok := v["text"].(string); ok {
-					text += t
-				} else if c, ok := v["content"].(string); ok {
-					text += c
-				}
-			}
+			text += extractDetailsItemText(item)
 		}
 
 		return text
@@ -47,6 +56,7 @@ func ExtractReasoningText(delta map[string]any) string {
 	return ""
 }
 
+// HasReasoningIntent checks if reasoning is requested in the request body.
 func HasReasoningIntent(body map[string]any) bool {
 	if body == nil {
 		return false
@@ -63,6 +73,7 @@ func HasReasoningIntent(body map[string]any) bool {
 	return false
 }
 
+// ExtractThinkingConfig extracts thinking map configuration from request.
 func ExtractThinkingConfig(body map[string]any) map[string]any {
 	if body == nil {
 		return nil

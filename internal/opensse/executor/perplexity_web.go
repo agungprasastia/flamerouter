@@ -20,12 +20,18 @@ func init() {
 		Base: Base{
 			Provider: "perplexity-web",
 			BaseURL:  "https://www.perplexity.ai/rest/sse/perplexity_ask",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 	RegisterSpecialized("pplx-web", &PerplexityWebExecutor{
 		Base: Base{
 			Provider: "perplexity-web",
 			BaseURL:  "https://www.perplexity.ai/rest/sse/perplexity_ask",
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 		},
 	})
 }
@@ -502,7 +508,14 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 		}
 
 		if errMsg, _ := event["error_message"].(string); errMsg != "" {
-			out <- pplxExtractedChunk{errorMsg: errMsg, done: true}
+			out <- pplxExtractedChunk{
+				delta:       "",
+				answer:      "",
+				thinking:    "",
+				errorMsg:    errMsg,
+				backendUUID: "",
+				done:        true,
+			}
 			return
 		}
 
@@ -533,8 +546,12 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 													if qr, _ := qm["query"].(string); qr != "" && !seenThinking[qr] {
 														seenThinking[qr] = true
 														out <- pplxExtractedChunk{
+															delta:       "",
+															answer:      "",
 															thinking:    "Searching: " + qr,
+															errorMsg:    "",
 															backendUUID: backendUUID,
+															done:        false,
 														}
 													}
 												}
@@ -567,7 +584,10 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 								out <- pplxExtractedChunk{
 									delta:       delta,
 									answer:      fullAnswer,
+									thinking:    "",
+									errorMsg:    "",
 									backendUUID: backendUUID,
+									done:        false,
 								}
 							}
 						} else {
@@ -579,7 +599,10 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 								out <- pplxExtractedChunk{
 									delta:       delta,
 									answer:      fullAnswer,
+									thinking:    "",
+									errorMsg:    "",
 									backendUUID: backendUUID,
+									done:        false,
 								}
 							}
 						}
@@ -598,7 +621,10 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 					out <- pplxExtractedChunk{
 						delta:       delta,
 						answer:      fullAnswer,
+						thinking:    "",
+						errorMsg:    "",
 						backendUUID: backendUUID,
+						done:        false,
 					}
 				}
 			}
@@ -612,7 +638,14 @@ func readPplxEvents(r io.Reader, out chan<- pplxExtractedChunk) {
 			break
 		}
 	}
-	out <- pplxExtractedChunk{answer: fullAnswer, backendUUID: backendUUID, done: true}
+	out <- pplxExtractedChunk{
+		delta:       "",
+		answer:      fullAnswer,
+		thinking:    "",
+		errorMsg:    "",
+		backendUUID: backendUUID,
+		done:        true,
+	}
 }
 
 func wrapPplxStream(r io.ReadCloser, model, cid string, created int64, history []pplxHistoryItem, currentMsg string) io.ReadCloser {

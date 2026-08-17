@@ -18,31 +18,34 @@ type PxpipeSummary struct {
 // CompressWithPxpipe applies pxpipe if installed and format is claude. Fail-open.
 func CompressWithPxpipe(body map[string]any, enabled bool, format, model string, minChars int) (map[string]any, *PxpipeSummary) {
 	if !enabled {
-		return nil, &PxpipeSummary{Reason: "disabled"}
+		return nil, &PxpipeSummary{Reason: "disabled", OriginalChars: 0, ImageCount: 0, Applied: false}
 	}
 
 	if GlobalPxpipeTransform == nil {
-		return nil, &PxpipeSummary{Reason: "not_installed"}
+		return nil, &PxpipeSummary{Reason: "not_installed", OriginalChars: 0, ImageCount: 0, Applied: false}
 	}
 
 	if body == nil {
-		return nil, &PxpipeSummary{Reason: "missing_body"}
+		return nil, &PxpipeSummary{Reason: "missing_body", OriginalChars: 0, ImageCount: 0, Applied: false}
 	}
 
 	if format != "claude" {
-		return nil, &PxpipeSummary{Reason: "unsupported_format"}
+		return nil, &PxpipeSummary{Reason: "unsupported_format", OriginalChars: 0, ImageCount: 0, Applied: false}
 	}
 
 	if minChars <= 0 {
 		minChars = 25000
 	}
 
-	defer func() { recover() }()
+	defer func() {
+		//nolint:errcheck // recovery cleanup
+		_ = recover()
+	}()
 
 	out, ok := GlobalPxpipeTransform(body, model, minChars)
 	if !ok || out == nil {
-		return nil, &PxpipeSummary{Reason: "passthrough"}
+		return nil, &PxpipeSummary{Reason: "passthrough", OriginalChars: 0, ImageCount: 0, Applied: false}
 	}
 
-	return out, &PxpipeSummary{Applied: true, Reason: "applied"}
+	return out, &PxpipeSummary{Applied: true, Reason: "applied", OriginalChars: 0, ImageCount: 0}
 }

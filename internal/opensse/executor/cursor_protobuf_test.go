@@ -45,7 +45,7 @@ func TestGenerateCursorChecksum(t *testing.T) {
 }
 
 func TestKiroSessionManager(t *testing.T) {
-	m := &KiroSessionManager{sessions: make(map[string]string)}
+	m := NewKiroSessionManager()
 	if m.Get("c1") != "" {
 		t.Fatal("empty get")
 	}

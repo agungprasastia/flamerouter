@@ -1,3 +1,4 @@
+// Package qoder provides constants, cryptographic signing (COSY), and encoding routines for Qoder API integration.
 package qoder
 
 import (
@@ -23,11 +24,11 @@ func init() {
 	qoderS2C['='] = '$'
 }
 
-// QoderEncodeBody encodes raw body bytes using Qoder's custom base64-rearranged substitution.
+// EncodeBody encodes raw body bytes using Qoder's custom base64-rearranged substitution.
 // 1. Base64 encode standard
 // 2. Split into 3 parts at a = len/3: [tail: from len-a to end][mid: from a to len-a][head: from 0 to a]
 // 3. Map characters via custom alphabet table (replacing '=' with '$').
-func QoderEncodeBody(rawBody []byte) string {
+func EncodeBody(rawBody []byte) string {
 	std := base64.StdEncoding.EncodeToString(rawBody)
 
 	n := len(std)

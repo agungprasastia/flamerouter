@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"flamerouter/internal/provider"
+	"flamerouter/internal/store"
 	"net/http"
 	"strings"
 )
@@ -20,6 +21,24 @@ type connDTO struct {
 	ExpiresAt    string         `json:"expiresAt,omitempty"`
 	Priority     int            `json:"priority"`
 	IsActive     bool           `json:"isActive"`
+}
+
+func resolveConnectionName(c store.Connection, nodeNameMap map[string]string) string {
+	if c.Name != "" {
+		return c.Name
+	}
+
+	if nn, ok := nodeNameMap[c.Provider]; ok {
+		return nn
+	}
+
+	if c.ProviderSpecificData != nil {
+		if nn, ok := c.ProviderSpecificData["nodeName"].(string); ok && nn != "" {
+			return nn
+		}
+	}
+
+	return c.Provider
 }
 
 // GET /api/providers — list all connections (9router: {connections: [...]} secrets stripped).
@@ -48,25 +67,15 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	list := make([]map[string]any, 0, len(conns))
 
 	for _, c := range conns {
-		name := c.Name
-		if name == "" {
-			if nn, ok := nodeNameMap[c.Provider]; ok {
-				name = nn
-			} else if c.ProviderSpecificData != nil {
-				if nn, ok := c.ProviderSpecificData["nodeName"].(string); ok && nn != "" {
-					name = nn
-				}
-			}
-
-			if name == "" {
-				name = c.Provider
-			}
-		}
-
 		list = append(list, map[string]any{
-			"id": c.ID, "provider": c.Provider, "authType": c.AuthType, "name": name,
-			"priority": c.Priority, "isActive": c.IsActive, "baseUrl": c.BaseURL,
-			"testStatus": c.TestStatus, "lastError": c.LastError, "expiresAt": c.ExpiresAt,
+			"id": c.ID, "provider": c.Provider, "authType": c.AuthType,
+			"name":                 resolveConnectionName(c, nodeNameMap),
+			"priority":             c.Priority,
+			"isActive":             c.IsActive,
+			"baseUrl":              c.BaseURL,
+			"testStatus":           c.TestStatus,
+			"lastError":            c.LastError,
+			"expiresAt":            c.ExpiresAt,
 			"providerSpecificData": c.ProviderSpecificData,
 			// secrets omitted: apiKey, accessToken, refreshToken, idToken
 		})
@@ -118,38 +127,15 @@ func (s *Server) handleGetProvider(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]any{"connections": list, "provider": id})
 }
 
-// PUT /api/providers/{id} — update connection (toggle active, rename, reprioritize).
-func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeErr(w, http.StatusBadRequest, "id required")
-		return
-	}
+type updateProviderReq struct {
+	IsActive             *bool          `json:"isActive"`
+	Priority             *int           `json:"priority"`
+	ProviderSpecificData map[string]any `json:"providerSpecificData"`
+	Name                 string         `json:"name"`
+	BaseURL              string         `json:"baseUrl"`
+}
 
-	conn, err := s.st.GetConnection(id)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db")
-		return
-	}
-
-	if conn == nil {
-		writeErr(w, http.StatusNotFound, "connection not found")
-		return
-	}
-
-	var req struct {
-		IsActive             *bool          `json:"isActive"`
-		Priority             *int           `json:"priority"`
-		ProviderSpecificData map[string]any `json:"providerSpecificData"`
-		Name                 string         `json:"name"`
-		BaseURL              string         `json:"baseUrl"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-
+func (req *updateProviderReq) applyDefaults(conn *store.Connection) (bool, string, int, string) {
 	isActive := conn.IsActive
 	if req.IsActive != nil {
 		isActive = *req.IsActive
@@ -170,14 +156,46 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		baseURL = conn.BaseURL
 	}
 
+	return isActive, name, priority, baseURL
+}
+
+// PUT /api/providers/{id} — update connection (toggle active, rename, reprioritize).
+func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "id required")
+		return
+	}
+
+	conn, err := s.st.GetConnection(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+
+	if conn == nil {
+		writeErr(w, http.StatusNotFound, "connection not found")
+		return
+	}
+
+	var req updateProviderReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	isActive, name, priority, baseURL := req.applyDefaults(conn)
+
 	if err := s.st.UpdateConnection(id, isActive, name, priority, baseURL); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
 
 	if req.ProviderSpecificData != nil {
-		psdJSON, _ := json.Marshal(req.ProviderSpecificData)
-		_ = s.st.UpdateConnectionPSD(id, string(psdJSON))
+		if psdJSON, err := json.Marshal(req.ProviderSpecificData); err == nil {
+			//nolint:errcheck // best-effort update
+			_ = s.st.UpdateConnectionPSD(id, string(psdJSON))
+		}
 	}
 
 	writeJSONOK(w, map[string]any{"ok": true})
@@ -261,42 +279,32 @@ func (s *Server) handleCreateProviderConnection(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
 }
 
-// POST /api/providers — create connection from 9router dashboard body {provider, apiKey, name, ...}.
-func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Provider  string `json:"provider"`
-		APIKey    string `json:"apiKey"`
-		APIKey2   string `json:"api_key"`
-		Name      string `json:"name"`
-		Display   string `json:"displayName"`
-		AuthType  string `json:"authType"`
-		AuthType2 string `json:"auth_type"`
-		BaseURL   string `json:"baseUrl"`
-		Base2     string `json:"base_url"`
-	}
+type createProviderReq struct {
+	Provider  string `json:"provider"`
+	APIKey    string `json:"apiKey"`
+	APIKey2   string `json:"api_key"`
+	Name      string `json:"name"`
+	Display   string `json:"displayName"`
+	AuthType  string `json:"authType"`
+	AuthType2 string `json:"auth_type"`
+	BaseURL   string `json:"baseUrl"`
+	Base2     string `json:"base_url"`
+}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json")
-		return
-	}
+func (req *createProviderReq) resolveParams() (providerID, apiKey, base, authType, name string) {
+	providerID = strings.TrimSpace(req.Provider)
 
-	providerID := strings.TrimSpace(req.Provider)
-	if providerID == "" {
-		writeErr(w, http.StatusBadRequest, "provider required")
-		return
-	}
-
-	apiKey := req.APIKey
+	apiKey = req.APIKey
 	if apiKey == "" {
 		apiKey = req.APIKey2
 	}
 
-	base := req.BaseURL
+	base = req.BaseURL
 	if base == "" {
 		base = req.Base2
 	}
 
-	authType := req.AuthType
+	authType = req.AuthType
 	if authType == "" {
 		authType = req.AuthType2
 	}
@@ -305,7 +313,7 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 		authType = "api_key"
 	}
 
-	name := req.Name
+	name = req.Name
 	if name == "" {
 		name = req.Display
 	}
@@ -318,6 +326,23 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 
 	if name == "" {
 		name = providerID
+	}
+
+	return providerID, apiKey, base, authType, name
+}
+
+// POST /api/providers — create connection from 9router dashboard body {provider, apiKey, name, ...}.
+func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
+	var req createProviderReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	providerID, apiKey, base, authType, name := req.resolveParams()
+	if providerID == "" {
+		writeErr(w, http.StatusBadRequest, "provider required")
+		return
 	}
 
 	id, err := s.st.CreateConnection(providerID, authType, name, apiKey, base)
@@ -373,8 +398,8 @@ func (s *Server) handleProviderTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if conn == nil {
-		conns, _ := s.st.ListActiveByProvider(id)
-		if len(conns) == 0 {
+		conns, listErr := s.st.ListActiveByProvider(id)
+		if listErr != nil || len(conns) == 0 {
 			writeErr(w, http.StatusNotFound, "Connection not found")
 			return
 		}
@@ -409,9 +434,9 @@ func (s *Server) handleProviderValidate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	providerID, _ := body["provider"].(string)
+	providerID, _ := body["provider"].(string) //nolint:errcheck // safe type assertion
 	if providerID == "" {
-		providerID, _ = body["id"].(string)
+		providerID, _ = body["id"].(string) //nolint:errcheck // safe type assertion
 	}
 
 	if providerID == "" {

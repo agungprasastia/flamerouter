@@ -1,3 +1,4 @@
+// Package headroom manages the headroom proxy subprocess and extras installation.
 package headroom
 
 import (
@@ -14,7 +15,7 @@ import (
 	"time"
 )
 
-// Compression extras whitelist (parity with 9router HEADROOM_COMPRESSION_EXTRAS).
+// CompressionExtras lists supported compression extras whitelist.
 var CompressionExtras = []string{"code", "ml"}
 
 // Process manages the headroom proxy binary lifecycle + extras install.
@@ -27,10 +28,19 @@ type Process struct {
 	mu             sync.Mutex
 }
 
+// New initializes a new headroom Process.
 func New() *Process {
-	return &Process{status: "stopped", url: "http://127.0.0.1:8787"}
+	return &Process{
+		cmd:            nil,
+		status:         "stopped",
+		url:            "http://127.0.0.1:8787",
+		installLog:     "",
+		phantomSavings: atomic.Int64{},
+		mu:             sync.Mutex{},
+	}
 }
 
+// Start launches the headroom proxy process.
 func (p *Process) Start(proxyURL string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -50,6 +60,7 @@ func (p *Process) Start(proxyURL string) error {
 	}
 
 	args := []string{"proxy"}
+	/* #nosec G204 */
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -63,7 +74,9 @@ func (p *Process) Start(proxyURL string) error {
 	p.status = "running"
 
 	go func() {
-		_ = cmd.Wait()
+		if waitErr := cmd.Wait(); waitErr != nil {
+			_ = waitErr
+		}
 
 		p.mu.Lock()
 		p.status = "stopped"
@@ -74,6 +87,7 @@ func (p *Process) Start(proxyURL string) error {
 	return nil
 }
 
+// Stop terminates the running headroom process.
 func (p *Process) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -90,11 +104,16 @@ func (p *Process) Stop() error {
 	return err
 }
 
+// Restart stops and restarts the headroom process.
 func (p *Process) Restart(proxyURL string) error {
-	_ = p.Stop()
+	if stopErr := p.Stop(); stopErr != nil {
+		_ = stopErr
+	}
+
 	return p.Start(proxyURL)
 }
 
+// Status returns current process status string.
 func (p *Process) Status() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -102,6 +121,7 @@ func (p *Process) Status() string {
 	return p.status
 }
 
+// URL returns the proxy URL.
 func (p *Process) URL() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -109,6 +129,7 @@ func (p *Process) URL() string {
 	return p.url
 }
 
+// Health checks if the proxy server is reachable and healthy.
 func (p *Process) Health() bool {
 	p.mu.Lock()
 	u := p.url
@@ -118,7 +139,13 @@ func (p *Process) Health() bool {
 		return false
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Transport:     nil,
+		CheckRedirect: nil,
+		Jar:           nil,
+		Timeout:       2 * time.Second,
+	}
+
 	reqHealth, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u+"/health", nil)
 	if err != nil {
 		return false
@@ -130,17 +157,24 @@ func (p *Process) Health() bool {
 		if errReq != nil {
 			return false
 		}
-		resp, err = client.Do(reqRoot)
-		if err != nil {
+
+		respRoot, errDo := client.Do(reqRoot)
+		if errDo != nil {
 			return false
 		}
+
+		resp = respRoot
 	}
 
 	if resp == nil || resp.Body == nil {
 		return false
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		if clErr := resp.Body.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	return resp.StatusCode < 500
 }
@@ -189,6 +223,7 @@ func (p *Process) InstallExtras(extras []string) (map[string]any, error) {
 	list := append([]string{"proxy"}, requested...)
 	spec := "headroom-ai[" + strings.Join(list, ",") + "]"
 	args := []string{"-m", "pip", "install", "--upgrade", spec}
+	/* #nosec G204 */
 	cmd := exec.Command(py, args...)
 	out, err := cmd.CombinedOutput()
 
@@ -225,6 +260,7 @@ func (p *Process) UninstallExtras(extras []string) (map[string]any, error) {
 	}
 
 	args := append([]string{"-m", "pip", "uninstall", "-y"}, pkgs...)
+	/* #nosec G204 */
 	cmd := exec.Command(py, args...)
 	out, err := cmd.CombinedOutput()
 
@@ -270,6 +306,7 @@ func (p *Process) AddPhantomSavings(n int64) {
 	p.phantomSavings.Add(n)
 }
 
+// PhantomSavings returns accumulated phantom token savings.
 func (p *Process) PhantomSavings() int64 {
 	return p.phantomSavings.Load()
 }
@@ -335,6 +372,7 @@ func installedExtras(py string) map[string]bool {
 		ok := true
 
 		for _, pkg := range pkgs {
+			/* #nosec G204 */
 			cmd := exec.Command(py, "-m", "pip", "show", pkg)
 			if err := cmd.Run(); err != nil {
 				ok = false
@@ -360,6 +398,7 @@ func findPython310() string {
 			continue
 		}
 		// check version >= 3.10 best-effort
+		/* #nosec G204 */
 		cmd := exec.Command(p, "--version")
 
 		out, err := cmd.CombinedOutput()

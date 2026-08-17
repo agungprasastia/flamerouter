@@ -23,6 +23,7 @@ type KimchiResolver struct {
 	Client *http.Client
 }
 
+// TTL returns cache TTL for Kimchi models.
 func (r *KimchiResolver) TTL() time.Duration {
 	return kimchiCacheTTL
 }
@@ -84,13 +85,22 @@ func (r *KimchiResolver) fetchRaw(ctx context.Context, token, endpoint string) (
 	if err != nil {
 		return nil, 0, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return nil, 0, fmt.Errorf("nil response from upstream")
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		//nolint:errcheck // best effort close
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, resp.StatusCode, fmt.Errorf("read kimchi error response: %w", err)
+		}
+
 		return nil, resp.StatusCode, fmt.Errorf("kimchi metadata returned status %d: %s", resp.StatusCode, string(b))
 	}
 
@@ -102,7 +112,7 @@ func (r *KimchiResolver) fetchRaw(ctx context.Context, token, endpoint string) (
 	return parsed.Models, resp.StatusCode, nil
 }
 
-func (r *KimchiResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
+func extractKimchiTokenAndEndpoint(conn *store.Connection) (string, string) {
 	token := conn.AccessToken
 	if token == "" {
 		token = conn.APIKey
@@ -112,10 +122,6 @@ func (r *KimchiResolver) Resolve(ctx context.Context, conn *store.Connection) ([
 		if k, ok := conn.ProviderSpecificData["apiKey"].(string); ok && k != "" {
 			token = k
 		}
-	}
-
-	if token == "" {
-		return nil, nil
 	}
 
 	endpoint := kimchiDefaultAPI
@@ -130,94 +136,110 @@ func (r *KimchiResolver) Resolve(ctx context.Context, conn *store.Connection) ([
 		endpoint = conn.BaseURL
 	}
 
+	return token, endpoint
+}
+
+func extractKimchiIDAndName(item kimchiRawItem) (string, string) {
+	id := strings.TrimSpace(item.Slug)
+	if id == "" {
+		id = strings.TrimSpace(item.ID)
+	}
+
+	if id == "" {
+		id = strings.TrimSpace(item.Model)
+	}
+
+	if id == "" {
+		id = strings.TrimSpace(item.Name)
+	}
+
+	name := strings.TrimSpace(item.DisplayName)
+	if name == "" {
+		name = strings.TrimSpace(item.Name)
+	}
+
+	if name == "" {
+		name = id
+	}
+
+	return id, name
+}
+
+func parseKimchiItem(item kimchiRawItem) DynamicModel {
+	id, name := extractKimchiIDAndName(item)
+	ctxLen, maxOut := item.ContextLength, item.MaxOutputTokens
+
+	if item.Limits != nil {
+		if item.Limits.ContextWindow > 0 {
+			ctxLen = item.Limits.ContextWindow
+		}
+
+		if item.Limits.MaxOutputTokens > 0 {
+			maxOut = item.Limits.MaxOutputTokens
+		}
+	}
+
+	isVL := false
+
+	for _, m := range item.InputModalities {
+		if m == "image" {
+			isVL = true
+			break
+		}
+	}
+
+	caps := map[string]any{"vision": isVL, "reasoning": item.Reasoning}
+	if ctxLen > 0 {
+		caps["contextWindow"] = ctxLen
+	}
+
+	if maxOut > 0 {
+		caps["maxOutput"] = maxOut
+	}
+
+	if item.Provider != "" {
+		caps["upstreamProvider"] = item.Provider
+	}
+
+	return DynamicModel{
+		ID:              id,
+		Name:            name,
+		ContextLength:   ctxLen,
+		MaxOutputTokens: maxOut,
+		IsReasoning:     item.Reasoning,
+		IsVL:            isVL,
+		Capabilities:    caps,
+		RawConfig:       nil,
+		UpstreamModelID: "",
+		Description:     "",
+		RateMultiplier:  0,
+	}
+}
+
+// Resolve retrieves active dynamic models from Kimchi API.
+func (r *KimchiResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
+	token, endpoint := extractKimchiTokenAndEndpoint(conn)
+	if token == "" {
+		return nil, nil
+	}
+
 	raw, _, err := r.fetchRaw(ctx, token, endpoint)
 	if err != nil {
 		return nil, err
 	}
 
 	seen := make(map[string]bool)
-
-	var out []DynamicModel
+	out := make([]DynamicModel, 0, len(raw))
 
 	for _, item := range raw {
-		id := strings.TrimSpace(item.Slug)
-		if id == "" {
-			id = strings.TrimSpace(item.ID)
-		}
-
-		if id == "" {
-			id = strings.TrimSpace(item.Model)
-		}
-
-		if id == "" {
-			id = strings.TrimSpace(item.Name)
-		}
-
-		if id == "" || seen[id] {
+		model := parseKimchiItem(item)
+		if model.ID == "" || seen[model.ID] {
 			continue
 		}
 
-		seen[id] = true
+		seen[model.ID] = true
 
-		name := strings.TrimSpace(item.DisplayName)
-		if name == "" {
-			name = strings.TrimSpace(item.Name)
-		}
-
-		if name == "" {
-			name = id
-		}
-
-		ctxLen := 0
-		maxOut := 0
-
-		if item.Limits != nil {
-			ctxLen = item.Limits.ContextWindow
-			maxOut = item.Limits.MaxOutputTokens
-		}
-
-		if ctxLen == 0 {
-			ctxLen = item.ContextLength
-		}
-
-		if maxOut == 0 {
-			maxOut = item.MaxOutputTokens
-		}
-
-		isVL := false
-
-		for _, m := range item.InputModalities {
-			if m == "image" {
-				isVL = true
-				break
-			}
-		}
-
-		caps := map[string]any{
-			"vision":    isVL,
-			"reasoning": item.Reasoning,
-		}
-		if ctxLen > 0 {
-			caps["contextWindow"] = ctxLen
-		}
-
-		if maxOut > 0 {
-			caps["maxOutput"] = maxOut
-		}
-
-		if item.Provider != "" {
-			caps["upstreamProvider"] = item.Provider
-		}
-
-		out = append(out, DynamicModel{
-			ID:              id,
-			Name:            name,
-			ContextLength:   ctxLen,
-			MaxOutputTokens: maxOut,
-			IsReasoning:     item.Reasoning,
-			IsVL:            isVL,
-			Capabilities:    caps,
-		})
+		out = append(out, model)
 	}
 
 	return out, nil

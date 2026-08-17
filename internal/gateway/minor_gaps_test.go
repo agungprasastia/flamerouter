@@ -14,7 +14,11 @@ import (
 func TestTranslatorLoadSave(t *testing.T) {
 	h, _ := testServer(t)
 
-	body, _ := json.Marshal(map[string]any{"file": "1_req_client.json", "content": `{"ok":true}`})
+	body, err := json.Marshal(map[string]any{"file": "1_req_client.json", "content": `{"ok":true}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	req := httptest.NewRequest(http.MethodPost, "/api/translator/save", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -32,7 +36,9 @@ func TestTranslatorLoadSave(t *testing.T) {
 	}
 
 	var out map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
 
 	if out["content"] != `{"ok":true}` {
 		t.Fatalf("content=%v", out["content"])
@@ -88,7 +94,9 @@ func TestListProvidersShape(t *testing.T) {
 	}
 
 	var out map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, ok := out["connections"]; !ok {
 		t.Fatalf("want connections key: %v", out)

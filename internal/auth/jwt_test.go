@@ -25,9 +25,13 @@ func TestJWT_GenerateAndValidate(t *testing.T) {
 
 func TestJWT_ExpiredToken(t *testing.T) {
 	mgr := NewJWTManager("test-secret-key")
-	token, _ := mgr.Generate(map[string]any{"sub": "admin"}, -time.Hour)
 
-	_, err := mgr.Validate(token)
+	token, err := mgr.Generate(map[string]any{"sub": "admin"}, -time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate expired token: %v", err)
+	}
+
+	_, err = mgr.Validate(token)
 	if err == nil {
 		t.Fatal("expected error for expired token")
 	}
@@ -35,10 +39,15 @@ func TestJWT_ExpiredToken(t *testing.T) {
 
 func TestJWT_InvalidSignature(t *testing.T) {
 	mgr := NewJWTManager("test-secret-key")
-	token, _ := mgr.Generate(map[string]any{"sub": "admin"}, time.Hour)
+
+	token, err := mgr.Generate(map[string]any{"sub": "admin"}, time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
 	token = token[:len(token)-5] + "XXXXX"
 
-	_, err := mgr.Validate(token)
+	_, err = mgr.Validate(token)
 	if err == nil {
 		t.Fatal("expected error for invalid signature")
 	}

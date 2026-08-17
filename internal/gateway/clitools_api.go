@@ -22,6 +22,7 @@ func (s *Server) handleCLIToolSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m := s.cliTools()
+
 	switch r.Method {
 	case http.MethodGet:
 		settings, err := m.GetSettings(toolID)
@@ -56,6 +57,6 @@ func (s *Server) handleCLIToolSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/cli-tools/all-statuses.
-func (s *Server) handleAllCLIStatuses(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAllCLIStatuses(w http.ResponseWriter, _ *http.Request) {
 	writeJSONOK(w, s.cliTools().AllStatuses())
 }

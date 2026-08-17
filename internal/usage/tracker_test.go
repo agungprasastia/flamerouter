@@ -15,13 +15,28 @@ func TestTracker_PersistsUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer st.Close()
+	defer func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	}()
 
 	hub := NewStreamHub()
 	tr := NewTracker(st, hub)
 	tr.Track(Record{
-		Provider: "openai", Model: "gpt-4o", ConnectionID: "c1",
-		PromptTokens: 10, CompletionTokens: 5, StatusCode: 200,
+		Provider:         "openai",
+		Model:            "gpt-4o",
+		ConnectionID:     "c1",
+		PromptTokens:     10,
+		CompletionTokens: 5,
+		StatusCode:       200,
+		RequestBody:      "",
+		Client:           "",
+		SourceFormat:     "",
+		TargetFormat:     "",
+		ErrorText:        "",
+		ResponsePreview:  "",
+		DurationMs:       0,
 	})
 	// allow async loop
 	deadline := time.Now().Add(2 * time.Second)
@@ -35,6 +50,7 @@ func TestTracker_PersistsUsage(t *testing.T) {
 
 		if len(rows) > 0 {
 			tr.Close()
+
 			return
 		}
 

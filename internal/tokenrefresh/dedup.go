@@ -1,3 +1,4 @@
+// Package tokenrefresh provides token refresh management, deduplication, and caching.
 package tokenrefresh
 
 import (
@@ -6,6 +7,7 @@ import (
 	"time"
 )
 
+// DefaultRefreshResultTTL is the default cache expiration for refreshed tokens.
 const DefaultRefreshResultTTL = 10 * time.Second
 
 type call struct {
@@ -16,8 +18,8 @@ type call struct {
 
 type cacheEntry struct {
 	result    *RefreshResult
-	expiresAt time.Time
 	call      *call
+	expiresAt time.Time
 }
 
 // DedupGroup handles in-flight deduplication and short-lived caching for token refreshes.
@@ -38,11 +40,12 @@ func NewDedupGroup(ttl time.Duration) *DedupGroup {
 		cache:   make(map[string]*cacheEntry),
 		ttl:     ttl,
 		timeNow: time.Now,
+		mu:      sync.Mutex{},
 	}
 }
 
 // Do executes or reuses an in-flight refresh or cached result for the given key.
-func (g *DedupGroup) Do(ctx context.Context, key string, fn func() (*RefreshResult, error)) (*RefreshResult, error) {
+func (g *DedupGroup) Do(_ context.Context, key string, fn func() (*RefreshResult, error)) (*RefreshResult, error) {
 	if key == "" {
 		return fn()
 	}
@@ -73,7 +76,9 @@ func (g *DedupGroup) Do(ctx context.Context, key string, fn func() (*RefreshResu
 	c := new(call)
 	c.wg.Add(1)
 	g.cache[key] = &cacheEntry{
-		call: c,
+		result:    nil,
+		call:      c,
+		expiresAt: time.Time{},
 	}
 	g.mu.Unlock()
 
@@ -82,19 +87,17 @@ func (g *DedupGroup) Do(ctx context.Context, key string, fn func() (*RefreshResu
 	g.mu.Lock()
 	c.val = res
 	c.err = err
+	c.wg.Done()
 
 	if err == nil && res != nil && res.Error == "" {
-		// Cache success result
 		g.cache[key] = &cacheEntry{
 			result:    res,
+			call:      nil,
 			expiresAt: g.timeNow().Add(g.ttl),
 		}
 	} else {
-		// Do not cache errors
 		delete(g.cache, key)
 	}
-
-	c.wg.Done()
 	g.mu.Unlock()
 
 	return res, err

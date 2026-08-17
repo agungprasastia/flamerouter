@@ -8,10 +8,27 @@ import (
 )
 
 func init() {
-	RegisterSpecialized("ollama-local", &OllamaLocalExecutor{Base: Base{Provider: "ollama-local"}})
-	RegisterSpecialized("ollama", &OllamaLocalExecutor{Base: Base{Provider: "ollama"}})
+	RegisterSpecialized("ollama-local", &OllamaLocalExecutor{
+		Base: Base{
+			Provider: "ollama-local",
+			Client:   nil,
+			Headers:  nil,
+			BaseURL:  "",
+			BaseURLs: nil,
+		},
+	})
+	RegisterSpecialized("ollama", &OllamaLocalExecutor{
+		Base: Base{
+			Provider: "ollama",
+			Client:   nil,
+			Headers:  nil,
+			BaseURL:  "",
+			BaseURLs: nil,
+		},
+	})
 }
 
+// OllamaLocalExecutor executes requests against a local or remote Ollama server.
 type OllamaLocalExecutor struct{ Base }
 
 func resolveOllamaHost(cred Credentials) string {
@@ -26,6 +43,7 @@ func resolveOllamaHost(cred Credentials) string {
 	return "http://127.0.0.1:11434"
 }
 
+// Execute dispatches the request to Ollama /api/chat.
 func (e *OllamaLocalExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {

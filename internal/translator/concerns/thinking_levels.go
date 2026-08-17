@@ -78,7 +78,7 @@ func stripColonThinking(model string) (string, bool) {
 	return base, false
 }
 
-func resolveThinkingCfg(fromSuffix bool, body map[string]any, providerThinking map[string]any) map[string]any {
+func resolveThinkingCfg(fromSuffix bool, _ map[string]any, providerThinking map[string]any) map[string]any {
 	if fromSuffix {
 		return map[string]any{"mode": "budget", "budget": defaultThinkingBudget}
 	}
@@ -87,8 +87,8 @@ func resolveThinkingCfg(fromSuffix bool, body map[string]any, providerThinking m
 		return nil
 	}
 
-	mode, _ := providerThinking["mode"].(string)
-	if mode == "" || mode == "auto" {
+	mode, ok := providerThinking["mode"].(string)
+	if !ok || mode == "" || mode == "auto" {
 		return nil
 	}
 
@@ -108,45 +108,49 @@ func resolveThinkingCfg(fromSuffix bool, body map[string]any, providerThinking m
 	}
 }
 
+func injectBudgetThinking(body map[string]any, cfg map[string]any) {
+	if body["thinking"] != nil {
+		return
+	}
+
+	budget := defaultThinkingBudget
+	val := cfg["budget"]
+
+	switch b := val.(type) {
+	case int:
+		if b > 0 {
+			budget = b
+		}
+	case float64:
+		if b > 0 {
+			budget = int(b)
+		}
+	}
+
+	body["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
+}
+
 // injectProviderThinking matches 9router chatCore soft inject:
 // on → body.thinking enabled; off → body.thinking disabled; none/effort → body.reasoning_effort when unset.
 // Per-field guards: on/off only if !body.thinking; effort only if !body.reasoning_effort.
 func injectProviderThinking(body map[string]any, cfg map[string]any) {
-	mode, _ := cfg["mode"].(string)
+	mode, ok := cfg["mode"].(string)
+	if !ok {
+		return
+	}
+
 	switch mode {
 	case "budget":
-		if body["thinking"] != nil {
-			return
-		}
-
-		budget := defaultThinkingBudget
-
-		switch b := cfg["budget"].(type) {
-		case int:
-			if b > 0 {
-				budget = b
-			}
-		case float64:
-			if b > 0 {
-				budget = int(b)
-			}
-		}
-
-		body["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
+		injectBudgetThinking(body, cfg)
 	case "off":
-		if body["thinking"] != nil {
-			return
+		if body["thinking"] == nil {
+			body["thinking"] = map[string]any{"type": "disabled"}
 		}
-
-		body["thinking"] = map[string]any{"type": "disabled"}
 	case "level":
-		if body["reasoning_effort"] != nil {
-			return
-		}
-
-		level, _ := cfg["level"].(string)
-		if level != "" {
-			body["reasoning_effort"] = level
+		if body["reasoning_effort"] == nil {
+			if level, ok := cfg["level"].(string); ok && level != "" {
+				body["reasoning_effort"] = level
+			}
 		}
 	}
 }

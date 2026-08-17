@@ -12,7 +12,10 @@ func init() {
 	RegisterSpecialized("antigravity", &AntigravityExecutor{
 		Base: Base{
 			Provider: "antigravity",
+			Client:   nil,
+			Headers:  nil,
 			BaseURL:  "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent",
+			BaseURLs: nil,
 		},
 	})
 }
@@ -22,6 +25,7 @@ var antigravityBlacklist = []string{
 	"enable_thinking", "thinking_budget", "thinkingConfig",
 }
 
+// AntigravityExecutor executes Cloud Code / Antigravity Gemini requests.
 type AntigravityExecutor struct {
 	Base
 }
@@ -32,8 +36,69 @@ func (e *AntigravityExecutor) stripBlacklisted(obj map[string]any) {
 	}
 }
 
+func cleanSingleDecl(dRaw any, isCamel bool) {
+	d, okMap := dRaw.(map[string]any)
+	if !okMap {
+		return
+	}
+
+	if params, okP := d["parameters"].(map[string]any); okP {
+		d["parameters"] = formats.CleanJSONSchemaForAntigravity(params)
+	}
+
+	if isCamel {
+		if name, okN := d["name"].(string); okN {
+			d["name"] = sanitizeFunctionName(name)
+		}
+	}
+}
+
+func cleanFunctionDeclarations(t map[string]any) {
+	if decls, ok := t["functionDeclarations"].([]any); ok {
+		for _, dRaw := range decls {
+			cleanSingleDecl(dRaw, true)
+		}
+	}
+
+	if decls, ok := t["function_declarations"].([]any); ok {
+		for _, dRaw := range decls {
+			cleanSingleDecl(dRaw, false)
+		}
+	}
+}
+
+func cleanAntigravityTools(request map[string]any) {
+	tools, ok := request["tools"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, tRaw := range tools {
+		if t, okMap := tRaw.(map[string]any); okMap {
+			cleanFunctionDeclarations(t)
+		}
+	}
+}
+
+func resolveAntigravityProjectID(body map[string]any, cred Credentials) string {
+	if p, ok := body["project"].(string); ok && p != "" {
+		return p
+	}
+
+	if cred.ProjectID != "" {
+		return cred.ProjectID
+	}
+
+	if cred.ProviderSpecificData != nil {
+		if pid, ok := cred.ProviderSpecificData["projectId"].(string); ok && pid != "" {
+			return pid
+		}
+	}
+
+	return formats.GenerateProjectID()
+}
+
 func (e *AntigravityExecutor) transform(model string, body map[string]any, cred Credentials) map[string]any {
-	// Ensure Cloud Code envelope
 	var request map[string]any
 	if req, ok := body["request"].(map[string]any); ok {
 		request = req
@@ -43,61 +108,9 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 
 	e.stripBlacklisted(request)
 	e.stripBlacklisted(body)
+	cleanAntigravityTools(request)
 
-	// Clean tool schemas
-	if tools, ok := request["tools"].([]any); ok {
-		for _, tRaw := range tools {
-			t, ok := tRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-			// functionDeclarations
-			if decls, ok := t["functionDeclarations"].([]any); ok {
-				for _, dRaw := range decls {
-					d, ok := dRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					if params, ok := d["parameters"].(map[string]any); ok {
-						d["parameters"] = formats.CleanJSONSchemaForAntigravity(params)
-					}
-
-					if name, ok := d["name"].(string); ok {
-						d["name"] = sanitizeFunctionName(name)
-					}
-				}
-			}
-
-			if decls, ok := t["function_declarations"].([]any); ok {
-				for _, dRaw := range decls {
-					d, ok := dRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					if params, ok := d["parameters"].(map[string]any); ok {
-						d["parameters"] = formats.CleanJSONSchemaForAntigravity(params)
-					}
-				}
-			}
-		}
-	}
-
-	project := ""
-	if p, ok := body["project"].(string); ok && p != "" {
-		project = p
-	} else if cred.ProjectID != "" {
-		project = cred.ProjectID
-	} else if cred.ProviderSpecificData != nil {
-		if pid, ok := cred.ProviderSpecificData["projectId"].(string); ok && pid != "" {
-			project = pid
-		}
-	}
-
-	if project == "" {
-		project = formats.GenerateProjectId()
-	}
+	project := resolveAntigravityProjectID(body, cred)
 
 	out := map[string]any{
 		"project":     project,
@@ -106,13 +119,31 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 		"requestType": "agent",
 		"request":     request,
 	}
+
 	if rid, ok := body["requestId"].(string); ok && rid != "" {
 		out["requestId"] = rid
 	} else {
-		out["requestId"] = formats.GenerateRequestId()
+		out["requestId"] = formats.GenerateRequestID()
 	}
 
 	return out
+}
+
+func isSafeIdentChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+		r == '_' || r == '.' || r == ':' || r == '-'
+}
+
+func sanitizeIdentRune(r rune, isFirst bool) rune {
+	if !isSafeIdentChar(r) {
+		return '_'
+	}
+
+	if isFirst && r >= '0' && r <= '9' {
+		return '_'
+	}
+
+	return r
 }
 
 func sanitizeFunctionName(name string) string {
@@ -123,17 +154,7 @@ func sanitizeFunctionName(name string) string {
 	var b strings.Builder
 
 	for i, r := range name {
-		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
-			r == '_' || r == '.' || r == ':' || r == '-'
-		if ok {
-			if i == 0 && r >= '0' && r <= '9' {
-				b.WriteByte('_')
-			}
-
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('_')
-		}
+		b.WriteRune(sanitizeIdentRune(r, i == 0))
 	}
 
 	s := b.String()
@@ -148,6 +169,7 @@ func sanitizeFunctionName(name string) string {
 	return s
 }
 
+// Execute executes Antigravity requests.
 func (e *AntigravityExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {

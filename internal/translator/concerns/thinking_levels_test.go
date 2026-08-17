@@ -22,7 +22,11 @@ func TestApplyThinkingLevel_ThinkingSuffix(t *testing.T) {
 		t.Fatal("expected thinking block added")
 	}
 
-	thinking, _ := m["thinking"].(map[string]any)
+	thinking, ok := m["thinking"].(map[string]any)
+	if !ok {
+		t.Fatal("expected thinking map")
+	}
+
 	if thinking["type"] != "enabled" {
 		t.Fatalf("expected type enabled, got %v", thinking["type"])
 	}
@@ -42,7 +46,9 @@ func TestApplyThinkingLevel_OpenAI(t *testing.T) {
 
 	var m map[string]any
 
-	json.Unmarshal(result, &m)
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatal(err)
+	}
 
 	if m["reasoning_effort"] == nil {
 		t.Fatal("expected reasoning_effort")
@@ -59,10 +65,12 @@ func TestApplyThinkingLevel_Gemini(t *testing.T) {
 
 	var m map[string]any
 
-	json.Unmarshal(result, &m)
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatal(err)
+	}
 
-	gc, _ := m["generationConfig"].(map[string]any)
-	if gc == nil || gc["thinkingConfig"] == nil {
+	gc, ok := m["generationConfig"].(map[string]any)
+	if !ok || gc["thinkingConfig"] == nil {
 		t.Fatal("expected generationConfig.thinkingConfig")
 	}
 }
@@ -78,10 +86,12 @@ func TestApplyThinkingLevel_ProviderThinkingOn(t *testing.T) {
 
 	var m map[string]any
 
-	json.Unmarshal(result, &m)
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatal(err)
+	}
 
-	thinking, _ := m["thinking"].(map[string]any)
-	if thinking == nil {
+	thinking, ok := m["thinking"].(map[string]any)
+	if !ok || thinking == nil {
 		t.Fatal("expected thinking from providerThinking")
 	}
 
@@ -101,10 +111,12 @@ func TestApplyThinkingLevel_ProviderThinkingOff(t *testing.T) {
 
 	var m map[string]any
 
-	json.Unmarshal(result, &m)
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatal(err)
+	}
 
-	thinking, _ := m["thinking"].(map[string]any)
-	if thinking == nil {
+	thinking, ok := m["thinking"].(map[string]any)
+	if !ok || thinking == nil {
 		t.Fatal("expected thinking disabled")
 	}
 
@@ -124,7 +136,9 @@ func TestApplyThinkingLevel_ProviderThinkingNone(t *testing.T) {
 
 	var m map[string]any
 
-	json.Unmarshal(result, &m)
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatal(err)
+	}
 
 	if m["reasoning_effort"] != "none" {
 		t.Fatalf("expected reasoning_effort none, got %v", m["reasoning_effort"])
@@ -143,10 +157,12 @@ func TestApplyThinkingLevel_ClientThinkingPlusProviderEffort(t *testing.T) {
 
 	var m map[string]any
 
-	json.Unmarshal(result, &m)
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatal(err)
+	}
 
-	thinking, _ := m["thinking"].(map[string]any)
-	if thinking == nil || thinking["type"] != "enabled" {
+	thinking, ok := m["thinking"].(map[string]any)
+	if !ok || thinking == nil || thinking["type"] != "enabled" {
 		t.Fatalf("client thinking must remain, got %v", m["thinking"])
 	}
 
@@ -162,7 +178,9 @@ func TestApplyThinkingLevel_ProviderThinkingEffort(t *testing.T) {
 
 	var m map[string]any
 
-	json.Unmarshal(result, &m)
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatal(err)
+	}
 
 	if m["reasoning_effort"] != "high" {
 		t.Fatalf("expected reasoning_effort high, got %v", m["reasoning_effort"])
@@ -179,7 +197,9 @@ func TestApplyThinkingLevel_NoOp(t *testing.T) {
 
 	var m map[string]any
 
-	json.Unmarshal(result, &m)
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatal(err)
+	}
 
 	if m["thinking"] != nil {
 		t.Fatal("expected no thinking without suffix or providerThinking")

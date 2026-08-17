@@ -1,5 +1,6 @@
 package rtk
 
+// RTK compression thresholds and caps.
 const (
 	RawCap              = 10 * 1024 * 1024
 	MinCompressSize     = 500
@@ -23,6 +24,7 @@ const (
 	ReadNumberedMinHit  = 0.7
 )
 
+// LSNoiseDirs contains common directory names filtered out from ls results.
 var LSNoiseDirs = []string{
 	"node_modules", ".git", "target", "__pycache__",
 	".next", "dist", "build", ".cache", ".turbo",

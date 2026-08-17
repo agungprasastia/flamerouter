@@ -1,3 +1,4 @@
+// Package request implements request translators between different LLM API formats.
 package request
 
 import (
@@ -8,7 +9,7 @@ import (
 
 const maxCallIDLen = 64
 
-func clampCallId(id string) string {
+func clampCallID(id string) string {
 	if len(id) > maxCallIDLen {
 		return id[:maxCallIDLen]
 	}
@@ -21,255 +22,302 @@ func init() {
 	translator.Register(translator.FormatOpenAI, translator.FormatOpenAIResponses, openaiToOpenAIResponsesRequest, nil)
 }
 
-func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any {
+type responsesToOpenAICollector struct {
+	currentAssistantMsg map[string]any
+	pendingReasoning    string
+	messages            []any
+	pendingToolResults  []any
+}
+
+func (c *responsesToOpenAICollector) flushAssistant() {
+	if c.currentAssistantMsg != nil {
+		c.messages = append(c.messages, c.currentAssistantMsg)
+		c.currentAssistantMsg = nil
+	}
+}
+
+func (c *responsesToOpenAICollector) flushToolResults() {
+	if len(c.pendingToolResults) > 0 {
+		c.messages = append(c.messages, c.pendingToolResults...)
+		c.pendingToolResults = nil
+	}
+}
+
+func parseResponsesImagePart(c map[string]any) map[string]any {
+	var url string
+	if u, ok := c["image_url"].(string); ok && u != "" {
+		url = u
+	} else if fid, ok := c["file_id"].(string); ok {
+		url = fid
+	}
+
+	detail := "auto"
+	if d, ok := c["detail"].(string); ok && d != "" {
+		detail = d
+	}
+
+	return map[string]any{
+		"type": schema.OpenaiBlockImageURL,
+		"image_url": map[string]any{
+			"url":    url,
+			"detail": detail,
+		},
+	}
+}
+
+func parseResponsesContentPart(c map[string]any) map[string]any {
+	cType, ok := c["type"].(string)
+	if !ok {
+		return c
+	}
+
+	switch cType {
+	case schema.ResponsesItemInputText, schema.ResponsesItemOutputText:
+		if text, ok := c["text"].(string); ok {
+			return map[string]any{"type": schema.OpenaiBlockText, "text": text}
+		}
+	case schema.ResponsesItemInputImage:
+		return parseResponsesImagePart(c)
+	default:
+		return c
+	}
+
+	return nil
+}
+
+func (c *responsesToOpenAICollector) handleMessage(item map[string]any) {
+	c.flushAssistant()
+	c.flushToolResults()
+
+	role, ok := item["role"].(string)
+	if !ok {
+		role = schema.RoleUser
+	}
+
+	contentArr, ok := item["content"].([]any)
+	if !ok {
+		contentArr = nil
+	}
+
+	var newContent []any
+
+	for _, cRaw := range contentArr {
+		if cMap, ok := cRaw.(map[string]any); ok && cMap != nil {
+			if part := parseResponsesContentPart(cMap); part != nil {
+				newContent = append(newContent, part)
+			}
+		}
+	}
+
+	msg := map[string]any{"role": role, "content": newContent}
+	if role == schema.RoleAssistant && c.pendingReasoning != "" {
+		msg["reasoning_content"] = c.pendingReasoning
+		c.pendingReasoning = ""
+	}
+
+	c.messages = append(c.messages, msg)
+}
+
+func (c *responsesToOpenAICollector) handleFunctionCall(item map[string]any) {
+	if c.currentAssistantMsg == nil {
+		c.currentAssistantMsg = map[string]any{
+			"role":       schema.RoleAssistant,
+			"content":    nil,
+			"tool_calls": []any{},
+		}
+		if c.pendingReasoning != "" {
+			c.currentAssistantMsg["reasoning_content"] = c.pendingReasoning
+			c.pendingReasoning = ""
+		}
+	}
+
+	name, ok := item["name"].(string)
+	if !ok || name == "" {
+		return
+	}
+
+	callID, ok := item["call_id"].(string)
+	if !ok {
+		callID = ""
+	}
+
+	args, ok := item["arguments"].(string)
+	if !ok {
+		args = ""
+	}
+
+	tc := map[string]any{
+		"id":   clampCallID(callID),
+		"type": schema.OpenaiBlockFunction,
+		"function": map[string]any{
+			"name":      name,
+			"arguments": args,
+		},
+	}
+
+	tcArr, ok := c.currentAssistantMsg["tool_calls"].([]any)
+	if !ok {
+		tcArr = []any{}
+	}
+
+	c.currentAssistantMsg["tool_calls"] = append(tcArr, tc)
+}
+
+func (c *responsesToOpenAICollector) handleFunctionCallOutput(item map[string]any) {
+	c.flushAssistant()
+	c.flushToolResults()
+
+	callID, ok := item["call_id"].(string)
+	if !ok {
+		callID = ""
+	}
+
+	output, ok := item["output"].(string)
+	if !ok || output == "" {
+		output = "{}"
+	}
+
+	c.messages = append(c.messages, map[string]any{
+		"role":         schema.RoleTool,
+		"tool_call_id": clampCallID(callID),
+		"content":      output,
+	})
+}
+
+func (c *responsesToOpenAICollector) handleReasoning(item map[string]any) {
+	summary, ok := item["summary"].([]any)
+	if !ok {
+		return
+	}
+
+	var txt string
+
+	for _, s := range summary {
+		if sm, ok := s.(map[string]any); ok && sm != nil {
+			if t, ok := sm["text"].(string); ok {
+				txt += t + "\n"
+			}
+		}
+	}
+
+	if txt != "" {
+		if c.pendingReasoning != "" {
+			c.pendingReasoning += "\n" + txt
+		} else {
+			c.pendingReasoning = txt
+		}
+	}
+}
+
+func (c *responsesToOpenAICollector) dispatchInputItem(item map[string]any) {
+	itemType, ok := item["type"].(string)
+	if !ok || itemType == "" {
+		if _, hasRole := item["role"]; hasRole {
+			itemType = schema.ResponsesItemMessage
+		}
+	}
+
+	switch itemType {
+	case schema.ResponsesItemMessage:
+		c.handleMessage(item)
+	case schema.ResponsesItemFunctionCall:
+		c.handleFunctionCall(item)
+	case schema.ResponsesItemFunctionCallOutput:
+		c.handleFunctionCallOutput(item)
+	case schema.ResponsesItemReasoning:
+		c.handleReasoning(item)
+	}
+}
+
+func parseResponsesInput(inputItems []any) []any {
+	col := &responsesToOpenAICollector{
+		currentAssistantMsg: nil,
+		pendingReasoning:    "",
+		messages:            []any{},
+		pendingToolResults:  nil,
+	}
+
+	for _, itemRaw := range inputItems {
+		if item, ok := itemRaw.(map[string]any); ok && item != nil {
+			col.dispatchInputItem(item)
+		}
+	}
+
+	col.flushAssistant()
+	col.flushToolResults()
+
+	return col.messages
+}
+
+func parseResponsesTools(tools []any) []any {
+	resultTools := make([]any, 0, len(tools))
+
+	for _, toolRaw := range tools {
+		tool, ok := toolRaw.(map[string]any)
+		if !ok || tool == nil {
+			continue
+		}
+
+		if _, hasFn := tool["function"].(map[string]any); hasFn {
+			resultTools = append(resultTools, toolRaw)
+			continue
+		}
+
+		name, ok := tool["name"].(string)
+		if !ok || name == "" {
+			continue
+		}
+
+		desc, ok := tool["description"].(string)
+		if !ok {
+			desc = ""
+		}
+
+		params, ok := tool["parameters"].(map[string]any)
+		if !ok || params == nil {
+			params = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
+
+		resultTools = append(resultTools, map[string]any{
+			"type": schema.OpenaiBlockFunction,
+			"function": map[string]any{
+				"name":        name,
+				"description": desc,
+				"parameters":  params,
+			},
+		})
+	}
+
+	return resultTools
+}
+
+func openaiResponsesToOpenAIRequest(_ string, body map[string]any, _ bool, _ map[string]any) map[string]any {
 	if _, ok := body["input"]; !ok {
 		return body
 	}
 
-	result := make(map[string]any)
+	result := make(map[string]any, len(body))
 	for k, v := range body {
 		result[k] = v
 	}
 
-	result["messages"] = []any{}
-
+	var messages []any
 	if instructions, ok := body["instructions"].(string); ok && instructions != "" {
-		messages := result["messages"].([]any)
 		messages = append(messages, map[string]any{
 			"role":    schema.RoleSystem,
 			"content": instructions,
 		})
-		result["messages"] = messages
 	}
-
-	var currentAssistantMsg map[string]any
-
-	var pendingToolResults []any
-
-	var pendingReasoning string
 
 	inputItems, ok := body["input"].([]any)
-	if !ok {
-		return body
+	if ok {
+		messages = append(messages, parseResponsesInput(inputItems)...)
 	}
 
-	for _, itemRaw := range inputItems {
-		item, ok := itemRaw.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		itemType, _ := item["type"].(string)
-		if itemType == "" {
-			if _, hasRole := item["role"]; hasRole {
-				itemType = schema.ResponsesItemMessage
-			}
-		}
-
-		switch itemType {
-		case schema.ResponsesItemMessage:
-			if currentAssistantMsg != nil {
-				messages := result["messages"].([]any)
-				messages = append(messages, currentAssistantMsg)
-				result["messages"] = messages
-				currentAssistantMsg = nil
-			}
-
-			if len(pendingToolResults) > 0 {
-				messages := result["messages"].([]any)
-				messages = append(messages, pendingToolResults...)
-				result["messages"] = messages
-				pendingToolResults = nil
-			}
-
-			role, _ := item["role"].(string)
-			contentArr, _ := item["content"].([]any)
-
-			var newContent []any
-
-			for _, cRaw := range contentArr {
-				c, ok := cRaw.(map[string]any)
-				if !ok {
-					continue
-				}
-
-				cType, _ := c["type"].(string)
-				switch cType {
-				case schema.ResponsesItemInputText:
-					if text, ok := c["text"].(string); ok {
-						newContent = append(newContent, map[string]any{"type": schema.OpenaiBlockText, "text": text})
-					}
-				case schema.ResponsesItemOutputText:
-					if text, ok := c["text"].(string); ok {
-						newContent = append(newContent, map[string]any{"type": schema.OpenaiBlockText, "text": text})
-					}
-				case schema.ResponsesItemInputImage:
-					url, _ := c["image_url"].(string)
-					if url == "" {
-						url, _ = c["file_id"].(string)
-					}
-
-					detail, _ := c["detail"].(string)
-					if detail == "" {
-						detail = "auto"
-					}
-
-					newContent = append(newContent, map[string]any{
-						"type": schema.OpenaiBlockImageUrl,
-						"image_url": map[string]any{
-							"url":    url,
-							"detail": detail,
-						},
-					})
-				default:
-					newContent = append(newContent, c)
-				}
-			}
-
-			msg := map[string]any{"role": role, "content": newContent}
-			if role == schema.RoleAssistant && pendingReasoning != "" {
-				msg["reasoning_content"] = pendingReasoning
-				pendingReasoning = ""
-			}
-
-			messages := result["messages"].([]any)
-			messages = append(messages, msg)
-			result["messages"] = messages
-
-		case schema.ResponsesItemFunctionCall:
-			if currentAssistantMsg == nil {
-				currentAssistantMsg = map[string]any{
-					"role":       schema.RoleAssistant,
-					"content":    nil,
-					"tool_calls": []any{},
-				}
-				if pendingReasoning != "" {
-					currentAssistantMsg["reasoning_content"] = pendingReasoning
-					pendingReasoning = ""
-				}
-			}
-
-			name, _ := item["name"].(string)
-			if name == "" {
-				continue
-			}
-
-			callID, _ := item["call_id"].(string)
-			args, _ := item["arguments"].(string)
-			tc := map[string]any{
-				"id":   clampCallId(callID),
-				"type": schema.OpenaiBlockFunction,
-				"function": map[string]any{
-					"name":      name,
-					"arguments": args,
-				},
-			}
-			tcArr := currentAssistantMsg["tool_calls"].([]any)
-			tcArr = append(tcArr, tc)
-			currentAssistantMsg["tool_calls"] = tcArr
-
-		case schema.ResponsesItemFunctionCallOutput:
-			if currentAssistantMsg != nil {
-				messages := result["messages"].([]any)
-				messages = append(messages, currentAssistantMsg)
-				result["messages"] = messages
-				currentAssistantMsg = nil
-			}
-
-			if len(pendingToolResults) > 0 {
-				messages := result["messages"].([]any)
-				messages = append(messages, pendingToolResults...)
-				result["messages"] = messages
-				pendingToolResults = nil
-			}
-
-			callID, _ := item["call_id"].(string)
-
-			output, _ := item["output"].(string)
-			if output == "" {
-				output = "{}"
-			}
-
-			messages := result["messages"].([]any)
-			messages = append(messages, map[string]any{
-				"role":         schema.RoleTool,
-				"tool_call_id": clampCallId(callID),
-				"content":      output,
-			})
-			result["messages"] = messages
-
-		case schema.ResponsesItemReasoning:
-			if summary, ok := item["summary"].([]any); ok {
-				var txt string
-
-				for _, s := range summary {
-					if sm, ok := s.(map[string]any); ok {
-						if t, ok := sm["text"].(string); ok {
-							txt += t + "\n"
-						}
-					}
-				}
-
-				if txt != "" {
-					if pendingReasoning != "" {
-						pendingReasoning += "\n" + txt
-					} else {
-						pendingReasoning = txt
-					}
-				}
-			}
-		}
-	}
-
-	if currentAssistantMsg != nil {
-		messages := result["messages"].([]any)
-		messages = append(messages, currentAssistantMsg)
-		result["messages"] = messages
-	}
-
-	if len(pendingToolResults) > 0 {
-		messages := result["messages"].([]any)
-		messages = append(messages, pendingToolResults...)
-		result["messages"] = messages
-	}
+	result["messages"] = messages
 
 	if tools, ok := body["tools"].([]any); ok {
-		var resultTools []any
-
-		for _, toolRaw := range tools {
-			tool, ok := toolRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			if _, ok := tool["function"].(map[string]any); ok {
-				resultTools = append(resultTools, toolRaw)
-				continue
-			}
-
-			name, _ := tool["name"].(string)
-			if name == "" {
-				continue
-			}
-
-			desc, _ := tool["description"].(string)
-
-			params, _ := tool["parameters"].(map[string]any)
-			if params == nil {
-				params = map[string]any{"type": "object", "properties": map[string]any{}}
-			}
-
-			resultTools = append(resultTools, map[string]any{
-				"type": schema.OpenaiBlockFunction,
-				"function": map[string]any{
-					"name":        name,
-					"description": desc,
-					"parameters":  params,
-				},
-			})
-		}
-
-		result["tools"] = resultTools
+		result["tools"] = parseResponsesTools(tools)
 	}
 
 	if mot, ok := result["max_output_tokens"].(float64); ok {
@@ -291,9 +339,288 @@ func openaiResponsesToOpenAIRequest(model string, body map[string]any, stream bo
 	return result
 }
 
-func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any {
+func parseOpenAIImageBlockToResponses(block map[string]any) map[string]any {
+	var url string
+
+	if iu, ok := block["image_url"].(map[string]any); ok && iu != nil {
+		if u, ok := iu["url"].(string); ok {
+			url = u
+		}
+	}
+
+	return map[string]any{
+		"type":      schema.ResponsesItemInputImage,
+		"image_url": url,
+	}
+}
+
+func parseOpenAITextFallback(block map[string]any) string {
+	if text, ok := block["text"].(string); ok && text != "" {
+		return text
+	}
+
+	if c, ok := block["content"].(string); ok && c != "" {
+		return c
+	}
+
+	if textBytes, err := json.Marshal(block); err == nil {
+		return string(textBytes)
+	}
+
+	return ""
+}
+
+func parseSingleOpenAIBlockToResponses(block map[string]any, contentType string) map[string]any {
+	btype, ok := block["type"].(string)
+	if !ok {
+		btype = ""
+	}
+
+	if btype == schema.OpenaiBlockText {
+		if text, ok := block["text"].(string); ok {
+			return map[string]any{"type": contentType, "text": text}
+		}
+
+		return nil
+	}
+
+	if btype == schema.OpenaiBlockImageURL {
+		return parseOpenAIImageBlockToResponses(block)
+	}
+
+	return map[string]any{"type": contentType, "text": parseOpenAITextFallback(block)}
+}
+
+func parseOpenAIToResponsesContent(content any, contentType string) []any {
+	var contentItems []any
+
+	switch c := content.(type) {
+	case string:
+		contentItems = append(contentItems, map[string]any{"type": contentType, "text": c})
+	case []any:
+		for _, cRaw := range c {
+			block, ok := cRaw.(map[string]any)
+			if !ok || block == nil {
+				continue
+			}
+
+			if item := parseSingleOpenAIBlockToResponses(block, contentType); item != nil {
+				contentItems = append(contentItems, item)
+			}
+		}
+	}
+
+	return contentItems
+}
+
+func convertAssistantToolCallsToResponses(tcArr []any) []any {
+	items := make([]any, 0, len(tcArr))
+
+	for _, tcRaw := range tcArr {
+		tc, ok := tcRaw.(map[string]any)
+		if !ok || tc == nil {
+			continue
+		}
+
+		fn, ok := tc["function"].(map[string]any)
+		if !ok || fn == nil {
+			continue
+		}
+
+		name, ok := fn["name"].(string)
+		if !ok {
+			name = ""
+		}
+
+		args, ok := fn["arguments"].(string)
+		if !ok {
+			args = ""
+		}
+
+		id, ok := tc["id"].(string)
+		if !ok {
+			id = ""
+		}
+
+		items = append(items, map[string]any{
+			"type":      schema.ResponsesItemFunctionCall,
+			"call_id":   clampCallID(id),
+			"name":      name,
+			"arguments": args,
+		})
+	}
+
+	return items
+}
+
+func convertToolMsgToResponses(msg map[string]any, content any) []any {
+	tcID, ok := msg["tool_call_id"].(string)
+	if !ok {
+		tcID = ""
+	}
+
+	var output string
+	if s, ok := content.(string); ok {
+		output = s
+	}
+
+	return []any{
+		map[string]any{
+			"type":    schema.ResponsesItemFunctionCallOutput,
+			"call_id": clampCallID(tcID),
+			"output":  output,
+		},
+	}
+}
+
+func convertOpenAIMessageToResponses(msg map[string]any) []any {
+	var items []any
+
+	role, ok := msg["role"].(string)
+	if !ok {
+		role = ""
+	}
+
+	content := msg["content"]
+
+	if role == schema.RoleUser || role == schema.RoleAssistant {
+		contentType := schema.ResponsesItemInputText
+		if role == schema.RoleAssistant {
+			contentType = schema.ResponsesItemOutputText
+		}
+
+		contentItems := parseOpenAIToResponsesContent(content, contentType)
+		if len(contentItems) > 0 {
+			items = append(items, map[string]any{
+				"type":    schema.ResponsesItemMessage,
+				"role":    role,
+				"content": contentItems,
+			})
+		}
+	}
+
+	if role == schema.RoleAssistant {
+		if tcArr, ok := msg["tool_calls"].([]any); ok {
+			items = append(items, convertAssistantToolCallsToResponses(tcArr)...)
+		}
+	}
+
+	if role == schema.RoleTool {
+		items = append(items, convertToolMsgToResponses(msg, content)...)
+	}
+
+	return items
+}
+
+func parseSingleOpenAIToResponsesTool(tool map[string]any) (map[string]any, bool) {
+	t, ok := tool["type"].(string)
+	if !ok || t != schema.OpenaiBlockFunction {
+		return nil, false
+	}
+
+	fn, ok := tool["function"].(map[string]any)
+	if !ok || fn == nil {
+		return nil, false
+	}
+
+	name, ok := fn["name"].(string)
+	if !ok {
+		name = ""
+	}
+
+	desc, ok := fn["description"].(string)
+	if !ok {
+		desc = ""
+	}
+
+	params, ok := fn["parameters"].(map[string]any)
+	if !ok || params == nil {
+		params = map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+
+	return map[string]any{
+		"type":        schema.OpenaiBlockFunction,
+		"name":        name,
+		"description": desc,
+		"parameters":  params,
+	}, true
+}
+
+func parseOpenAIToResponsesTools(tools []any) []any {
+	var resultTools []any
+
+	for _, toolRaw := range tools {
+		tool, ok := toolRaw.(map[string]any)
+		if !ok || tool == nil {
+			continue
+		}
+
+		if resTool, valid := parseSingleOpenAIToResponsesTool(tool); valid {
+			resultTools = append(resultTools, resTool)
+		}
+	}
+
+	return resultTools
+}
+
+func applyOpenAIToResponsesOptionalParams(result, body map[string]any) {
+	if temp, ok := body["temperature"].(float64); ok {
+		result["temperature"] = temp
+	}
+
+	if mt, ok := body["max_tokens"].(float64); ok {
+		result["max_tokens"] = mt
+	}
+
+	if tp, ok := body["top_p"].(float64); ok {
+		result["top_p"] = tp
+	}
+
+	if re, ok := body["reasoning_effort"].(string); ok {
+		result["reasoning"] = map[string]any{"effort": re, "summary": "auto"}
+	}
+}
+
+func processOpenAIMessagesToResponses(messages []any, result map[string]any) {
+	var (
+		hasSystem bool
+		inputArr  []any
+	)
+
+	for _, msgRaw := range messages {
+		msg, ok := msgRaw.(map[string]any)
+		if !ok || msg == nil {
+			continue
+		}
+
+		role, ok := msg["role"].(string)
+		if !ok {
+			role = ""
+		}
+
+		if (role == schema.RoleSystem || role == schema.RoleDeveloper) && !hasSystem {
+			if s, ok := msg["content"].(string); ok {
+				result["instructions"] = s
+			}
+
+			hasSystem = true
+
+			continue
+		}
+
+		inputArr = append(inputArr, convertOpenAIMessageToResponses(msg)...)
+	}
+
+	if !hasSystem {
+		result["instructions"] = ""
+	}
+
+	result["input"] = inputArr
+}
+
+func openaiToOpenAIResponsesRequest(model string, body map[string]any, _ bool, _ map[string]any) map[string]any {
 	if _, ok := body["input"]; ok {
-		result := make(map[string]any)
+		result := make(map[string]any, len(body)+2)
 		for k, v := range body {
 			result[k] = v
 		}
@@ -311,186 +638,17 @@ func openaiToOpenAIResponsesRequest(model string, body map[string]any, stream bo
 		"store":  false,
 	}
 
-	messages, _ := body["messages"].([]any)
-
-	var hasSystem bool
-
-	for _, msgRaw := range messages {
-		msg, ok := msgRaw.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		role, _ := msg["role"].(string)
-		content := msg["content"]
-
-		if role == schema.RoleSystem || role == schema.RoleDeveloper {
-			if !hasSystem {
-				if s, ok := content.(string); ok {
-					result["instructions"] = s
-				}
-
-				hasSystem = true
-			}
-
-			continue
-		}
-
-		if role == schema.RoleUser || role == schema.RoleAssistant {
-			contentType := schema.ResponsesItemInputText
-			if role == schema.RoleAssistant {
-				contentType = schema.ResponsesItemOutputText
-			}
-
-			var contentItems []any
-			switch c := content.(type) {
-			case string:
-				contentItems = append(contentItems, map[string]any{"type": contentType, "text": c})
-			case []any:
-				for _, cRaw := range c {
-					block, ok := cRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					btype, _ := block["type"].(string)
-					switch btype {
-					case schema.OpenaiBlockText:
-						if text, ok := block["text"].(string); ok {
-							contentItems = append(contentItems, map[string]any{"type": contentType, "text": text})
-						}
-					case schema.OpenaiBlockImageUrl:
-						var url string
-						if iu, ok := block["image_url"].(map[string]any); ok {
-							url, _ = iu["url"].(string)
-						}
-
-						contentItems = append(contentItems, map[string]any{
-							"type":      schema.ResponsesItemInputImage,
-							"image_url": url,
-						})
-					default:
-						text, _ := block["text"].(string)
-						if text == "" {
-							text, _ = block["content"].(string)
-						}
-
-						if text == "" {
-							textBytes, _ := json.Marshal(block)
-							text = string(textBytes)
-						}
-
-						contentItems = append(contentItems, map[string]any{"type": contentType, "text": text})
-					}
-				}
-			}
-
-			if len(contentItems) > 0 {
-				inputArr := result["input"].([]any)
-				inputArr = append(inputArr, map[string]any{
-					"type":    schema.ResponsesItemMessage,
-					"role":    role,
-					"content": contentItems,
-				})
-				result["input"] = inputArr
-			}
-		}
-
-		if role == schema.RoleAssistant {
-			if tcArr, ok := msg["tool_calls"].([]any); ok {
-				inputArr := result["input"].([]any)
-
-				for _, tcRaw := range tcArr {
-					tc, ok := tcRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					fn, _ := tc["function"].(map[string]any)
-					name, _ := fn["name"].(string)
-					args, _ := fn["arguments"].(string)
-					id, _ := tc["id"].(string)
-					inputArr = append(inputArr, map[string]any{
-						"type":      schema.ResponsesItemFunctionCall,
-						"call_id":   clampCallId(id),
-						"name":      name,
-						"arguments": args,
-					})
-				}
-
-				result["input"] = inputArr
-			}
-		}
-
-		if role == schema.RoleTool {
-			tcID, _ := msg["tool_call_id"].(string)
-
-			var output string
-			if s, ok := content.(string); ok {
-				output = s
-			}
-
-			inputArr := result["input"].([]any)
-			inputArr = append(inputArr, map[string]any{
-				"type":    schema.ResponsesItemFunctionCallOutput,
-				"call_id": clampCallId(tcID),
-				"output":  output,
-			})
-			result["input"] = inputArr
-		}
-	}
-
-	if !hasSystem {
+	if messages, ok := body["messages"].([]any); ok {
+		processOpenAIMessagesToResponses(messages, result)
+	} else {
 		result["instructions"] = ""
 	}
 
 	if tools, ok := body["tools"].([]any); ok {
-		var resultTools []any
-
-		for _, toolRaw := range tools {
-			tool, ok := toolRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			if t, ok := tool["type"].(string); ok && t == schema.OpenaiBlockFunction {
-				if fn, ok := tool["function"].(map[string]any); ok {
-					name, _ := fn["name"].(string)
-					desc, _ := fn["description"].(string)
-
-					params, _ := fn["parameters"].(map[string]any)
-					if params == nil {
-						params = map[string]any{"type": "object", "properties": map[string]any{}}
-					}
-
-					resultTools = append(resultTools, map[string]any{
-						"type":        schema.OpenaiBlockFunction,
-						"name":        name,
-						"description": desc,
-						"parameters":  params,
-					})
-				}
-			}
-		}
-
-		result["tools"] = resultTools
+		result["tools"] = parseOpenAIToResponsesTools(tools)
 	}
 
-	if temp, ok := body["temperature"].(float64); ok {
-		result["temperature"] = temp
-	}
-
-	if mt, ok := body["max_tokens"].(float64); ok {
-		result["max_tokens"] = mt
-	}
-
-	if tp, ok := body["top_p"].(float64); ok {
-		result["top_p"] = tp
-	}
-
-	if re, ok := body["reasoning_effort"].(string); ok {
-		result["reasoning"] = map[string]any{"effort": re, "summary": "auto"}
-	}
+	applyOpenAIToResponsesOptionalParams(result, body)
 
 	return result
 }

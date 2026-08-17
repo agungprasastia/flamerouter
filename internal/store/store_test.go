@@ -14,7 +14,11 @@ func setupTestStore(t *testing.T) *store.Store {
 		t.Fatal(err)
 	}
 
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() {
+		if clErr := st.Close(); clErr != nil {
+			t.Log(clErr)
+		}
+	})
 
 	return st
 }
@@ -84,7 +88,11 @@ func TestAliases(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	aliases, _ = st.ListAliases()
+	aliases, err = st.ListAliases()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if aliases["gpt4"] != "openai/gpt-4o-mini" {
 		t.Fatalf("expected openai/gpt-4o-mini after update, got %s", aliases["gpt4"])
 	}
@@ -167,13 +175,25 @@ func TestComboNotFound(t *testing.T) {
 func TestManagementRepos(t *testing.T) {
 	st := setupTestStore(t)
 
+	testProxyPools(t, st)
+	testDisabledModels(t, st)
+	testCustomModels(t, st)
+	testRequestDetails(t, st)
+	testUsageStats(t, st)
+	testKV(t, st)
+	testConnectionStrategy(t, st)
+}
+
+func testProxyPools(t *testing.T, st *store.Store) {
+	t.Helper()
+
 	id, err := st.CreateProxyPool("pool1", "http", "127.0.0.1", 8080, "u", "p")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := st.UpdateProxyPool(id, "pool1", "socks5", "127.0.0.1", 1080, "u", "p", true); err != nil {
-		t.Fatal(err)
+	if upErr := st.UpdateProxyPool(id, "pool1", "socks5", "127.0.0.1", 1080, "u", "p", true); upErr != nil {
+		t.Fatal(upErr)
 	}
 
 	pools, err := st.ListProxyPools()
@@ -184,6 +204,10 @@ func TestManagementRepos(t *testing.T) {
 	if err := st.DeleteProxyPool(id); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testDisabledModels(t *testing.T, st *store.Store) {
+	t.Helper()
 
 	if err := st.DisableModel("openai/gpt-4o"); err != nil {
 		t.Fatal(err)
@@ -197,6 +221,10 @@ func TestManagementRepos(t *testing.T) {
 	if err := st.EnableModel("openai/gpt-4o"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testCustomModels(t *testing.T, st *store.Store) {
+	t.Helper()
 
 	cmID, err := st.CreateCustomModel("openai", "my-model", "My Model", `{"vision":true}`)
 	if err != nil {
@@ -211,9 +239,27 @@ func TestManagementRepos(t *testing.T) {
 	if err := st.DeleteCustomModel(cmID); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testRequestDetails(t *testing.T, st *store.Store) {
+	t.Helper()
 
 	if err := st.InsertRequestDetail(store.RequestDetail{
-		Provider: "openai", Model: "gpt-4o", StatusCode: 200, PromptTokens: 10, CompletionTokens: 5,
+		ID:               "",
+		Timestamp:        "",
+		Provider:         "openai",
+		Model:            "gpt-4o",
+		ConnectionID:     "",
+		StatusCode:       200,
+		DurationMs:       0,
+		PromptTokens:     10,
+		CompletionTokens: 5,
+		RequestBody:      "",
+		ResponsePreview:  "",
+		ErrorText:        "",
+		Client:           "",
+		SourceFormat:     "",
+		TargetFormat:     "",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -222,6 +268,10 @@ func TestManagementRepos(t *testing.T) {
 	if err != nil || len(rds) != 1 {
 		t.Fatalf("request details: %+v err=%v", rds, err)
 	}
+}
+
+func testUsageStats(t *testing.T, st *store.Store) {
+	t.Helper()
 
 	if err := st.InsertUsageDaily("2026-07-20", "openai", "gpt-4o", 1, 10, 5); err != nil {
 		t.Fatal(err)
@@ -240,6 +290,10 @@ func TestManagementRepos(t *testing.T) {
 	if err != nil || len(chart) != 1 || chart[0].Requests != 3 {
 		t.Fatalf("usage chart: %+v err=%v", chart, err)
 	}
+}
+
+func testKV(t *testing.T, st *store.Store) {
+	t.Helper()
 
 	if err := st.KVSet("cli-tools", "foo", "bar"); err != nil {
 		t.Fatal(err)
@@ -250,16 +304,19 @@ func TestManagementRepos(t *testing.T) {
 		t.Fatalf("kv get: %q err=%v", v, err)
 	}
 
-	if err := st.KVDelete("cli-tools", "foo"); err != nil {
-		t.Fatal(err)
+	if delErr := st.KVDelete("cli-tools", "foo"); delErr != nil {
+		t.Fatal(delErr)
 	}
 
-	v, _ = st.KVGet("cli-tools", "foo")
-	if v != "" {
-		t.Fatalf("expected empty after delete, got %q", v)
+	v, err = st.KVGet("cli-tools", "foo")
+	if err != nil || v != "" {
+		t.Fatalf("expected empty after delete, got %q (err: %v)", v, err)
 	}
+}
 
-	// connection strategy columns present after migration
+func testConnectionStrategy(t *testing.T, st *store.Store) {
+	t.Helper()
+
 	connID, err := st.CreateConnection("openai", "api_key", "c1", "sk", "")
 	if err != nil {
 		t.Fatal(err)

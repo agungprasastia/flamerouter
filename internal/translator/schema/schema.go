@@ -1,5 +1,7 @@
+// Package schema provides shared protocol constants and message types for protocol translation.
 package schema
 
+// Standard role constants.
 const (
 	RoleSystem    = "system"
 	RoleUser      = "user"
@@ -8,21 +10,24 @@ const (
 	RoleDeveloper = "developer"
 )
 
+// Gemini role constants.
 const (
 	GeminiRoleUser  = "user"
 	GeminiRoleModel = "model"
 )
 
+// OpenAI content block type constants.
 const (
 	OpenaiBlockText       = "text"
-	OpenaiBlockImageUrl   = "image_url"
+	OpenaiBlockImageURL   = "image_url"
 	OpenaiBlockImage      = "image"
 	OpenaiBlockInputAudio = "input_audio"
-	OpenaiBlockAudioUrl   = "audio_url"
+	OpenaiBlockAudioURL   = "audio_url"
 	OpenaiBlockFile       = "file"
 	OpenaiBlockFunction   = "function"
 )
 
+// Claude content block type constants.
 const (
 	ClaudeBlockText             = "text"
 	ClaudeBlockImage            = "image"
@@ -33,6 +38,7 @@ const (
 	ClaudeBlockRedactedThinking = "redacted_thinking"
 )
 
+// Responses API item type constants.
 const (
 	ResponsesItemMessage            = "message"
 	ResponsesItemFunctionCall       = "function_call"
@@ -44,6 +50,7 @@ const (
 	ResponsesItemSummaryText        = "summary_text"
 )
 
+// OpenAI finish reason constants.
 const (
 	OpenaiFinishStop          = "stop"
 	OpenaiFinishLength        = "length"
@@ -51,6 +58,7 @@ const (
 	OpenaiFinishContentFilter = "content_filter"
 )
 
+// Claude stop reason constants.
 const (
 	ClaudeStopEndTurn      = "end_turn"
 	ClaudeStopMaxTokens    = "max_tokens"
@@ -58,6 +66,7 @@ const (
 	ClaudeStopStopSequence = "stop_sequence"
 )
 
+// Gemini finish reason constants.
 const (
 	GeminiFinishStop              = "STOP"
 	GeminiFinishMaxTokens         = "MAX_TOKENS"
@@ -67,24 +76,26 @@ const (
 	GeminiFinishProhibitedContent = "PROHIBITED_CONTENT"
 )
 
-var (
-	ValidOpenaiContentTypes = map[string]bool{
-		"text":        true,
-		"image_url":   true,
-		"image":       true,
-		"input_audio": true,
-		"audio_url":   true,
-		"file":        true,
-	}
-	ValidOpenaiMessageTypes = map[string]bool{
-		"text":        true,
-		"image_url":   true,
-		"image":       true,
-		"tool_calls":  true,
-		"tool_result": true,
-	}
-)
+// ValidOpenaiContentTypes specifies valid content types in OpenAI message parts.
+var ValidOpenaiContentTypes = map[string]bool{
+	"text":        true,
+	"image_url":   true,
+	"image":       true,
+	"input_audio": true,
+	"audio_url":   true,
+	"file":        true,
+}
 
+// ValidOpenaiMessageTypes specifies valid message types for OpenAI messages.
+var ValidOpenaiMessageTypes = map[string]bool{
+	"text":        true,
+	"image_url":   true,
+	"image":       true,
+	"tool_calls":  true,
+	"tool_result": true,
+}
+
+// Model fallback and default values.
 const (
 	ModelFallback    = "unknown"
 	DefaultImageMime = "image/png"

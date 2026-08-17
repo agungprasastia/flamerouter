@@ -10,7 +10,17 @@ func init() {
 	translator.Register(translator.FormatOpenAI, translator.FormatOllama, openaiToOllamaRequest, nil)
 }
 
-func openaiToOllamaRequest(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any {
+func ensureOllamaOptions(result map[string]any) map[string]any {
+	opts, ok := result["options"].(map[string]any)
+	if !ok || opts == nil {
+		opts = make(map[string]any)
+		result["options"] = opts
+	}
+
+	return opts
+}
+
+func openaiToOllamaRequest(model string, body map[string]any, stream bool, _ map[string]any) map[string]any {
 	result := map[string]any{
 		"model":    model,
 		"messages": normalizeOllamaMessages(body),
@@ -18,27 +28,18 @@ func openaiToOllamaRequest(model string, body map[string]any, stream bool, crede
 	}
 
 	if temp, ok := body["temperature"]; ok {
-		if _, ok := result["options"]; !ok {
-			result["options"] = map[string]any{}
-		}
-
-		result["options"].(map[string]any)["temperature"] = temp
+		opts := ensureOllamaOptions(result)
+		opts["temperature"] = temp
 	}
 
 	if mt, ok := body["max_tokens"].(float64); ok && mt > 0 {
-		if _, ok := result["options"]; !ok {
-			result["options"] = map[string]any{}
-		}
-
-		result["options"].(map[string]any)["num_predict"] = int(mt)
+		opts := ensureOllamaOptions(result)
+		opts["num_predict"] = int(mt)
 	}
 
 	if tp, ok := body["top_p"]; ok {
-		if _, ok := result["options"]; !ok {
-			result["options"] = map[string]any{}
-		}
-
-		result["options"].(map[string]any)["top_p"] = tp
+		opts := ensureOllamaOptions(result)
+		opts["top_p"] = tp
 	}
 
 	if tools, ok := body["tools"].([]any); ok && len(tools) > 0 {
@@ -52,43 +53,153 @@ func openaiToOllamaRequest(model string, body map[string]any, stream bool, crede
 	return result
 }
 
-func normalizeOllamaMessages(body map[string]any) []any {
-	messages, _ := body["messages"].([]any)
-	if len(messages) == 0 {
-		return []any{}
+func extractToolCallInfo(tcRaw any) (string, string, bool) {
+	toolCall, ok := tcRaw.(map[string]any)
+	if !ok {
+		return "", "", false
 	}
 
+	id, idOk := toolCall["id"].(string)
+	if !idOk || id == "" {
+		return "", "", false
+	}
+
+	fn, fnOk := toolCall["function"].(map[string]any)
+	if !fnOk || fn == nil {
+		return "", "", false
+	}
+
+	name, nOk := fn["name"].(string)
+	if !nOk || name == "" {
+		return "", "", false
+	}
+
+	return id, name, true
+}
+
+func buildOllamaToolCallMap(messages []any) map[string]string {
 	toolCallMap := make(map[string]string)
 
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
+		if !ok || msg["role"] != schema.RoleAssistant {
+			continue
+		}
+
+		tc, ok := msg["tool_calls"].([]any)
 		if !ok {
 			continue
 		}
 
-		if msg["role"] != schema.RoleAssistant {
-			continue
-		}
-
-		if tc, ok := msg["tool_calls"].([]any); ok {
-			for _, tcRaw := range tc {
-				toolCall, ok := tcRaw.(map[string]any)
-				if !ok {
-					continue
-				}
-
-				fn, _ := toolCall["function"].(map[string]any)
-				name, _ := fn["name"].(string)
-				id, _ := toolCall["id"].(string)
-
-				if id != "" && name != "" {
-					toolCallMap[id] = name
-				}
+		for _, tcRaw := range tc {
+			if id, name, ok := extractToolCallInfo(tcRaw); ok {
+				toolCallMap[id] = name
 			}
 		}
 	}
 
-	var result []any
+	return toolCallMap
+}
+
+func convertOllamaToolMsg(msg map[string]any, toolCallMap map[string]string) map[string]any {
+	content := normalizeOllamaContent(msg["content"])
+
+	tcid, tcidOk := msg["tool_call_id"].(string)
+	if !tcidOk {
+		tcid = ""
+	}
+
+	toolName := toolCallMap[tcid]
+	if toolName == "" {
+		toolName = "unknown_tool"
+	}
+
+	return map[string]any{
+		"role":      schema.RoleTool,
+		"tool_name": toolName,
+		"content":   content,
+	}
+}
+
+func convertOllamaAssistantMsg(msg map[string]any) map[string]any {
+	content := normalizeOllamaContent(msg["content"])
+	out := map[string]any{
+		"role":    schema.RoleAssistant,
+		"content": content,
+	}
+
+	tc, ok := msg["tool_calls"].([]any)
+	if !ok {
+		return out
+	}
+
+	ollamaToolCalls := make([]any, 0, len(tc))
+
+	for _, tcRaw := range tc {
+		toolCall, ok := tcRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		name := ""
+		argsStr := ""
+
+		if fn, fnOk := toolCall["function"].(map[string]any); fnOk && fn != nil {
+			if n, nOk := fn["name"].(string); nOk {
+				name = n
+			}
+
+			if a, aOk := fn["arguments"].(string); aOk {
+				argsStr = a
+			}
+		}
+
+		var args map[string]any
+		if argsStr != "" {
+			concerns.SafeParseJSON(argsStr, &args)
+		}
+
+		ollamaToolCalls = append(ollamaToolCalls, map[string]any{
+			"type": schema.OpenaiBlockFunction,
+			"function": map[string]any{
+				"name":      name,
+				"arguments": args,
+			},
+		})
+	}
+
+	out["tool_calls"] = ollamaToolCalls
+
+	return out
+}
+
+func convertOllamaDefaultMsg(msg map[string]any, role string) (map[string]any, bool) {
+	content := normalizeOllamaContent(msg["content"])
+	if content == "" {
+		return nil, false
+	}
+
+	images := extractOllamaImages(msg["content"])
+	out := map[string]any{
+		"role":    role,
+		"content": content,
+	}
+
+	if len(images) > 0 {
+		out["images"] = images
+	}
+
+	return out, true
+}
+
+func normalizeOllamaMessages(body map[string]any) []any {
+	messages, ok := body["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		return []any{}
+	}
+
+	toolCallMap := buildOllamaToolCallMap(messages)
+	result := make([]any, 0, len(messages))
 
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
@@ -96,85 +207,21 @@ func normalizeOllamaMessages(body map[string]any) []any {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
+		role, roleOk := msg["role"].(string)
+		if !roleOk {
+			role = ""
+		}
 
-		if role == schema.RoleTool {
-			content := normalizeOllamaContent(msg["content"])
-			tcid, _ := msg["tool_call_id"].(string)
-
-			toolName := toolCallMap[tcid]
-			if toolName == "" {
-				toolName = "unknown_tool"
+		switch role {
+		case schema.RoleTool:
+			result = append(result, convertOllamaToolMsg(msg, toolCallMap))
+		case schema.RoleAssistant:
+			result = append(result, convertOllamaAssistantMsg(msg))
+		default:
+			if out, ok := convertOllamaDefaultMsg(msg, role); ok {
+				result = append(result, out)
 			}
-
-			result = append(result, map[string]any{
-				"role":      schema.RoleTool,
-				"tool_name": toolName,
-				"content":   content,
-			})
-
-			continue
 		}
-
-		if role == schema.RoleAssistant {
-			content := normalizeOllamaContent(msg["content"])
-			out := map[string]any{
-				"role":    schema.RoleAssistant,
-				"content": content,
-			}
-
-			if tc, ok := msg["tool_calls"].([]any); ok {
-				var ollamaToolCalls []any
-
-				for _, tcRaw := range tc {
-					toolCall, ok := tcRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					fn, _ := toolCall["function"].(map[string]any)
-					name, _ := fn["name"].(string)
-					argsStr, _ := fn["arguments"].(string)
-
-					var args map[string]any
-
-					if argsStr != "" {
-						concerns.SafeParseJSON(argsStr, &args)
-					}
-
-					ollamaToolCalls = append(ollamaToolCalls, map[string]any{
-						"type": schema.OpenaiBlockFunction,
-						"function": map[string]any{
-							"name":      name,
-							"arguments": args,
-						},
-					})
-				}
-
-				out["tool_calls"] = ollamaToolCalls
-			}
-
-			result = append(result, out)
-
-			continue
-		}
-
-		content := normalizeOllamaContent(msg["content"])
-		images := extractOllamaImages(msg["content"])
-
-		if content == "" && role != schema.RoleAssistant {
-			continue
-		}
-
-		out := map[string]any{
-			"role":    role,
-			"content": content,
-		}
-		if len(images) > 0 {
-			out["images"] = images
-		}
-
-		result = append(result, out)
 	}
 
 	return result
@@ -185,35 +232,38 @@ func normalizeOllamaContent(content any) string {
 		return s
 	}
 
-	if arr, ok := content.([]any); ok {
-		var parts []string
+	arr, ok := content.([]any)
+	if !ok {
+		return ""
+	}
 
-		for _, blockRaw := range arr {
-			block, ok := blockRaw.(map[string]any)
-			if !ok {
-				continue
-			}
+	var parts []string
 
-			if block["type"] == schema.OpenaiBlockText {
-				if text, ok := block["text"].(string); ok {
-					parts = append(parts, text)
-				}
-			}
+	for _, blockRaw := range arr {
+		block, ok := blockRaw.(map[string]any)
+		if !ok {
+			continue
 		}
 
-		if len(parts) > 0 {
-			result := ""
+		if block["type"] == schema.OpenaiBlockText {
+			if text, ok := block["text"].(string); ok {
+				parts = append(parts, text)
+			}
+		}
+	}
 
-			for i, p := range parts {
-				if i > 0 {
-					result += "\n"
-				}
+	if len(parts) > 0 {
+		result := ""
 
-				result += p
+		for i, p := range parts {
+			if i > 0 {
+				result += "\n"
 			}
 
-			return result
+			result += p
 		}
+
+		return result
 	}
 
 	return ""
@@ -229,26 +279,24 @@ func extractOllamaImages(content any) []string {
 
 	for _, blockRaw := range arr {
 		block, ok := blockRaw.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		if block["type"] != schema.OpenaiBlockImageUrl {
+		if !ok || block["type"] != schema.OpenaiBlockImageURL {
 			continue
 		}
 
 		var url string
+
 		if iu, ok := block["image_url"].(map[string]any); ok {
-			url, _ = iu["url"].(string)
+			if u, uOk := iu["url"].(string); uOk {
+				url = u
+			}
 		}
 
 		if url == "" {
 			continue
 		}
 
-		mime, data, err := concerns.ParseDataUri(url)
+		mime, data, err := concerns.ParseDataURI(url)
 		if err == nil && mime != "" {
-			_ = data
 			images = append(images, string(data))
 		}
 	}

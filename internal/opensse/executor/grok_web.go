@@ -18,6 +18,9 @@ import (
 func init() {
 	RegisterSpecialized("grok-web", &GrokWebExecutor{
 		Base: Base{
+			Client:   nil,
+			Headers:  nil,
+			BaseURLs: nil,
 			Provider: "grok-web",
 			BaseURL:  "https://grok.com/rest/app-chat/conversations/new",
 		},
@@ -309,7 +312,7 @@ func readGrokNDJSON(r io.Reader, out chan<- grokChunk) {
 			if msg == "" {
 				msg = fmt.Sprintf("Grok error: %v", errObj["code"])
 			}
-			out <- grokChunk{errorMsg: msg, done: true}
+			out <- grokChunk{errorMsg: msg, done: true, delta: "", fullMessage: ""}
 
 			return
 		}
@@ -323,17 +326,17 @@ func readGrokNDJSON(r io.Reader, out chan<- grokChunk) {
 
 		if mr, ok := resp["modelResponse"].(map[string]any); ok {
 			if msg, _ := mr["message"].(string); msg != "" {
-				out <- grokChunk{fullMessage: msg}
+				out <- grokChunk{fullMessage: msg, delta: "", errorMsg: "", done: false}
 			}
 
 			continue
 		}
 
 		if tok, ok := resp["token"]; ok && tok != nil {
-			out <- grokChunk{delta: fmt.Sprint(tok)}
+			out <- grokChunk{delta: fmt.Sprint(tok), fullMessage: "", errorMsg: "", done: false}
 		}
 	}
-	out <- grokChunk{done: true}
+	out <- grokChunk{done: true, delta: "", fullMessage: "", errorMsg: ""}
 }
 
 func convertGrokNDJSONToSSE(r io.ReadCloser, model, cid string, created int64) io.ReadCloser {

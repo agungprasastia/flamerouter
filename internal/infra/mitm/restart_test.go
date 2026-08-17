@@ -6,7 +6,7 @@ import (
 )
 
 func TestRestarter_GivesUpAtMax(t *testing.T) {
-	r := NewRestarter(func(addr string) error {
+	r := NewRestarter(func(_ string) error {
 		return errRestart
 	})
 	r.addr = ":0"

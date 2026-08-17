@@ -20,10 +20,23 @@ const (
 )
 
 func init() {
-	RegisterSpecialized("github", &GithubExecutor{Base: Base{Provider: "github", BaseURL: "https://api.githubcopilot.com/chat/completions"}})
-	RegisterSpecialized("copilot", &GithubExecutor{Base: Base{Provider: "github", BaseURL: "https://api.githubcopilot.com/chat/completions"}})
+	RegisterSpecialized("github", &GithubExecutor{Base: Base{
+		Client:   nil,
+		Provider: "github",
+		BaseURL:  "https://api.githubcopilot.com/chat/completions",
+		Headers:  nil,
+		BaseURLs: nil,
+	}})
+	RegisterSpecialized("copilot", &GithubExecutor{Base: Base{
+		Client:   nil,
+		Provider: "github",
+		BaseURL:  "https://api.githubcopilot.com/chat/completions",
+		Headers:  nil,
+		BaseURLs: nil,
+	}})
 }
 
+// GithubExecutor handles requests to GitHub Copilot API.
 type GithubExecutor struct {
 	Base
 }
@@ -67,6 +80,48 @@ func (e *GithubExecutor) buildHeaders(cred Credentials, stream bool) map[string]
 	return h
 }
 
+func sanitizeMessagePart(part map[string]any) (map[string]any, bool) {
+	t, _ := part["type"].(string) // nolint:errcheck
+	if t == "text" || t == "image_url" {
+		return part, true
+	}
+
+	var text string
+	if s, ok := part["text"].(string); ok {
+		text = s
+	} else if s, ok := part["content"].(string); ok {
+		text = s
+	} else {
+		b, err := json.Marshal(part)
+		if err == nil {
+			text = string(b)
+		}
+	}
+
+	if text != "" {
+		return map[string]any{"type": "text", "text": text}, true
+	}
+
+	return nil, false
+}
+
+func sanitizeContentParts(content []any) []any {
+	var clean []any
+
+	for _, partRaw := range content {
+		part, ok := partRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if cleaned, okPart := sanitizeMessagePart(part); okPart {
+			clean = append(clean, cleaned)
+		}
+	}
+
+	return clean
+}
+
 func (e *GithubExecutor) sanitizeMessages(body map[string]any) {
 	messages, ok := body["messages"].([]any)
 	if !ok {
@@ -84,35 +139,7 @@ func (e *GithubExecutor) sanitizeMessages(body map[string]any) {
 			continue
 		}
 
-		var clean []any
-
-		for _, partRaw := range content {
-			part, ok := partRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			t, _ := part["type"].(string)
-			if t == "text" || t == "image_url" {
-				clean = append(clean, part)
-				continue
-			}
-
-			var text string
-			if s, ok := part["text"].(string); ok {
-				text = s
-			} else if s, ok := part["content"].(string); ok {
-				text = s
-			} else {
-				b, _ := json.Marshal(part)
-				text = string(b)
-			}
-
-			if text != "" {
-				clean = append(clean, map[string]any{"type": "text", "text": text})
-			}
-		}
-
+		clean := sanitizeContentParts(content)
 		if len(clean) > 0 {
 			msg["content"] = clean
 		} else {
@@ -123,6 +150,21 @@ func (e *GithubExecutor) sanitizeMessages(body map[string]any) {
 	}
 }
 
+func resolveGithubURL(base, _ string, isClaude bool) string {
+	url := "https://api.githubcopilot.com/chat/completions"
+	if isClaude {
+		// Anthropic-native messages shim for cache token counts
+		url = "https://api.githubcopilot.com/v1/messages"
+	}
+
+	if base != "" && !strings.Contains(base, "githubcopilot") {
+		url = base + "/chat/completions"
+	}
+
+	return url
+}
+
+// Execute executes GitHub Copilot requests.
 func (e *GithubExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
@@ -140,20 +182,12 @@ func (e *GithubExecutor) Execute(ctx context.Context, cred Credentials, model st
 		}
 	}
 
-	url := "https://api.githubcopilot.com/chat/completions"
-	if e.isClaudeModel(model) {
-		// Anthropic-native messages shim for cache token counts
-		url = "https://api.githubcopilot.com/v1/messages"
-	} else {
+	if !e.isClaudeModel(model) {
 		e.sanitizeMessages(m)
 	}
 
-	if base := strings.TrimRight(cred.BaseURL, "/"); base != "" {
-		// allow override but keep path
-		if !strings.Contains(base, "githubcopilot") {
-			url = base + "/chat/completions"
-		}
-	}
+	base := strings.TrimRight(cred.BaseURL, "/")
+	url := resolveGithubURL(base, model, e.isClaudeModel(model))
 
 	payload, err := json.Marshal(m)
 	if err != nil {
@@ -161,13 +195,8 @@ func (e *GithubExecutor) Execute(ctx context.Context, cred Credentials, model st
 	}
 
 	headers := e.buildHeaders(cred, stream)
-	h := make(map[string][]string)
-
-	for k, v := range headers {
-		h[k] = v
-	}
-	// convert to http.Header via DoPOST
 	hh := e.Base.BuildHeaders(cred, stream)
+
 	for k, vals := range headers {
 		hh.Del(k)
 
@@ -181,7 +210,7 @@ func (e *GithubExecutor) Execute(ctx context.Context, cred Credentials, model st
 
 func randomHex(n int) string {
 	b := make([]byte, n)
-	rand.Read(b)
+	_, _ = rand.Read(b) // nolint:errcheck
 
 	return hex.EncodeToString(b)
 }

@@ -15,33 +15,26 @@ type dedupeRule struct {
 // Parity with 9router open-sse/utils/toolDeduper.js DEDUP_RULES.
 var dedupeRules = []dedupeRule{
 	{
-		triggers: []string{"mcp__exa__web_search_exa", "mcp__exa__web_fetch_exa"},
-		strip:    []string{"WebSearch", "WebFetch", "mcp__workspace__web_fetch"},
+		triggers:   []string{"mcp__exa__web_search_exa", "mcp__exa__web_fetch_exa"},
+		triggerRes: nil,
+		strip:      []string{"WebSearch", "WebFetch", "mcp__workspace__web_fetch"},
+		stripRes:   nil,
 	},
 	{
-		triggers: []string{"mcp__tavily__tavily_search", "mcp__tavily__tavily_extract"},
-		strip:    []string{"WebSearch", "WebFetch", "mcp__workspace__web_fetch"},
+		triggers:   []string{"mcp__tavily__tavily_search", "mcp__tavily__tavily_extract"},
+		triggerRes: nil,
+		strip:      []string{"WebSearch", "WebFetch", "mcp__workspace__web_fetch"},
+		stripRes:   nil,
 	},
 	{
+		triggers:   nil,
 		triggerRes: []*regexp.Regexp{regexp.MustCompile(`^mcp__browsermcp__`)},
+		strip:      nil,
 		stripRes:   []*regexp.Regexp{regexp.MustCompile(`^mcp__Claude_in_Chrome__`)},
 	},
 }
 
-// DedupeTools removes built-in tools when equivalent MCP tools are present.
-// Also drops exact name duplicates, keeping the later occurrence (MCP preferred).
-func DedupeTools(body []byte) []byte {
-	var req map[string]any
-	if err := json.Unmarshal(body, &req); err != nil {
-		return body
-	}
-
-	tools, ok := req["tools"].([]any)
-	if !ok || len(tools) == 0 {
-		return body
-	}
-
-	// 1) Exact-name dedupe: keep later (MCP often appended after built-ins).
+func dedupeByName(tools []any) []any {
 	seen := map[string]int{}
 	deduped := make([]any, 0, len(tools))
 
@@ -66,12 +59,10 @@ func DedupeTools(body []byte) []byte {
 		}
 	}
 
-	// 2) Rule-based strip when MCP triggers present.
-	names := make([]string, len(afterName))
-	for i, t := range afterName {
-		names[i] = toolName(t)
-	}
+	return afterName
+}
 
+func collectStripSet(names []string) map[string]bool {
 	toStrip := map[string]bool{}
 
 	for _, rule := range dedupeRules {
@@ -86,26 +77,49 @@ func DedupeTools(body []byte) []byte {
 		}
 	}
 
-	if len(toStrip) == 0 && len(afterName) == len(tools) {
-		// No change: still re-marshal only if name-dedupe shrank the list.
-		// Compare lengths — if same and no strip, return original body when no name dups.
-		if !hadNameDup(tools) {
-			return body
-		}
-	}
+	return toStrip
+}
 
-	result := make([]any, 0, len(afterName))
+func filterStrippedTools(tools []any, toStrip map[string]bool) []any {
+	result := make([]any, 0, len(tools))
 
-	for _, t := range afterName {
+	for _, t := range tools {
 		n := toolName(t)
-		if toStrip[n] {
-			continue
+		if !toStrip[n] {
+			result = append(result, t)
 		}
-
-		result = append(result, t)
 	}
 
-	req["tools"] = result
+	return result
+}
+
+// DedupeTools removes built-in tools when equivalent MCP tools are present.
+// Also drops exact name duplicates, keeping the later occurrence (MCP preferred).
+func DedupeTools(body []byte) []byte {
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+
+	tools, ok := req["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		return body
+	}
+
+	afterName := dedupeByName(tools)
+
+	names := make([]string, len(afterName))
+	for i, t := range afterName {
+		names[i] = toolName(t)
+	}
+
+	toStrip := collectStripSet(names)
+
+	if len(toStrip) == 0 && len(afterName) == len(tools) && !hadNameDup(tools) {
+		return body
+	}
+
+	req["tools"] = filterStrippedTools(afterName, toStrip)
 
 	out, err := json.Marshal(req)
 	if err != nil {
@@ -135,21 +149,24 @@ func hadNameDup(tools []any) bool {
 }
 
 func toolName(t any) string {
-	tm, _ := t.(map[string]any)
-	if tm == nil {
+	tm, ok1 := t.(map[string]any)
+	if !ok1 || tm == nil {
 		return ""
 	}
 
-	if name, _ := tm["name"].(string); name != "" {
+	if name, ok2 := tm["name"].(string); ok2 && name != "" {
 		return name
 	}
 
-	fn, _ := tm["function"].(map[string]any)
-	if fn == nil {
+	fn, ok3 := tm["function"].(map[string]any)
+	if !ok3 || fn == nil {
 		return ""
 	}
 
-	name, _ := fn["name"].(string)
+	name, ok4 := fn["name"].(string)
+	if !ok4 {
+		return ""
+	}
 
 	return name
 }

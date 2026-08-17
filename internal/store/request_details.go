@@ -1,5 +1,7 @@
+// Package store provides SQLite persistent storage for flamerouter state.
 package store
 
+// RequestDetail holds detailed telemetry about a proxied request.
 type RequestDetail struct {
 	RequestBody      string
 	ResponsePreview  string
@@ -18,6 +20,7 @@ type RequestDetail struct {
 	StatusCode       int
 }
 
+// InsertRequestDetail records request telemetry to SQLite.
 func (s *Store) InsertRequestDetail(d RequestDetail) error {
 	if d.ID == "" {
 		d.ID = newID()
@@ -38,6 +41,7 @@ func (s *Store) InsertRequestDetail(d RequestDetail) error {
 	return err
 }
 
+// QueryRequestDetails returns the most recent request details.
 func (s *Store) QueryRequestDetails(limit int) ([]RequestDetail, error) {
 	if limit <= 0 {
 		limit = 100
@@ -56,7 +60,11 @@ func (s *Store) QueryRequestDetails(limit int) ([]RequestDetail, error) {
 		return nil, err
 	}
 
-	defer rows.Close()
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	var out []RequestDetail
 

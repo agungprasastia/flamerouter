@@ -1,3 +1,4 @@
+// Package auth provides authentication, session management, and rate limiting.
 package auth
 
 import (
@@ -13,11 +14,13 @@ type RateLimiter struct {
 	mu          sync.Mutex
 }
 
+// NewRateLimiter creates a new RateLimiter instance with given attempts and window.
 func NewRateLimiter(maxAttempts int, window time.Duration) *RateLimiter {
 	return &RateLimiter{
 		attempts:    make(map[string][]time.Time),
 		maxAttempts: maxAttempts,
 		window:      window,
+		mu:          sync.Mutex{},
 	}
 }
 

@@ -1,3 +1,4 @@
+// Package mitm provides local HTTPS MITM proxy and certificate generation for developer tools.
 package mitm
 
 import (
@@ -7,8 +8,8 @@ import (
 	"strings"
 )
 
-// TOOL_HOSTS mirrors 9router mitmToolHosts — hosts written as 127.0.0.1 when DNS enabled.
-var TOOL_HOSTS = map[string][]string{
+// ToolHosts mirrors 9router mitmToolHosts — hosts written as 127.0.0.1 when DNS enabled.
+var ToolHosts = map[string][]string{
 	"antigravity": {"daily-cloudcode-pa.googleapis.com", "cloudcode-pa.googleapis.com"},
 	"copilot":     {"api.individual.githubcopilot.com"},
 	"kiro":        {"runtime.us-east-1.kiro.dev", "q.us-east-1.amazonaws.com", "codewhisperer.us-east-1.amazonaws.com"},
@@ -28,13 +29,14 @@ func hostsFilePath() string {
 // EnableToolHosts appends 127.0.0.1 entries for tool hosts.
 // Requires elevation. Returns error documenting elevation need on failure.
 func EnableToolHosts(tool string) error {
-	hosts, ok := TOOL_HOSTS[tool]
+	hosts, ok := ToolHosts[tool]
 	if !ok {
 		return fmt.Errorf("unknown tool %q", tool)
 	}
 
 	path := hostsFilePath()
 
+	/* #nosec G304 */
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read hosts (needs elevation): %w", err)
@@ -42,7 +44,7 @@ func EnableToolHosts(tool string) error {
 
 	content := string(raw)
 
-	var add []string
+	add := make([]string, 0, len(hosts))
 
 	for _, h := range hosts {
 		line := "127.0.0.1 " + h + " " + hostsMarker + " " + tool
@@ -59,6 +61,7 @@ func EnableToolHosts(tool string) error {
 	}
 
 	out := strings.TrimRight(content, "\r\n") + "\n" + strings.Join(add, "\n") + "\n"
+	/* #nosec G306 */
 	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
 		return fmt.Errorf("write hosts failed (run elevated / Administrator): %w", err)
 	}
@@ -70,6 +73,7 @@ func EnableToolHosts(tool string) error {
 func DisableToolHosts(tool string) error {
 	path := hostsFilePath()
 
+	/* #nosec G304 */
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read hosts (needs elevation): %w", err)
@@ -77,7 +81,7 @@ func DisableToolHosts(tool string) error {
 
 	lines := strings.Split(string(raw), "\n")
 
-	var keep []string
+	keep := make([]string, 0, len(lines))
 
 	for _, line := range lines {
 		if strings.Contains(line, hostsMarker) && (tool == "" || strings.Contains(line, tool)) {
@@ -88,6 +92,7 @@ func DisableToolHosts(tool string) error {
 	}
 
 	out := strings.Join(keep, "\n")
+	/* #nosec G306 */
 	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
 		return fmt.Errorf("write hosts failed (run elevated / Administrator): %w", err)
 	}
@@ -97,11 +102,12 @@ func DisableToolHosts(tool string) error {
 
 // CheckToolHosts reports whether tool hosts appear in hosts file with our marker.
 func CheckToolHosts(tool string) bool {
-	hosts, ok := TOOL_HOSTS[tool]
+	hosts, ok := ToolHosts[tool]
 	if !ok {
 		return false
 	}
 
+	/* #nosec G304 */
 	raw, err := os.ReadFile(hostsFilePath())
 	if err != nil {
 		return false
@@ -119,8 +125,8 @@ func CheckToolHosts(tool string) bool {
 
 // AllDNSStatus maps tool -> hosts-file active.
 func AllDNSStatus() map[string]bool {
-	out := make(map[string]bool, len(TOOL_HOSTS))
-	for tool := range TOOL_HOSTS {
+	out := make(map[string]bool, len(ToolHosts))
+	for tool := range ToolHosts {
 		out[tool] = CheckToolHosts(tool)
 	}
 

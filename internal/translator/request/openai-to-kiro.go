@@ -1,3 +1,4 @@
+// Package request implements request translators between different LLM API formats.
 package request
 
 import (
@@ -14,69 +15,27 @@ func init() {
 	translator.Register(translator.FormatOpenAI, translator.FormatKiro, openaiToKiroRequest, nil)
 }
 
-func openaiToKiroRequest(model string, body map[string]any, stream bool, credentials map[string]any) map[string]any {
-	messages, _ := body["messages"].([]any)
-	tools, _ := body["tools"].([]any)
-	temp, _ := body["temperature"].(float64)
-	topP, _ := body["top_p"].(float64)
-
-	upstream, agentic := translator.ResolveKiroModel(model)
-	thinkingBudget := translator.ResolveKiroThinkingBudget(body, nil, model)
-
-	clientProvidedTools := len(tools) > 0
-	if !clientProvidedTools {
-		messages = flattenKiroToolInteractions(messages)
+func buildKiroInferenceConfig(body map[string]any) map[string]any {
+	inferenceConfig := map[string]any{
+		"maxTokens": 32000,
 	}
 
-	history, currentMessage := convertKiroMessages(messages, tools, upstream, clientProvidedTools)
-
-	rawHeaders := ""
-	if credentials != nil {
-		rawHeaders, _ = credentials["rawHeaders"].(string)
+	if temp, ok := body["temperature"].(float64); ok && temp != 0 {
+		inferenceConfig["temperature"] = temp
 	}
 
-	authMethod := ""
-	profileArn := ""
-
-	if credentials != nil {
-		if psd, ok := credentials["providerSpecificData"].(map[string]any); ok {
-			authMethod, _ = psd["authMethod"].(string)
-			profileArn, _ = psd["profileArn"].(string)
-		}
+	if topP, ok := body["top_p"].(float64); ok && topP != 0 {
+		inferenceConfig["topP"] = topP
 	}
 
-	accountBoundAuth := authMethod == "api_key" || authMethod == "idc" || authMethod == "external_idp"
-	if accountBoundAuth {
-		if profileArn == "" {
-			profileArn = ""
-		}
-	} else {
-		if profileArn == "" {
-			profileArn = translator.ResolveDefaultProfileArn(authMethod)
-		}
-	}
+	return inferenceConfig
+}
 
-	var systemPromptParts []string
-	if thinkingBudget != nil {
-		systemPromptParts = append(systemPromptParts, buildThinkingSystemPrefixFromBudget(*thinkingBudget))
-	}
-
-	if agentic {
-		systemPromptParts = append(systemPromptParts, translator.KiroAgenticSystemPrompt)
-	}
-
-	systemPrompt := strings.Join(systemPromptParts, "\n\n")
-	currentTimeContext := "[Context: Current time is " + concerns.CurrentTimestamp() + "]"
-	contentPrefix := systemPrompt
-
-	if contentPrefix != "" {
-		contentPrefix += "\n\n" + currentTimeContext
-	} else {
-		contentPrefix = currentTimeContext
-	}
-
-	_ = rawHeaders
-
+func assembleKiroPayload(
+	body map[string]any,
+	upstream, currentMessage, contentPrefix, profileArn, systemPrompt string,
+	history []any,
+) map[string]any {
 	payload := map[string]any{
 		"conversationState": map[string]any{
 			"chatTriggerType":     "MANUAL",
@@ -92,7 +51,8 @@ func openaiToKiroRequest(model string, body map[string]any, stream bool, credent
 			},
 			"history": history,
 		},
-		"agentMode": "vibe",
+		"agentMode":       "vibe",
+		"inferenceConfig": buildKiroInferenceConfig(body),
 	}
 
 	if profileArn != "" {
@@ -108,20 +68,154 @@ func openaiToKiroRequest(model string, body map[string]any, stream bool, credent
 		payload["additionalModelRequestFields"] = additionalFields
 	}
 
-	inferenceConfig := map[string]any{}
-	inferenceConfig["maxTokens"] = 32000
-
-	if temp != 0 {
-		inferenceConfig["temperature"] = temp
-	}
-
-	if topP != 0 {
-		inferenceConfig["topP"] = topP
-	}
-
-	payload["inferenceConfig"] = inferenceConfig
-
 	return payload
+}
+
+func openaiToKiroRequest(model string, body map[string]any, _ bool, credentials map[string]any) map[string]any {
+	messages, ok := body["messages"].([]any)
+	if !ok {
+		messages = nil
+	}
+
+	tools, ok := body["tools"].([]any)
+	if !ok {
+		tools = nil
+	}
+
+	upstream, agentic := translator.ResolveKiroModel(model)
+
+	if len(tools) == 0 {
+		messages = flattenKiroToolInteractions(messages)
+	}
+
+	history, currentMessage := convertKiroMessages(messages, upstream)
+	profileArn := extractKiroSharedCredentials(credentials)
+	systemPrompt := buildKiroSystemPrompt(body, model, agentic)
+
+	currentTimeContext := "[Context: Current time is " + concerns.CurrentTimestamp() + "]"
+	contentPrefix := systemPrompt
+
+	if contentPrefix != "" {
+		contentPrefix += "\n\n" + currentTimeContext
+	} else {
+		contentPrefix = currentTimeContext
+	}
+
+	return assembleKiroPayload(body, upstream, currentMessage, contentPrefix, profileArn, systemPrompt, history)
+}
+
+func flattenKiroToolUseBlocks(arr []any) []string {
+	var parts []string
+
+	for _, blockRaw := range arr {
+		block, ok := blockRaw.(map[string]any)
+		if !ok || block == nil {
+			continue
+		}
+
+		btype, ok := block["type"].(string)
+		if !ok {
+			continue
+		}
+
+		if btype == schema.ClaudeBlockToolUse {
+			name, okName := block["name"].(string)
+			if !okName {
+				name = ""
+			}
+
+			input, err := json.Marshal(block["input"])
+			if err != nil {
+				input = []byte("{}")
+			}
+
+			parts = append(parts, "[Tool call: "+name+"("+string(input)+")]")
+		} else if text, okText := block["text"].(string); okText {
+			parts = append(parts, text)
+		}
+	}
+
+	return parts
+}
+
+func flattenSingleOpenAIToolCall(tcRaw any) string {
+	tc, ok := tcRaw.(map[string]any)
+	if !ok || tc == nil {
+		return ""
+	}
+
+	fn, ok := tc["function"].(map[string]any)
+	if !ok || fn == nil {
+		return ""
+	}
+
+	name, okName := fn["name"].(string)
+	if !okName {
+		name = ""
+	}
+
+	args, okArgs := fn["arguments"].(string)
+	if !okArgs {
+		args = ""
+	}
+
+	return "[Tool call: " + name + "(" + args + ")]"
+}
+
+func flattenKiroAssistantMsg(msg map[string]any) map[string]any {
+	var parts []string
+
+	if arr, ok := msg["content"].([]any); ok {
+		parts = append(parts, flattenKiroToolUseBlocks(arr)...)
+	} else if s, ok := msg["content"].(string); ok {
+		parts = append(parts, s)
+	}
+
+	if toolCalls, ok := msg["tool_calls"].([]any); ok {
+		for _, tcRaw := range toolCalls {
+			tcStr := flattenSingleOpenAIToolCall(tcRaw)
+			if tcStr != "" {
+				parts = append(parts, tcStr)
+			}
+		}
+	}
+
+	return map[string]any{
+		"role":    schema.RoleAssistant,
+		"content": strings.Join(parts, "\n"),
+	}
+}
+
+func flattenKiroUserMsg(msg map[string]any, role string) map[string]any {
+	arr, ok := msg["content"].([]any)
+	if !ok {
+		return msg
+	}
+
+	newContent := make([]any, 0, len(arr))
+
+	for _, blockRaw := range arr {
+		block, ok := blockRaw.(map[string]any)
+		if !ok || block == nil {
+			continue
+		}
+
+		bType, ok := block["type"].(string)
+		if ok && bType == schema.ClaudeBlockToolResult {
+			content := extractKiroTextContent(block["content"])
+			newContent = append(newContent, map[string]any{
+				"type": schema.OpenaiBlockText,
+				"text": "[Tool result: " + content + "]",
+			})
+		} else {
+			newContent = append(newContent, block)
+		}
+	}
+
+	return map[string]any{
+		"role":    role,
+		"content": newContent,
+	}
 }
 
 func flattenKiroToolInteractions(messages []any) []any {
@@ -129,263 +223,109 @@ func flattenKiroToolInteractions(messages []any) []any {
 
 	for _, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
-		if !ok {
+		if !ok || msg == nil {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
+		role, ok := msg["role"].(string)
+		if !ok {
+			role = ""
+		}
 
-		if role == schema.RoleTool {
+		switch role {
+		case schema.RoleTool:
 			content := extractKiroTextContent(msg["content"])
 			out = append(out, map[string]any{
 				"role":    schema.RoleUser,
 				"content": "[Tool result: " + content + "]",
 			})
-
-			continue
+		case schema.RoleAssistant:
+			out = append(out, flattenKiroAssistantMsg(msg))
+		case schema.RoleUser:
+			out = append(out, flattenKiroUserMsg(msg, role))
+		default:
+			out = append(out, msg)
 		}
-
-		if role == schema.RoleAssistant {
-			var parts []string
-
-			if arr, ok := msg["content"].([]any); ok {
-				for _, blockRaw := range arr {
-					block, ok := blockRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					btype, _ := block["type"].(string)
-					if btype == "tool_use" {
-						name, _ := block["name"].(string)
-						input, _ := json.Marshal(block["input"])
-						parts = append(parts, "[Tool call: "+name+"("+string(input)+")]")
-					} else if text, ok := block["text"].(string); ok {
-						parts = append(parts, text)
-					}
-				}
-			} else if s, ok := msg["content"].(string); ok {
-				parts = append(parts, s)
-			}
-
-			for _, tcRaw := range msg["tool_calls"].([]any) {
-				tc, ok := tcRaw.(map[string]any)
-				if !ok {
-					continue
-				}
-
-				fn, _ := tc["function"].(map[string]any)
-				name, _ := fn["name"].(string)
-				args, _ := fn["arguments"].(string)
-				parts = append(parts, "[Tool call: "+name+"("+args+")]")
-			}
-
-			out = append(out, map[string]any{
-				"role":    schema.RoleAssistant,
-				"content": strings.Join(parts, "\n"),
-			})
-
-			continue
-		}
-
-		if role == schema.RoleUser {
-			if arr, ok := msg["content"].([]any); ok {
-				newContent := make([]any, 0, len(arr))
-
-				for _, blockRaw := range arr {
-					block, ok := blockRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					if block["type"] == "tool_result" {
-						content := extractKiroTextContent(block["content"])
-						newContent = append(newContent, map[string]any{
-							"type": schema.OpenaiBlockText,
-							"text": "[Tool result: " + content + "]",
-						})
-					} else {
-						newContent = append(newContent, block)
-					}
-				}
-
-				out = append(out, map[string]any{
-					"role":    role,
-					"content": newContent,
-				})
-
-				continue
-			}
-		}
-
-		out = append(out, msg)
 	}
 
 	return out
 }
 
-func convertKiroMessages(messages []any, tools []any, model string, clientProvidedTools bool) ([]any, string) {
-	history := make([]any, 0, len(messages))
+func extractKiroTextFromBlocks(blocks []any) string {
+	var textParts []string
 
-	var currentMessage string
-
-	var pendingUserContent []string
-
-	var pendingAssistantContent []string
-
-	var currentRole string
-
-	toolsInjected := false
-
-	flushPending := func() {
-		if currentRole == schema.RoleUser {
-			content := strings.Join(pendingUserContent, "\n\n")
-			if content == "" {
-				content = "continue"
-			}
-
-			history = append(history, map[string]any{
-				"userInputMessage": map[string]any{
-					"content": content,
-					"modelId": model,
-				},
-			})
-			currentMessage = content
-			pendingUserContent = nil
-		} else if currentRole == schema.RoleAssistant {
-			content := strings.Join(pendingAssistantContent, "\n\n")
-			if content == "" {
-				content = "..."
-			}
-
-			history = append(history, map[string]any{
-				"assistantResponseMessage": map[string]any{
-					"content": content,
-				},
-			})
-			pendingAssistantContent = nil
-		}
-	}
-
-	for _, msgRaw := range messages {
-		msg, ok := msgRaw.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		role, _ := msg["role"].(string)
-
-		wasSystem := role == schema.RoleSystem
-
-		if role == schema.RoleSystem || role == schema.RoleTool {
-			role = schema.RoleUser
-		}
-
-		if role != currentRole && currentRole != "" {
-			flushPending()
-		}
-
-		currentRole = role
-
-		if role == schema.RoleUser {
-			var content string
-			switch c := msg["content"].(type) {
-			case string:
-				content = c
-			case []any:
-				var textParts []string
-
-				for _, blockRaw := range c {
-					block, ok := blockRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					if text, ok := block["text"].(string); ok {
-						textParts = append(textParts, text)
-					}
-				}
-
-				content = strings.Join(textParts, "\n")
-			}
-
-			if msg["role"] == schema.RoleTool {
-				if tcid, ok := msg["tool_call_id"].(string); ok {
-					_ = tcid
-				}
-			} else if content != "" {
-				if wasSystem {
-					pendingUserContent = append(pendingUserContent, "<instructions>\n"+content+"\n</instructions>")
-				} else {
-					pendingUserContent = append(pendingUserContent, content)
-				}
-			}
-		} else if role == schema.RoleAssistant {
-			var textContent string
-			if s, ok := msg["content"].(string); ok {
-				textContent = s
-			} else if arr, ok := msg["content"].([]any); ok {
-				for _, blockRaw := range arr {
-					block, ok := blockRaw.(map[string]any)
-					if !ok {
-						continue
-					}
-
-					if text, ok := block["text"].(string); ok {
-						textContent += text
-					}
-				}
-			}
-
-			if textContent != "" {
-				pendingAssistantContent = append(pendingAssistantContent, textContent)
+	for _, blockRaw := range blocks {
+		if block, ok := blockRaw.(map[string]any); ok && block != nil {
+			if text, ok := block["text"].(string); ok {
+				textParts = append(textParts, text)
 			}
 		}
 	}
 
-	if currentRole != "" {
-		flushPending()
+	return strings.Join(textParts, "\n")
+}
+
+func (c *kiroBaseConverter) handleOpenAIUser(msg map[string]any, wasSystem bool) {
+	var content string
+
+	switch ct := msg["content"].(type) {
+	case string:
+		content = ct
+	case []any:
+		content = extractKiroTextFromBlocks(ct)
 	}
 
-	for i := len(history) - 1; i >= 0; i-- {
-		if item, ok := history[i].(map[string]any); ok {
-			if _, ok := item["userInputMessage"]; ok {
-				currentMessage = extractKiroUserContent(item)
-
-				history = append(history[:i], history[i+1:]...)
-
-				break
-			}
+	if msg["role"] != schema.RoleTool && content != "" {
+		if wasSystem {
+			c.pendingUserContent = append(c.pendingUserContent, "<instructions>\n"+content+"\n</instructions>")
+		} else {
+			c.pendingUserContent = append(c.pendingUserContent, content)
 		}
 	}
+}
 
-	var mergedHistory []any
-	for _, item := range history {
-		if len(mergedHistory) > 0 {
-			prev, ok := mergedHistory[len(mergedHistory)-1].(map[string]any)
-			curr, ok2 := item.(map[string]any)
+func (c *kiroBaseConverter) handleOpenAIAssistant(msg map[string]any) {
+	var textContent string
 
-			if ok && ok2 {
-				if _, prevIsUser := prev["userInputMessage"]; prevIsUser {
-					if _, currIsUser := curr["userInputMessage"]; currIsUser {
-						prevMsg := prev["userInputMessage"].(map[string]any)
-						currMsg := curr["userInputMessage"].(map[string]any)
-						prevMsg["content"] = prevMsg["content"].(string) + "\n\n" + currMsg["content"].(string)
-
-						continue
-					}
-				}
-			}
-		}
-
-		mergedHistory = append(mergedHistory, item)
+	if s, ok := msg["content"].(string); ok {
+		textContent = s
+	} else if arr, ok := msg["content"].([]any); ok {
+		textContent = extractKiroTextFromBlocks(arr)
 	}
 
-	_ = tools
-	_ = clientProvidedTools
-	_ = toolsInjected
+	if textContent != "" {
+		c.pendingAssistantContent = append(c.pendingAssistantContent, textContent)
+	}
+}
 
-	return mergedHistory, currentMessage
+func (c *kiroBaseConverter) ingestOpenAIMsg(msg map[string]any) {
+	role, ok := msg["role"].(string)
+	if !ok {
+		role = schema.RoleUser
+	}
+
+	wasSystem := role == schema.RoleSystem
+
+	if role == schema.RoleSystem || role == schema.RoleTool {
+		role = schema.RoleUser
+	}
+
+	if role != c.currentRole && c.currentRole != "" {
+		c.flush()
+	}
+
+	c.currentRole = role
+	if role == schema.RoleUser {
+		c.handleOpenAIUser(msg, wasSystem)
+	} else if role == schema.RoleAssistant {
+		c.handleOpenAIAssistant(msg)
+	}
+}
+
+func convertKiroMessages(messages []any, model string) ([]any, string) {
+	return runKiroMessageConversion(messages, model, func(conv *kiroBaseConverter, msg map[string]any) {
+		conv.ingestOpenAIMsg(msg)
+	})
 }
 
 func extractKiroTextContent(content any) string {
@@ -393,46 +333,10 @@ func extractKiroTextContent(content any) string {
 	case string:
 		return c
 	case []any:
-		var parts []string
-
-		for _, blockRaw := range c {
-			block, ok := blockRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			if text, ok := block["text"].(string); ok {
-				parts = append(parts, text)
-			}
-		}
-
-		return strings.Join(parts, "\n")
+		return extractKiroTextFromBlocks(c)
 	}
 
 	return ""
-}
-
-func extractKiroUserContent(item map[string]any) string {
-	uim, ok := item["userInputMessage"].(map[string]any)
-	if !ok {
-		return ""
-	}
-
-	content, _ := uim["content"].(string)
-
-	return content
-}
-
-func buildThinkingSystemPrefixFromBudget(budget int) string {
-	if budget < 1 {
-		budget = 1
-	}
-
-	if budget > 32000 {
-		budget = 32000
-	}
-
-	return "<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>" + concerns.MustMarshal(budget) + "</max_thinking_length>"
 }
 
 func buildKiroAdditionalModelRequestFields(body map[string]any, model string) map[string]any {
@@ -456,6 +360,20 @@ func buildKiroAdditionalModelRequestFields(body map[string]any, model string) ma
 	}
 }
 
+func checkClaudeVersionMajor(part string) bool {
+	major := 0
+
+	for _, ch := range part {
+		if ch >= '0' && ch <= '9' {
+			major = major*10 + int(ch-'0')
+		} else {
+			break
+		}
+	}
+
+	return major >= 4
+}
+
 func supportsKiroAdditionalModelRequestFields(model string) bool {
 	m := strings.ToLower(strings.ReplaceAll(model, "-", "."))
 	if !strings.Contains(m, "claude") {
@@ -463,30 +381,9 @@ func supportsKiroAdditionalModelRequestFields(model string) bool {
 	}
 
 	parts := strings.Split(m, ".")
-	for _, p := range parts {
-		if p == "claude" {
-			idx := 0
-
-			for i, pp := range parts {
-				if pp == "claude" {
-					idx = i
-					break
-				}
-			}
-
-			if idx+1 < len(parts) {
-				major := 0
-
-				for _, ch := range parts[idx+1] {
-					if ch >= '0' && ch <= '9' {
-						major = major*10 + int(ch-'0')
-					} else {
-						break
-					}
-				}
-
-				return major >= 4
-			}
+	for i, p := range parts {
+		if p == "claude" && i+1 < len(parts) {
+			return checkClaudeVersionMajor(parts[i+1])
 		}
 	}
 
@@ -512,19 +409,6 @@ func extractKiroEffortLevel(body map[string]any) string {
 		if effort, ok := reasoning["effort"].(string); ok {
 			return normalizeKiroEffort(effort)
 		}
-	}
-
-	return ""
-}
-
-func normalizeKiroEffort(effort string) string {
-	switch strings.ToLower(effort) {
-	case "none", "off", "disabled":
-		return ""
-	case "xhigh", "max":
-		return "high"
-	case "low", "medium", "high":
-		return strings.ToLower(effort)
 	}
 
 	return ""

@@ -19,13 +19,7 @@ var (
 	reReadNumbered = regexp.MustCompile(`^\s*\d+\|`)
 )
 
-// AutoDetectFilter returns a filter function + name, or nil.
-func AutoDetectFilter(text string) (func(string) string, string) {
-	head := text
-	if len(head) > DetectWindow {
-		head = head[:DetectWindow]
-	}
-
+func detectGitRegexFilters(head string) (func(string) string, string) {
 	if reGitLog.MatchString(head) {
 		return FilterGitLog, "git-log"
 	}
@@ -34,28 +28,38 @@ func AutoDetectFilter(text string) (func(string) string, string) {
 		return FilterGitDiff, "git-diff"
 	}
 
-	if reGitStatus.MatchString(head) {
+	if reGitStatus.MatchString(head) || isMostlyPorcelain(head) {
 		return FilterGitStatus, "git-status"
+	}
+
+	return nil, ""
+}
+
+func detectRegexFilters(head string) (func(string) string, string) {
+	if fn, name := detectGitRegexFilters(head); fn != nil {
+		return fn, name
 	}
 
 	if reBuildOutput.MatchString(head) {
 		return FilterBuildOutput, "build-output"
 	}
 
-	if isMostlyPorcelain(head) {
-		return FilterGitStatus, "git-status"
+	if reTreeGlyph.MatchString(head) {
+		return FilterTree, "tree"
 	}
 
-	lines := strings.Split(head, "\n")
-
-	var nonEmpty []string
-
-	for _, l := range lines {
-		if strings.TrimSpace(l) != "" {
-			nonEmpty = append(nonEmpty, l)
-		}
+	if reLsTotal.MatchString(head) || countMatches(head, reLsRow) >= 3 {
+		return FilterLs, "ls"
 	}
 
+	if reSearchList.MatchString(head) {
+		return FilterSearchList, "search-list"
+	}
+
+	return nil, ""
+}
+
+func detectLineFilters(nonEmpty []string) (func(string) string, string) {
 	first5 := nonEmpty
 	if len(first5) > 5 {
 		first5 = first5[:5]
@@ -71,16 +75,37 @@ func AutoDetectFilter(text string) (func(string) string, string) {
 		return FilterFind, "find"
 	}
 
-	if reTreeGlyph.MatchString(head) {
-		return FilterTree, "tree"
+	return nil, ""
+}
+
+func collectNonEmptyLines(head string) []string {
+	lines := strings.Split(head, "\n")
+
+	var nonEmpty []string
+
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			nonEmpty = append(nonEmpty, l)
+		}
 	}
 
-	if reLsTotal.MatchString(head) || countMatches(head, reLsRow) >= 3 {
-		return FilterLs, "ls"
+	return nonEmpty
+}
+
+// AutoDetectFilter returns a filter function + name, or nil.
+func AutoDetectFilter(text string) (func(string) string, string) {
+	head := text
+	if len(head) > DetectWindow {
+		head = head[:DetectWindow]
 	}
 
-	if reSearchList.MatchString(head) {
-		return FilterSearchList, "search-list"
+	if fn, name := detectRegexFilters(head); fn != nil {
+		return fn, name
+	}
+
+	nonEmpty := collectNonEmptyLines(head)
+	if fn, name := detectLineFilters(nonEmpty); fn != nil {
+		return fn, name
 	}
 
 	fullLines := strings.Split(text, "\n")

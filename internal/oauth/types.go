@@ -1,9 +1,14 @@
+// Package oauth provides OAuth authentication flows, token lifecycle helpers,
+// and specialized third-party login providers.
 package oauth
 
 import (
 	"time"
 )
 
+// OAuthConfig defines OAuth configuration settings for a provider.
+//
+//nolint:revive
 type OAuthConfig struct {
 	Provider     string        `json:"provider"`
 	ClientID     string        `json:"client_id"`
@@ -18,6 +23,7 @@ type OAuthConfig struct {
 	TokenExpiry  time.Duration `json:"token_expiry"`
 }
 
+// Token represents OAuth token credentials and expiry info.
 type Token struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
@@ -27,6 +33,7 @@ type Token struct {
 	IDToken      string    `json:"id_token,omitempty"`
 }
 
+// DeviceCodeResponse represents device authorization flow payload.
 type DeviceCodeResponse struct {
 	DeviceCode              string `json:"device_code"`
 	UserCode                string `json:"user_code"`
@@ -36,6 +43,9 @@ type DeviceCodeResponse struct {
 	Interval                int    `json:"interval"`
 }
 
+// OAuthState holds state data during authorization code flow.
+//
+//nolint:revive
 type OAuthState struct {
 	CreatedAt   time.Time `json:"created_at"`
 	State       string    `json:"state"`
@@ -43,6 +53,7 @@ type OAuthState struct {
 	RedirectURI string    `json:"redirect_uri"`
 }
 
+// ProviderConfigs maps provider identifier to OAuth configuration.
 var ProviderConfigs = map[string]*OAuthConfig{
 	"claude": {
 		Provider:    "claude",
@@ -255,6 +266,7 @@ var ProviderConfigs = map[string]*OAuthConfig{
 	},
 }
 
-// CopilotTokenURL exchanges GitHub OAuth token → short-lived Copilot token.
+// CopilotTokenURL exchanges GitHub OAuth token -> short-lived Copilot token.
+//
+//nolint:gosec // URL constant for GitHub copilot token exchange endpoint, not a secret.
 const CopilotTokenURL = "https://api.github.com/copilot_internal/v2/token"
-

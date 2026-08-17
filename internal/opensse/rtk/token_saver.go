@@ -22,16 +22,58 @@ type TokenSaverOptions struct {
 // DefaultTokenSaver returns defaults matching 9router settingsRepo.
 func DefaultTokenSaver() TokenSaverOptions {
 	return TokenSaverOptions{
-		Enabled:        true,
-		RTK:            true,
-		Headroom:       false,
-		HeadroomURL:    "http://localhost:8787",
-		Caveman:        false,
-		CavemanLevel:   CavemanFull,
-		Ponytail:       false,
-		PonytailLevel:  PonytailFull,
-		Pxpipe:         false,
-		PxpipeMinChars: 25000,
+		Enabled:                      true,
+		RTK:                          true,
+		Headroom:                     false,
+		HeadroomURL:                  "http://localhost:8787",
+		Caveman:                      false,
+		CavemanLevel:                 CavemanFull,
+		Ponytail:                     false,
+		PonytailLevel:                PonytailFull,
+		Pxpipe:                       false,
+		PxpipeMinChars:               25000,
+		Model:                        "",
+		Format:                       "",
+		HeadroomCompressUserMessages: false,
+	}
+}
+
+// EmptyTokenSaver returns zero-initialized options.
+func EmptyTokenSaver() TokenSaverOptions {
+	return TokenSaverOptions{
+		CavemanLevel:                 "",
+		HeadroomURL:                  "",
+		PonytailLevel:                "",
+		Model:                        "",
+		Format:                       "",
+		PxpipeMinChars:               0,
+		RTK:                          false,
+		Headroom:                     false,
+		HeadroomCompressUserMessages: false,
+		Caveman:                      false,
+		Enabled:                      false,
+		Ponytail:                     false,
+		Pxpipe:                       false,
+	}
+}
+
+func applyPromptInjections(body map[string]any, opts TokenSaverOptions) {
+	if opts.Caveman {
+		level := opts.CavemanLevel
+		if level == "" {
+			level = CavemanFull
+		}
+
+		InjectCaveman(body, opts.Format, level)
+	}
+
+	if opts.Ponytail {
+		level := opts.PonytailLevel
+		if level == "" {
+			level = PonytailFull
+		}
+
+		InjectPonytail(body, opts.Format, level)
 	}
 }
 
@@ -42,39 +84,21 @@ func ApplyTokenSavers(body map[string]any, opts TokenSaverOptions) map[string]an
 		return body
 	}
 
-	defer func() { recover() }()
+	defer func() {
+		//nolint:errcheck // recovery cleanup
+		_ = recover()
+	}()
 
-	// 1. RTK tool_result compression
 	if opts.RTK {
 		CompressMessages(body, true)
 	}
 
-	// 2. Headroom proxy
 	if opts.Headroom && opts.HeadroomURL != "" {
 		CompressWithHeadroom(body, true, opts.HeadroomURL, opts.Model, opts.Format, opts.HeadroomCompressUserMessages)
 	}
 
-	// 3. Caveman
-	if opts.Caveman {
-		level := opts.CavemanLevel
-		if level == "" {
-			level = CavemanFull
-		}
+	applyPromptInjections(body, opts)
 
-		InjectCaveman(body, opts.Format, level)
-	}
-
-	// 4. Ponytail
-	if opts.Ponytail {
-		level := opts.PonytailLevel
-		if level == "" {
-			level = PonytailFull
-		}
-
-		InjectPonytail(body, opts.Format, level)
-	}
-
-	// 5. Pxpipe (may return new body)
 	if opts.Pxpipe {
 		if newBody, sum := CompressWithPxpipe(body, true, opts.Format, opts.Model, opts.PxpipeMinChars); sum != nil && sum.Applied && newBody != nil {
 			return newBody

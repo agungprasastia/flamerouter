@@ -1,12 +1,18 @@
+// Package store provides SQLite persistent storage for flamerouter state.
 package store
 
+// ListDisabledModels returns all disabled model names.
 func (s *Store) ListDisabledModels() ([]string, error) {
 	rows, err := s.db.Query(`SELECT model FROM disabled_models ORDER BY model`)
 	if err != nil {
 		return nil, err
 	}
 
-	defer rows.Close()
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	var out []string
 
@@ -22,6 +28,7 @@ func (s *Store) ListDisabledModels() ([]string, error) {
 	return out, rows.Err()
 }
 
+// DisableModel adds a model to disabled models.
 func (s *Store) DisableModel(model string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO disabled_models(model) VALUES(?) ON CONFLICT(model) DO NOTHING`,
@@ -31,6 +38,7 @@ func (s *Store) DisableModel(model string) error {
 	return err
 }
 
+// EnableModel removes a model from disabled models.
 func (s *Store) EnableModel(model string) error {
 	_, err := s.db.Exec(`DELETE FROM disabled_models WHERE model=?`, model)
 	return err

@@ -1,3 +1,4 @@
+// Package clitools provides management and registry for supported CLI tools.
 package clitools
 
 // KnownTools is the list of supported CLI tools.

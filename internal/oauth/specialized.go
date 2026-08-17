@@ -1,3 +1,5 @@
+// Package oauth provides OAuth authentication flows, token lifecycle helpers,
+// and specialized third-party login providers.
 package oauth
 
 import (
@@ -22,6 +24,7 @@ func ExchangeGithubDeviceToken(ctx context.Context, deviceCode string, wantCopil
 	if err != nil {
 		return nil, nil, err
 	}
+
 	if tok == nil {
 		return nil, nil, fmt.Errorf("device token polling returned nil token")
 	}
@@ -57,13 +60,22 @@ func fetchCopilotToken(ctx context.Context, githubToken string) (string, int64, 
 	if err != nil {
 		return "", 0, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return "", 0, fmt.Errorf("empty copilot token response")
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", 0, err
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return "", 0, fmt.Errorf("copilot token: %s", string(body))
 	}
@@ -80,75 +92,22 @@ func fetchCopilotToken(ctx context.Context, githubToken string) (string, int64, 
 	return out.Token, out.ExpiresAt, nil
 }
 
-// RefreshKiroToken refreshes Kiro social/desktop tokens.
-func RefreshKiroToken(ctx context.Context, refreshToken string, psd map[string]any) (*Token, error) {
-	// Social auth refresh endpoint
-	authMethod := ""
+type kiroTokenJSON struct {
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ExpiresIn    int    `json:"expiresIn"`
+}
 
-	if psd != nil {
-		if m, ok := psd["authMethod"].(string); ok {
-			authMethod = m
-		}
-	}
+type kiroTokenSnakeJSON struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+}
 
-	if authMethod == "api_key" {
-		return nil, fmt.Errorf("api_key auth does not refresh")
-	}
-
-	// Default: social refresh
-	urlStr := "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
-	if cfg, ok := ProviderConfigs["kiro"]; ok && cfg != nil && cfg.RefreshURL != "" {
-		urlStr = cfg.RefreshURL
-	}
-
-	payload := map[string]any{"refreshToken": refreshToken}
-
-	if psd != nil {
-		if clientId, ok := psd["clientId"].(string); ok {
-			payload["clientId"] = clientId
-		}
-	}
-
-	b, _ := json.Marshal(payload)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, strings.NewReader(string(b)))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil || resp.Body == nil {
-		return nil, fmt.Errorf("empty kiro refresh response")
-	}
-
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		// try AWS SSO OIDC form for idc
-		return refreshKiroOIDC(ctx, refreshToken, psd)
-	}
-
-	var out struct {
-		AccessToken  string `json:"accessToken"`
-		RefreshToken string `json:"refreshToken"`
-		ExpiresIn    int    `json:"expiresIn"`
-	}
-
+func parseKiroResponse(body []byte, origRefreshToken string) (*Token, error) {
+	var out kiroTokenJSON
 	if err := json.Unmarshal(body, &out); err != nil {
-		// alternate snake_case
-		var alt struct {
-			AccessToken  string `json:"access_token"`
-			RefreshToken string `json:"refresh_token"`
-			ExpiresIn    int    `json:"expires_in"`
-		}
-
+		var alt kiroTokenSnakeJSON
 		if err2 := json.Unmarshal(body, &alt); err2 != nil {
 			return nil, err
 		}
@@ -158,7 +117,7 @@ func RefreshKiroToken(ctx context.Context, refreshToken string, psd map[string]a
 		out.ExpiresIn = alt.ExpiresIn
 	}
 
-	rt := refreshToken
+	rt := origRefreshToken
 	if out.RefreshToken != "" {
 		rt = out.RefreshToken
 	}
@@ -173,30 +132,113 @@ func RefreshKiroToken(ctx context.Context, refreshToken string, psd map[string]a
 		RefreshToken: rt,
 		TokenType:    "Bearer",
 		ExpiresAt:    time.Now().Add(exp),
+		Scope:        "",
+		IDToken:      "",
 	}, nil
 }
 
-func refreshKiroOIDC(ctx context.Context, refreshToken string, psd map[string]any) (*Token, error) {
-	clientId := "kiro-desktop"
+func getKiroRefreshURL() string {
+	urlStr := "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
+	if cfg, ok := ProviderConfigs["kiro"]; ok && cfg != nil && cfg.RefreshURL != "" {
+		urlStr = cfg.RefreshURL
+	}
+
+	return urlStr
+}
+
+func buildKiroRefreshPayload(refreshToken string, psd map[string]any) ([]byte, error) {
+	payload := map[string]any{"refreshToken": refreshToken}
 
 	if psd != nil {
-		if c, ok := psd["clientId"].(string); ok && c != "" {
-			clientId = c
+		if clientID, ok := psd["clientId"].(string); ok {
+			payload["clientId"] = clientID
 		}
 	}
 
+	return json.Marshal(payload)
+}
+
+func doKiroRefreshRequest(ctx context.Context, b []byte) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, getKiroRefreshURL(), strings.NewReader(string(b)))
+	if err != nil {
+		return 0, nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	if resp == nil || resp.Body == nil {
+		return 0, nil, fmt.Errorf("empty kiro refresh response")
+	}
+
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	return resp.StatusCode, body, nil
+}
+
+// RefreshKiroToken refreshes Kiro social/desktop tokens.
+func RefreshKiroToken(ctx context.Context, refreshToken string, psd map[string]any) (*Token, error) {
+	if psd != nil {
+		if m, ok := psd["authMethod"].(string); ok && m == "api_key" {
+			return nil, fmt.Errorf("api_key auth does not refresh")
+		}
+	}
+
+	b, err := buildKiroRefreshPayload(refreshToken, psd)
+	if err != nil {
+		return nil, err
+	}
+
+	statusCode, body, err := doKiroRefreshRequest(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusCode != http.StatusOK {
+		return refreshKiroOIDC(ctx, refreshToken, psd)
+	}
+
+	return parseKiroResponse(body, refreshToken)
+}
+
+func getKiroOIDCParams(psd map[string]any) (string, string) {
+	clientID := "kiro-desktop"
 	region := "us-east-1"
 
 	if psd != nil {
+		if c, ok := psd["clientId"].(string); ok && c != "" {
+			clientID = c
+		}
+
 		if r, ok := psd["region"].(string); ok && r != "" {
 			region = r
 		}
 	}
 
+	return clientID, region
+}
+
+func refreshKiroOIDC(ctx context.Context, refreshToken string, psd map[string]any) (*Token, error) {
+	clientID, region := getKiroOIDCParams(psd)
 	tokenURL := fmt.Sprintf("https://oidc.%s.amazonaws.com/token", region)
+
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
-	data.Set("client_id", clientId)
+	data.Set("client_id", clientID)
 	data.Set("refresh_token", refreshToken)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(data.Encode()))
@@ -210,23 +252,27 @@ func refreshKiroOIDC(ctx context.Context, refreshToken string, psd map[string]an
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return nil, fmt.Errorf("empty kiro oidc refresh response")
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("kiro oidc refresh: %s", string(body))
 	}
 
-	var out struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-	}
-
+	var out kiroTokenSnakeJSON
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, err
 	}
@@ -241,6 +287,8 @@ func refreshKiroOIDC(ctx context.Context, refreshToken string, psd map[string]an
 		RefreshToken: rt,
 		TokenType:    "Bearer",
 		ExpiresAt:    time.Now().Add(time.Duration(out.ExpiresIn) * time.Second),
+		Scope:        "",
+		IDToken:      "",
 	}, nil
 }
 
@@ -250,6 +298,7 @@ func StartDeviceFlowForProvider(ctx context.Context, provider string) (*DeviceCo
 	if !ok || cfg == nil {
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
+
 	// github/copilot share device endpoint
 	if provider == "copilot" {
 		cfg = ProviderConfigs["github"]

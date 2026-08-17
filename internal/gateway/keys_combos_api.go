@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 func (s *Server) handleUpdateKey(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +108,7 @@ func (s *Server) handleDeleteCombo(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]any{"success": true})
 }
 
-func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTags(w http.ResponseWriter, _ *http.Request) {
 	// 9router returns ollama model tags list; minimal empty ok
 	writeJSONOK(w, []any{})
 }
@@ -129,23 +130,34 @@ func (s *Server) handleLocale(w http.ResponseWriter, r *http.Request) {
 		}
 
 		http.SetCookie(w, &http.Cookie{
-			Name:     "locale",
-			Value:    loc,
-			Path:     "/",
-			MaxAge:   60 * 60 * 24 * 365,
-			HttpOnly: false,
-			SameSite: http.SameSiteLaxMode,
+			Name:        "locale",
+			Value:       loc,
+			Path:        "/",
+			Domain:      "",
+			Expires:     time.Time{},
+			RawExpires:  "",
+			MaxAge:      60 * 60 * 24 * 365,
+			Secure:      false,
+			HttpOnly:    false,
+			SameSite:    http.SameSiteLaxMode,
+			Raw:         "",
+			Unparsed:    nil,
+			Partitioned: false,
+			Quoted:      false,
 		})
 
-		_ = s.st.SetSetting("locale", loc)
+		if err := s.st.SetSetting("locale", loc); err != nil {
+			_ = err
+		}
+
 		writeJSONOK(w, map[string]any{"success": true, "locale": loc})
 
 		return
 	}
 
-	loc, _ := s.st.GetSetting("locale")
-	if loc == "" {
-		if c, err := r.Cookie("locale"); err == nil && c.Value != "" {
+	loc, err := s.st.GetSetting("locale")
+	if err != nil || loc == "" {
+		if c, errCookie := r.Cookie("locale"); errCookie == nil && c.Value != "" {
 			loc = c.Value
 		} else {
 			loc = "en"
@@ -155,8 +167,11 @@ func (s *Server) handleLocale(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]any{"locale": loc})
 }
 
-func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleInit(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("Initialized"))
+
+	if _, err := w.Write([]byte("Initialized")); err != nil {
+		_ = err
+	}
 }

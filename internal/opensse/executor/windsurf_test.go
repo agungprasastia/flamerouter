@@ -24,7 +24,7 @@ func buildMockWindsurfContentFrame(text string) []byte {
 	inner.Write(tag1Buf[:n1])
 
 	var len1Buf [10]byte
-	ln1 := binary.PutUvarint(len1Buf[:], uint64(len(text)))
+	ln1 := binary.PutUvarint(len1Buf[:], uint64(len(text))) // #nosec G115
 	inner.Write(len1Buf[:ln1])
 	inner.WriteString(text)
 
@@ -37,7 +37,7 @@ func buildMockWindsurfContentFrame(text string) []byte {
 	outer.Write(tagOBuf[:no])
 
 	var lenOBuf [10]byte
-	lno := binary.PutUvarint(lenOBuf[:], uint64(inner.Len()))
+	lno := binary.PutUvarint(lenOBuf[:], uint64(inner.Len())) // #nosec G115
 	outer.Write(lenOBuf[:lno])
 	outer.Write(inner.Bytes())
 
@@ -55,7 +55,7 @@ func buildMockWindsurfDoneFrame(promptTokens, completionTokens int) []byte {
 	usageBuf.Write(t1[:n1])
 
 	var v1 [10]byte
-	vn1 := binary.PutUvarint(v1[:], uint64(promptTokens))
+	vn1 := binary.PutUvarint(v1[:], uint64(promptTokens)) // #nosec G115
 	usageBuf.Write(v1[:vn1])
 
 	tag2 := uint64(2 << 3)
@@ -65,7 +65,7 @@ func buildMockWindsurfDoneFrame(promptTokens, completionTokens int) []byte {
 	usageBuf.Write(t2[:n2])
 
 	var v2 [10]byte
-	vn2 := binary.PutUvarint(v2[:], uint64(completionTokens))
+	vn2 := binary.PutUvarint(v2[:], uint64(completionTokens)) // #nosec G115
 	usageBuf.Write(v2[:vn2])
 
 	// DoneChunk: Field 1 = UsageStats
@@ -78,7 +78,7 @@ func buildMockWindsurfDoneFrame(promptTokens, completionTokens int) []byte {
 	doneInner.Write(td1[:nd1])
 
 	var ld1 [10]byte
-	lnd1 := binary.PutUvarint(ld1[:], uint64(usageBuf.Len()))
+	lnd1 := binary.PutUvarint(ld1[:], uint64(usageBuf.Len())) // #nosec G115
 	doneInner.Write(ld1[:lnd1])
 	doneInner.Write(usageBuf.Bytes())
 
@@ -92,7 +92,7 @@ func buildMockWindsurfDoneFrame(promptTokens, completionTokens int) []byte {
 	outer.Write(tagOBuf[:no])
 
 	var lenOBuf [10]byte
-	lno := binary.PutUvarint(lenOBuf[:], uint64(doneInner.Len()))
+	lno := binary.PutUvarint(lenOBuf[:], uint64(doneInner.Len())) // #nosec G115
 	outer.Write(lenOBuf[:lno])
 	outer.Write(doneInner.Bytes())
 
@@ -119,18 +119,22 @@ func TestWindsurfExecutor_ExecutionAndStreaming(t *testing.T) {
 		t.Fatal("windsurf executor not registered")
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
 		"messages": []map[string]string{{"role": "user", "content": "write code"}},
 	})
 
 	res, err := ex.Execute(context.Background(), executor.Credentials{
-		AccessToken: "sk-ws-token-12345",
-		BaseURL:     srv.URL,
+		APIKey:               "",
+		AccessToken:          "sk-ws-token-12345",
+		RefreshToken:         "",
+		BaseURL:              srv.URL,
+		ProviderSpecificData: nil,
+		ProjectID:            "",
 	}, "swe-1.6", body, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
@@ -144,7 +148,7 @@ func TestWindsurfExecutor_ExecutionAndStreaming(t *testing.T) {
 		t.Errorf("got content-type %q", gotContentType)
 	}
 
-	outBytes, _ := io.ReadAll(res.Body)
+	outBytes, _ := io.ReadAll(res.Body) // nolint:errcheck
 
 	outStr := string(outBytes)
 	if !strings.Contains(outStr, "Hello from Windsurf") {
@@ -165,33 +169,40 @@ func TestWindsurfExecutor_NonStreaming(t *testing.T) {
 	defer srv.Close()
 
 	ex := executor.GetExecutor("windsurf")
-	body, _ := json.Marshal(map[string]any{
+	body, _ := json.Marshal(map[string]any{ // nolint:errcheck
 		"messages": []map[string]string{{"role": "user", "content": "test"}},
 	})
 
 	res, err := ex.Execute(context.Background(), executor.Credentials{
-		AccessToken: "sk-ws-test",
-		BaseURL:     srv.URL,
+		APIKey:               "",
+		AccessToken:          "sk-ws-test",
+		RefreshToken:         "",
+		BaseURL:              srv.URL,
+		ProviderSpecificData: nil,
+		ProjectID:            "",
 	}, "claude-sonnet-4.6", body, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	var respObj map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&respObj); err != nil {
 		t.Fatal(err)
 	}
 
-	choices, _ := respObj["choices"].([]any)
-	if len(choices) == 0 {
+	choices, ok := respObj["choices"].([]any)
+	if !ok || len(choices) == 0 {
 		t.Fatal("empty choices")
 	}
 
-	first, _ := choices[0].(map[string]any)
+	first, ok := choices[0].(map[string]any)
+	if !ok {
+		t.Fatal("first choice not map")
+	}
 
-	msg, _ := first["message"].(map[string]any)
-	if msg["content"] != "Unary code result" {
+	msg, ok := first["message"].(map[string]any)
+	if !ok || msg["content"] != "Unary code result" {
 		t.Errorf("content = %v, want Unary code result", msg["content"])
 	}
 }

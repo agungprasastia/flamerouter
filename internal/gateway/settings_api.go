@@ -1,8 +1,10 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"flamerouter/internal/netutil"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,7 +19,7 @@ var protectedSettingKeys = map[string]bool{
 	"mitmSudoEncrypted": true,
 }
 
-func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 	settings, err := s.st.ListSettings()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
@@ -69,7 +71,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		case nil:
 			str = ""
 		default:
-			b, _ := json.Marshal(t)
+			b, _ := json.Marshal(t) //nolint:errcheck // best-effort marshal
 			str = string(b)
 		}
 
@@ -84,32 +86,27 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRequireLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
-		var body struct {
-			RequireLogin *bool `json:"requireLogin"`
-		}
-
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RequireLogin == nil {
-			writeErr(w, http.StatusBadRequest, "requireLogin required")
-			return
-		}
-
-		v := "false"
-		if *body.RequireLogin {
-			v = "true"
-		}
-
-		if err := s.st.SetSetting("requireLogin", v); err != nil {
-			writeErr(w, http.StatusInternalServerError, "db")
+		if err := s.patchRequireLogin(r); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
 
-	val, _ := s.st.GetSetting("requireLogin")
+	val, err := s.st.GetSetting("requireLogin")
+	if err != nil {
+		val = ""
+	}
 	// default true when unset (parity with 9router DEFAULT_SETTINGS)
 	require := val == "" || val == "true" || val == "1"
-	tunnelDash, _ := s.st.GetSetting("tunnelDashboardAccess")
-	tunnelURL, _ := s.st.GetSetting("tunnelUrl")
-	tsURL, _ := s.st.GetSetting("tailscaleUrl")
+
+	tunnelDash, err := s.st.GetSetting("tunnelDashboardAccess")
+	if err != nil {
+		tunnelDash = ""
+	}
+
+	tunnelURL, _ := s.st.GetSetting("tunnelUrl") //nolint:errcheck // best-effort lookup
+	tsURL, _ := s.st.GetSetting("tailscaleUrl")  //nolint:errcheck // best-effort lookup
+
 	tunnelDashOK := tunnelDash == "" || tunnelDash == "true" || tunnelDash == "1"
 	writeJSONOK(w, map[string]any{
 		"requireLogin":          require,
@@ -117,6 +114,64 @@ func (s *Server) handleRequireLogin(w http.ResponseWriter, r *http.Request) {
 		"tunnelUrl":             tunnelURL,
 		"tailscaleUrl":          tsURL,
 	})
+}
+
+func (s *Server) patchRequireLogin(r *http.Request) error {
+	var body struct {
+		RequireLogin *bool `json:"requireLogin"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RequireLogin == nil {
+		return fmt.Errorf("requireLogin required")
+	}
+
+	v := "false"
+	if *body.RequireLogin {
+		v = "true"
+	}
+
+	return s.st.SetSetting("requireLogin", v)
+}
+
+func parseProxyTestTimeout(timeoutMs int) time.Duration {
+	timeout := 8 * time.Second
+
+	if timeoutMs > 0 {
+		ms := timeoutMs
+		if ms > 30000 {
+			ms = 30000
+		}
+
+		timeout = time.Duration(ms) * time.Millisecond
+	}
+
+	return timeout
+}
+
+func doProxyProbe(ctx context.Context, proxyURL, testURL string, timeout time.Duration) (int, string, int64, error) {
+	transport := &http.Transport{ //nolint:exhaustruct // test transport
+		Proxy: http.ProxyURL(mustParseURL(proxyURL)),
+	}
+	client := &http.Client{ //nolint:exhaustruct // test client
+		Transport: transport,
+		Timeout:   timeout,
+	}
+	started := time.Now()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, testURL, nil)
+	if err != nil {
+		return 0, "", 0, err
+	}
+
+	req.Header.Set("User-Agent", "FlameRouter")
+
+	res, err := netutil.DoHTTP(client, req)
+	if err != nil {
+		return 0, "", 0, err
+	}
+	defer res.Body.Close() //nolint:errcheck // cleanup body
+
+	return res.StatusCode, res.Status, time.Since(started).Milliseconds(), nil
 }
 
 func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
@@ -147,42 +202,20 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 		testURL = "https://google.com/"
 	}
 
-	timeout := 8 * time.Second
+	timeout := parseProxyTestTimeout(body.TimeoutMs)
 
-	if body.TimeoutMs > 0 {
-		ms := body.TimeoutMs
-		if ms > 30000 {
-			ms = 30000
-		}
-
-		timeout = time.Duration(ms) * time.Millisecond
-	}
-	// ponytail: no full ProxyAgent; HTTP_PROXY env for test client only
-	transport := &http.Transport{Proxy: http.ProxyURL(mustParseURL(proxyURL))}
-	client := &http.Client{Transport: transport, Timeout: timeout}
-	started := time.Now()
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodHead, testURL, nil)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
-
-	req.Header.Set("User-Agent", "FlameRouter")
-
-	res, err := netutil.DoHTTP(client, req)
+	code, status, elapsed, err := doProxyProbe(r.Context(), proxyURL, testURL, timeout)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 
-	_ = res.Body.Close()
 	writeJSONOK(w, map[string]any{
-		"ok":         res.StatusCode >= 200 && res.StatusCode < 400,
-		"status":     res.StatusCode,
-		"statusText": res.Status,
+		"ok":         code >= 200 && code < 400,
+		"status":     code,
+		"statusText": status,
 		"url":        testURL,
-		"elapsedMs":  time.Since(started).Milliseconds(),
+		"elapsedMs":  elapsed,
 	})
 }
 
@@ -198,73 +231,83 @@ func mustParseURL(raw string) *url.URL {
 func (s *Server) handleDatabase(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		path := filepath.Join(s.cfg.DataDir, "flamerouter.db")
-
-		f, err := os.Open(path)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to open database")
-			return
-		}
-
-		defer f.Close()
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Disposition", `attachment; filename="flamerouter.db"`)
-		_, _ = io.Copy(w, f)
+		s.handleGetDatabase(w)
 	case http.MethodPost:
-		// restore: prefer multipart file, else raw body
-		var data []byte
-
-		var err error
-		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
-			if err = r.ParseMultipartForm(64 << 20); err != nil {
-				writeErr(w, http.StatusBadRequest, "invalid multipart")
-				return
-			}
-
-			file, _, ferr := r.FormFile("file")
-			if ferr != nil {
-				file, _, ferr = r.FormFile("database")
-			}
-
-			if ferr != nil {
-				writeErr(w, http.StatusBadRequest, "file required")
-				return
-			}
-
-			defer file.Close()
-			data, err = io.ReadAll(file)
-		} else {
-			data, err = io.ReadAll(io.LimitReader(r.Body, 64<<20))
-		}
-
-		if err != nil || len(data) < 16 {
-			writeErr(w, http.StatusBadRequest, "invalid database payload")
-			return
-		}
-		// SQLite magic header
-		if string(data[:15]) != "SQLite format 3" {
-			writeErr(w, http.StatusBadRequest, "not a sqlite database")
-			return
-		}
-
-		path := filepath.Join(s.cfg.DataDir, "flamerouter.db")
-
-		tmp := path + ".restore-tmp"
-		if err := os.WriteFile(tmp, data, 0o600); err != nil {
-			writeErr(w, http.StatusInternalServerError, "write failed")
-			return
-		}
-		// ponytail: live connections keep old handle until restart
-		if err := os.Rename(tmp, path); err != nil {
-			_ = os.Remove(tmp)
-
-			writeErr(w, http.StatusInternalServerError, "replace failed")
-
-			return
-		}
-
-		writeJSONOK(w, map[string]any{"success": true, "note": "restart required for full effect"})
+		s.handlePostDatabase(w, r)
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (s *Server) handleGetDatabase(w http.ResponseWriter) {
+	path := filepath.Clean(filepath.Join(s.cfg.DataDir, "flamerouter.db"))
+
+	f, err := os.Open(path)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to open database")
+		return
+	}
+
+	defer f.Close() //nolint:errcheck // best-effort file close
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="flamerouter.db"`)
+
+	if _, err := io.Copy(w, f); err != nil {
+		_ = err
+	}
+}
+
+func parseDatabaseUpload(r *http.Request) ([]byte, error) {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+		if err := r.ParseMultipartForm(64 << 20); err != nil {
+			return nil, fmt.Errorf("invalid multipart")
+		}
+
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			file, _, err = r.FormFile("database")
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("file required")
+		}
+
+		defer file.Close() //nolint:errcheck // best-effort file close
+
+		return io.ReadAll(file)
+	}
+
+	return io.ReadAll(io.LimitReader(r.Body, 64<<20))
+}
+
+func (s *Server) handlePostDatabase(w http.ResponseWriter, r *http.Request) {
+	data, err := parseDatabaseUpload(r)
+	if err != nil || len(data) < 16 {
+		writeErr(w, http.StatusBadRequest, "invalid database payload")
+		return
+	}
+	// SQLite magic header
+	if string(data[:15]) != "SQLite format 3" {
+		writeErr(w, http.StatusBadRequest, "not a sqlite database")
+		return
+	}
+
+	path := filepath.Clean(filepath.Join(s.cfg.DataDir, "flamerouter.db"))
+	tmp := path + ".restore-tmp"
+
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		writeErr(w, http.StatusInternalServerError, "write failed")
+		return
+	}
+	// ponytail: live connections keep old handle until restart
+	if err := os.Rename(tmp, path); err != nil {
+		//nolint:errcheck // cleanup tmp
+		_ = os.Remove(tmp)
+
+		writeErr(w, http.StatusInternalServerError, "replace failed")
+
+		return
+	}
+
+	writeJSONOK(w, map[string]any{"success": true, "note": "restart required for full effect"})
 }

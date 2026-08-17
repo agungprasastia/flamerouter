@@ -1,3 +1,5 @@
+// Package oauth provides OAuth authentication flows, token lifecycle helpers,
+// and specialized third-party login providers.
 package oauth
 
 import (
@@ -13,16 +15,19 @@ import (
 	"time"
 )
 
+// Handler manages OAuth flow endpoints, token exchange, and persistence.
 type Handler struct {
 	states map[string]*OAuthState
 }
 
+// NewHandler constructs an OAuth Handler.
 func NewHandler() *Handler {
 	return &Handler{
 		states: make(map[string]*OAuthState),
 	}
 }
 
+// StartAuth generates PKCE challenge and state, returning an authorization URL.
 func (h *Handler) StartAuth(w http.ResponseWriter, r *http.Request, provider string) {
 	config, ok := ProviderConfigs[provider]
 	if !ok {
@@ -48,10 +53,10 @@ func (h *Handler) StartAuth(w http.ResponseWriter, r *http.Request, provider str
 	}
 
 	h.states[state] = &OAuthState{
+		CreatedAt:   time.Now(),
 		State:       state,
 		Provider:    provider,
 		RedirectURI: redirectURI,
-		CreatedAt:   time.Now(),
 	}
 
 	params := url.Values{}
@@ -70,15 +75,19 @@ func (h *Handler) StartAuth(w http.ResponseWriter, r *http.Request, provider str
 	authURL := config.AuthURL + "?" + params.Encode()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"authUrl":       authURL,
 		"auth_url":      authURL,
 		"state":         state,
 		"codeVerifier":  codeVerifier,
 		"code_verifier": codeVerifier,
-	})
+	}); err != nil {
+		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+	}
 }
 
+// HandleCallback handles OAuth provider callback redirects.
 func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request, provider string) {
 	config, ok := ProviderConfigs[provider]
 	if !ok {
@@ -109,64 +118,54 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request, provide
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"access_token":  token.AccessToken,
 		"refresh_token": token.RefreshToken,
 		"expires_at":    token.ExpiresAt,
 		"token_type":    token.TokenType,
-	})
+	}); err != nil {
+		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+	}
 }
 
-// ExchangeAndSave exchanges auth code (or raw JWT access token) and stores connection.
-func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider, code, redirectURI, codeVerifier, state string, meta map[string]any) (map[string]any, error) {
-	if code == "" {
-		return nil, fmt.Errorf("missing code")
-	}
-	// Raw JWT access token (codex website paste)
-	if strings.HasPrefix(code, "eyJ") && strings.Contains(code, ".") {
-		psd := map[string]any{"authMethod": "access_token"}
+func (h *Handler) saveRawJWT(st *store.Store, provider, code string) (map[string]any, error) {
+	psd := map[string]any{"authMethod": "access_token"}
+	email := ""
 
-		if info := decodeJWTClaims(code); info != nil {
-			if v, ok := info["account_id"].(string); ok && v != "" {
-				psd["chatgptAccountId"] = v
-			}
-
-			if v, ok := info["plan_type"].(string); ok && v != "" {
-				psd["chatgptPlanType"] = v
-			}
+	if info := decodeJWTClaims(code); info != nil {
+		if v, ok := info["account_id"].(string); ok && v != "" {
+			psd["chatgptAccountId"] = v
 		}
 
-		email := ""
-
-		if info := decodeJWTClaims(code); info != nil {
-			if v, ok := info["email"].(string); ok {
-				email = v
-			}
+		if v, ok := info["plan_type"].(string); ok && v != "" {
+			psd["chatgptPlanType"] = v
 		}
 
-		name := email
-		if name == "" {
-			name = provider
+		if v, ok := info["email"].(string); ok {
+			email = v
 		}
-
-		id, err := st.CreateOAuthConnection(provider, "access_token", name, code, "", "", psd)
-		if err != nil {
-			return nil, err
-		}
-
-		return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
 	}
 
-	noPKCE := provider == "cline" || provider == "clinepass" || provider == "kimchi"
-	if redirectURI == "" || (!noPKCE && codeVerifier == "") {
-		return nil, fmt.Errorf("missing required fields")
+	name := email
+	if name == "" {
+		name = provider
 	}
 
+	id, err := st.CreateOAuthConnection(provider, "access_token", name, code, "", "", psd)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
+}
+
+func resolveConfig(provider string, meta map[string]any) (*OAuthConfig, error) {
 	config, ok := ProviderConfigs[provider]
 	if !ok {
 		return nil, fmt.Errorf("unknown provider")
 	}
-	// meta may override client credentials (gitlab)
+
 	if meta != nil {
 		if cid, ok := meta["clientId"].(string); ok && cid != "" {
 			c2 := *config
@@ -176,8 +175,170 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 				c2.ClientSecret = sec
 			}
 
-			config = &c2
+			return &c2, nil
 		}
+	}
+
+	return config, nil
+}
+
+func extractIdentityFromIDToken(idToken, provider string) (string, string) {
+	email := ""
+	name := provider
+
+	if idToken == "" {
+		return email, name
+	}
+
+	claims := decodeJWTClaims(idToken)
+	if claims == nil {
+		return email, name
+	}
+
+	if em, ok := claims["email"].(string); ok && em != "" {
+		email = em
+		name = em
+	}
+
+	if nm, ok := claims["name"].(string); ok && nm != "" && name == provider {
+		name = nm
+	}
+
+	return email, name
+}
+
+func fetchAntigravityUserInfo(ctx context.Context, accessToken string) string {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v1/userinfo?alt=json", nil)
+	if err != nil {
+		return ""
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return ""
+	}
+
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
+
+	var uinfo map[string]any
+	if json.NewDecoder(resp.Body).Decode(&uinfo) == nil {
+		if em, ok := uinfo["email"].(string); ok {
+			return em
+		}
+	}
+
+	return ""
+}
+
+type antigravityLoadData struct {
+	CloudAICompanionProject any `json:"cloudaicompanionProject"`
+	AllowedTiers            []struct {
+		ID        string `json:"id"`
+		IsDefault bool   `json:"isDefault"`
+	} `json:"allowedTiers"`
+}
+
+func parseAntigravityProjectAndTier(loadData *antigravityLoadData, psd map[string]any) {
+	switch p := loadData.CloudAICompanionProject.(type) {
+	case string:
+		psd["projectId"] = p
+	case map[string]any:
+		if id, ok := p["id"].(string); ok {
+			psd["projectId"] = id
+		}
+	}
+
+	for _, tier := range loadData.AllowedTiers {
+		if tier.IsDefault && tier.ID != "" {
+			psd["tierId"] = strings.TrimSpace(tier.ID)
+			break
+		}
+	}
+}
+
+func fetchAntigravityDetails(ctx context.Context, accessToken string, psd map[string]any) {
+	loadReqBody := `{"metadata":{"ideType":9,"platform":1,"pluginType":2}}`
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
+	if err != nil {
+		return
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "antigravity/ide/2.1.1 darwin/arm64")
+	req.Header.Set("x-request-source", "local")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return
+	}
+
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
+
+	var loadData antigravityLoadData
+	if json.NewDecoder(resp.Body).Decode(&loadData) != nil {
+		return
+	}
+
+	parseAntigravityProjectAndTier(&loadData, psd)
+}
+
+func (h *Handler) setupAntigravity(ctx context.Context, token *Token, email, name string) (string, string, map[string]any) {
+	psd := map[string]any{
+		"tierId": "legacy-tier",
+	}
+
+	if email == "" {
+		if fetchedEmail := fetchAntigravityUserInfo(ctx, token.AccessToken); fetchedEmail != "" {
+			email = fetchedEmail
+			name = fetchedEmail
+		}
+	}
+
+	fetchAntigravityDetails(ctx, token.AccessToken, psd)
+
+	return email, name, psd
+}
+
+func validateExchangeParams(provider, code, redirectURI, codeVerifier string) error {
+	if code == "" {
+		return fmt.Errorf("missing code")
+	}
+
+	noPKCE := provider == "cline" || provider == "clinepass" || provider == "kimchi"
+	if redirectURI == "" || (!noPKCE && codeVerifier == "") {
+		return fmt.Errorf("missing required fields")
+	}
+
+	return nil
+}
+
+// ExchangeAndSave exchanges auth code (or raw JWT access token) and stores connection.
+func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider, code, redirectURI, codeVerifier, state string, meta map[string]any) (map[string]any, error) {
+	_ = state
+
+	if strings.HasPrefix(code, "eyJ") && strings.Contains(code, ".") {
+		return h.saveRawJWT(st, provider, code)
+	}
+
+	if err := validateExchangeParams(provider, code, redirectURI, codeVerifier); err != nil {
+		return nil, err
+	}
+
+	config, err := resolveConfig(provider, meta)
+	if err != nil {
+		return nil, err
 	}
 
 	token, err := h.exchangeCode(ctx, config, code, redirectURI, codeVerifier)
@@ -190,102 +351,18 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 		expiresAt = token.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 
-	email := ""
-	name := provider
+	email, name := extractIdentityFromIDToken(token.IDToken, provider)
 
 	var psd map[string]any
 
-	// Extract email and info from ID token if present
-	if token.IDToken != "" {
-		if claims := decodeJWTClaims(token.IDToken); claims != nil {
-			if em, ok := claims["email"].(string); ok && em != "" {
-				email = em
-				name = em
-			}
-
-			if nm, ok := claims["name"].(string); ok && nm != "" && name == provider {
-				name = nm
-			}
-		}
-	}
-
-	// Antigravity post-exchange setup (fetch userinfo and project/tier)
 	if provider == "antigravity" {
-		psd = map[string]any{
-			"tierId": "legacy-tier",
-		}
-		// If email not in ID token, query userinfo
-		if email == "" {
-			req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v1/userinfo?alt=json", nil)
-			if err == nil {
-				req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-
-				if resp, err := http.DefaultClient.Do(req); err == nil && resp != nil && resp.Body != nil {
-					defer resp.Body.Close()
-
-					var uinfo map[string]any
-					if json.NewDecoder(resp.Body).Decode(&uinfo) == nil {
-						if em, ok := uinfo["email"].(string); ok && em != "" {
-							email = em
-							name = em
-						}
-					}
-				}
-			}
-		}
-		// Load Code Assist to get project ID and tier
-		loadReqBody := `{"metadata":{"ideType":9,"platform":1,"pluginType":2}}`
-
-		req, err := http.NewRequestWithContext(ctx, "POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
-		if err == nil {
-			req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("User-Agent", "antigravity/ide/2.1.1 darwin/arm64")
-			req.Header.Set("x-request-source", "local")
-
-			if resp, err := http.DefaultClient.Do(req); err == nil && resp != nil && resp.Body != nil {
-				defer resp.Body.Close()
-
-				var loadData struct {
-					CloudAICompanionProject any `json:"cloudaicompanionProject"`
-					AllowedTiers            []struct {
-						ID        string `json:"id"`
-						IsDefault bool   `json:"isDefault"`
-					} `json:"allowedTiers"`
-				}
-
-				if json.NewDecoder(resp.Body).Decode(&loadData) == nil {
-					var projID string
-					switch p := loadData.CloudAICompanionProject.(type) {
-					case string:
-						projID = p
-					case map[string]any:
-						if id, ok := p["id"].(string); ok {
-							projID = id
-						}
-					}
-
-					if projID != "" {
-						psd["projectId"] = projID
-					}
-
-					for _, tier := range loadData.AllowedTiers {
-						if tier.IsDefault && tier.ID != "" {
-							psd["tierId"] = strings.TrimSpace(tier.ID)
-							break
-						}
-					}
-				}
-			}
-		}
+		email, name, psd = h.setupAntigravity(ctx, token, email, name)
 	}
 
 	id, err := st.CreateOAuthConnection(provider, "oauth", name, token.AccessToken, token.RefreshToken, expiresAt, psd)
 	if err != nil {
 		return nil, err
 	}
-
-	_ = state
 
 	return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
 }
@@ -297,7 +374,6 @@ func decodeJWTClaims(tok string) map[string]any {
 	}
 
 	b64 := parts[1]
-	// base64url → raw
 	switch len(b64) % 4 {
 	case 2:
 		b64 += "=="
@@ -324,7 +400,16 @@ func decodeB64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
-func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, redirectURI, codeVerifier string) (*Token, error) {
+type tokenExchangeResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	Scope        string `json:"scope"`
+	IDToken      string `json:"id_token"`
+	ExpiresIn    int    `json:"expires_in"`
+}
+
+func buildExchangePayload(config *OAuthConfig, code, redirectURI, codeVerifier string) url.Values {
 	if redirectURI == "" {
 		redirectURI = config.RedirectURL
 	}
@@ -343,7 +428,11 @@ func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, r
 		data.Set("code_verifier", codeVerifier)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, strings.NewReader(data.Encode()))
+	return data
+}
+
+func doExchangeRequest(ctx context.Context, tokenURL string, data url.Values) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -355,10 +444,16 @@ func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, r
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return nil, fmt.Errorf("empty token exchange response")
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -369,15 +464,18 @@ func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, r
 		return nil, fmt.Errorf("token exchange failed: %s", string(body))
 	}
 
-	var tokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		TokenType    string `json:"token_type"`
-		Scope        string `json:"scope"`
-		IDToken      string `json:"id_token"`
-		ExpiresIn    int    `json:"expires_in"`
+	return body, nil
+}
+
+func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, redirectURI, codeVerifier string) (*Token, error) {
+	data := buildExchangePayload(config, code, redirectURI, codeVerifier)
+
+	body, err := doExchangeRequest(ctx, config.TokenURL, data)
+	if err != nil {
+		return nil, err
 	}
 
+	var tokenResp tokenExchangeResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return nil, err
 	}
@@ -392,16 +490,7 @@ func (h *Handler) exchangeCode(ctx context.Context, config *OAuthConfig, code, r
 	}, nil
 }
 
-func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToken string) (*Token, error) {
-	config, ok := ProviderConfigs[provider]
-	if !ok {
-		return nil, fmt.Errorf("unknown provider: %s", provider)
-	}
-
-	if config.RefreshURL == "" {
-		return nil, fmt.Errorf("provider %s does not support refresh", provider)
-	}
-
+func doTokenRefreshRequest(ctx context.Context, config *OAuthConfig, refreshToken string) ([]byte, error) {
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
@@ -423,10 +512,16 @@ func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToke
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
 		return nil, fmt.Errorf("empty refresh response")
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -435,6 +530,25 @@ func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToke
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("refresh failed: %s", string(body))
+	}
+
+	return body, nil
+}
+
+// RefreshToken refreshes an OAuth token for a given provider.
+func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToken string) (*Token, error) {
+	config, ok := ProviderConfigs[provider]
+	if !ok {
+		return nil, fmt.Errorf("unknown provider: %s", provider)
+	}
+
+	if config.RefreshURL == "" {
+		return nil, fmt.Errorf("provider %s does not support refresh", provider)
+	}
+
+	body, err := doTokenRefreshRequest(ctx, config, refreshToken)
+	if err != nil {
+		return nil, err
 	}
 
 	var tokenResp struct {
@@ -460,5 +574,6 @@ func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToke
 		TokenType:    tokenResp.TokenType,
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
 		Scope:        tokenResp.Scope,
+		IDToken:      "",
 	}, nil
 }

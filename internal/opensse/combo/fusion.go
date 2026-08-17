@@ -7,14 +7,19 @@ import (
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/store"
-	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Fusion sends request to all models simultaneously, then merges/judges results.
+const (
+	fusionHardTimeout    = 30 * time.Second
+	fusionStragglerGrace = 1500 * time.Millisecond
+	fusionMinPanel       = 2
+)
+
+// Fusion runs multiple models concurrently and synthesizes their answers with a judge.
 type Fusion struct{}
 
 type panelRes struct {
@@ -23,31 +28,22 @@ type panelRes struct {
 	ok    bool
 }
 
-const (
-	fusionMinPanel       = 2
-	fusionStragglerGrace = 8 * time.Second
-	fusionHardTimeout    = 90 * time.Second
-)
-
 type captureWriter struct {
 	header http.Header
 	buf    bytes.Buffer
 	code   int
 }
 
-func (c *captureWriter) Header() http.Header {
-	if c.header == nil {
-		c.header = make(http.Header)
-	}
+func (c *captureWriter) Header() http.Header { return c.header }
 
-	return c.header
-}
 func (c *captureWriter) Write(b []byte) (int, error) { return c.buf.Write(b) }
-func (c *captureWriter) WriteHeader(statusCode int)  { c.code = statusCode }
 
+func (c *captureWriter) WriteHeader(statusCode int) { c.code = statusCode }
+
+// Execute runs the combo using fusion strategy.
 func (f *Fusion) Execute(ctx context.Context, w http.ResponseWriter, body []byte,
-	models []string, st *store.Store, exec executor.Executor,
-	fb *fallback.Fallback, opts Options,
+	models []string, _ *store.Store, _ executor.Executor,
+	_ *fallback.Fallback, opts Options,
 ) error {
 	if opts.SingleModel == nil {
 		http.Error(w, `{"error":"combo single-model runner not configured"}`, http.StatusInternalServerError)
@@ -64,69 +60,90 @@ func (f *Fusion) Execute(ctx context.Context, w http.ResponseWriter, body []byte
 		return opts.SingleModel(ctx, w, body, panel[0], opts.Stream)
 	}
 
-	// Panel: non-streaming, tools stripped
 	panelBody, err := stripToolsForceNoStream(body)
 	if err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return err
 	}
 
-	results := make([]panelRes, len(panel))
-
-	var wg sync.WaitGroup
-
-	minPanel := fusionMinPanel
-	if minPanel > len(panel) {
-		minPanel = len(panel)
+	answers := executePanel(ctx, panel, panelBody, opts)
+	if len(answers) == 0 {
+		http.Error(w, `{"error":"All fusion panel models failed"}`, http.StatusServiceUnavailable)
+		return nil
 	}
 
+	if len(answers) == 1 {
+		return writePanelBrief(w, answers[0].text, opts.Stream)
+	}
+
+	judge := strings.TrimSpace(opts.JudgeModel)
+	if judge == "" {
+		return writePanelBrief(w, answers[0].text, opts.Stream)
+	}
+
+	judgeBody, err := appendJudgeTurn(body, buildJudgePrompt(answers))
+	if err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return err
+	}
+
+	return opts.SingleModel(ctx, w, judgeBody, judge, opts.Stream)
+}
+
+func spawnPanelWorker(ctx context.Context, idx int, modelStr string, panelBody []byte, opts Options, wg *sync.WaitGroup, results []panelRes, onOk func()) {
+	go func() {
+		defer wg.Done()
+
+		cw := &captureWriter{header: make(http.Header), buf: bytes.Buffer{}, code: 0}
+		callErr := opts.SingleModel(ctx, cw, panelBody, modelStr, false)
+		text := extractPanelText(cw.buf.Bytes())
+		ok := (callErr == nil && cw.code < 400 && text != "") || (cw.code == 0 && callErr == nil && text != "")
+
+		results[idx] = panelRes{model: modelStr, text: text, ok: ok}
+
+		if ok {
+			onOk()
+		}
+	}()
+}
+
+func executePanel(ctx context.Context, panel []string, panelBody []byte, opts Options) []panelRes {
+	results := make([]panelRes, len(panel))
+	minPanel := min(fusionMinPanel, len(panel))
 	done := make(chan struct{})
 
-	var okCount int
-
-	var mu sync.Mutex
-
-	var graceOnce sync.Once
+	var (
+		wg        sync.WaitGroup
+		okCount   int
+		mu        sync.Mutex
+		graceOnce sync.Once
+	)
 
 	ctxPanel, cancel := context.WithTimeout(ctx, fusionHardTimeout)
 	defer cancel()
 
+	onOk := func() {
+		mu.Lock()
+		okCount++
+		n := okCount
+		mu.Unlock()
+
+		if n >= minPanel {
+			graceOnce.Do(func() {
+				go func() {
+					select {
+					case <-time.After(fusionStragglerGrace):
+						cancel()
+					case <-done:
+					}
+				}()
+			})
+		}
+	}
+
 	for i, m := range panel {
 		wg.Add(1)
-
-		go func(i int, modelStr string) {
-			defer wg.Done()
-
-			cw := &captureWriter{}
-			err := opts.SingleModel(ctxPanel, cw, panelBody, modelStr, false)
-			text := extractPanelText(cw.buf.Bytes())
-			ok := err == nil && cw.code < 400 && text != ""
-
-			if cw.code == 0 && err == nil && text != "" {
-				ok = true
-			}
-
-			results[i] = panelRes{model: modelStr, text: text, ok: ok}
-
-			if ok {
-				mu.Lock()
-				okCount++
-				n := okCount
-				mu.Unlock()
-
-				if n >= minPanel {
-					graceOnce.Do(func() {
-						go func() {
-							select {
-							case <-time.After(fusionStragglerGrace):
-								cancel()
-							case <-done:
-							}
-						}()
-					})
-				}
-			}
-		}(i, m)
+		spawnPanelWorker(ctxPanel, i, m, panelBody, opts, &wg, results, onOk)
 	}
 
 	wg.Wait()
@@ -140,88 +157,85 @@ func (f *Fusion) Execute(ctx context.Context, w http.ResponseWriter, body []byte
 		}
 	}
 
-	if len(answers) == 0 {
-		http.Error(w, `{"error":"All fusion panel models failed"}`, http.StatusServiceUnavailable)
-		return nil
-	}
-
-	if len(answers) == 1 {
-		return writePanelBrief(w, answers[0].text, opts.Stream)
-	}
-
-	judge := strings.TrimSpace(opts.JudgeModel)
-	if judge == "" {
-		// No judge configured: return first successful panel response as-is (no re-query, no judge call).
-		return writePanelBrief(w, answers[0].text, opts.Stream)
-	}
-
-	judgeBody, err := appendJudgeTurn(body, buildJudgePrompt(answers))
-	if err != nil {
-		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
-		return err
-	}
-
-	return opts.SingleModel(ctx, w, judgeBody, judge, opts.Stream)
+	return answers
 }
 
-// writePanelBrief emits a captured panel answer without another model round-trip.
 func writePanelBrief(w http.ResponseWriter, text string, stream bool) error {
 	if stream {
-		if w.Header().Get("Content-Type") == "" {
-			h := w.Header()
-			h.Set("Content-Type", "text/event-stream")
-			h.Set("Cache-Control", "no-cache")
-			h.Set("Connection", "keep-alive")
-		}
-
-		chunk, _ := json.Marshal(map[string]any{
-			"choices": []any{map[string]any{
-				"delta":         map[string]any{"content": text},
-				"finish_reason": nil,
-			}},
-		})
-		if _, err := w.Write([]byte("data: " + string(chunk) + "\n\n")); err != nil {
-			return err
-		}
-
-		done, _ := json.Marshal(map[string]any{
-			"choices": []any{map[string]any{"delta": map[string]any{}, "finish_reason": "stop"}},
-		})
-		if _, err := w.Write([]byte("data: " + string(done) + "\n\n")); err != nil {
-			return err
-		}
-
-		if _, err := w.Write([]byte("data: [DONE]\n\n")); err != nil {
-			return err
-		}
-
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-
-		return nil
+		return writePanelStream(w, text)
 	}
 
-	resp, _ := json.Marshal(map[string]any{
+	return writePanelNonStream(w, text)
+}
+
+func writePanelStream(w http.ResponseWriter, text string) error {
+	if w.Header().Get("Content-Type") == "" {
+		h := w.Header()
+		h.Set("Content-Type", "text/event-stream")
+		h.Set("Cache-Control", "no-cache")
+		h.Set("Connection", "keep-alive")
+	}
+
+	chunk, errMarshal := json.Marshal(map[string]any{
+		"choices": []any{map[string]any{
+			"delta":         map[string]any{"content": text},
+			"finish_reason": nil,
+		}},
+	})
+	if errMarshal != nil {
+		return errMarshal
+	}
+
+	if _, errWrite := w.Write([]byte("data: " + string(chunk) + "\n\n")); errWrite != nil {
+		return errWrite
+	}
+
+	done, errDone := json.Marshal(map[string]any{
+		"choices": []any{map[string]any{"delta": map[string]any{}, "finish_reason": "stop"}},
+	})
+	if errDone != nil {
+		return errDone
+	}
+
+	if _, errWriteDone := w.Write([]byte("data: " + string(done) + "\n\n")); errWriteDone != nil {
+		return errWriteDone
+	}
+
+	if _, errDoneSig := w.Write([]byte("data: [DONE]\n\n")); errDoneSig != nil {
+		return errDoneSig
+	}
+
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	return nil
+}
+
+func writePanelNonStream(w http.ResponseWriter, text string) error {
+	resp, err := json.Marshal(map[string]any{
 		"choices": []any{map[string]any{
 			"message":       map[string]any{"role": "assistant", "content": text},
 			"finish_reason": "stop",
 		}},
 	})
+	if err != nil {
+		return err
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, err := w.Write(resp)
+
+	_, err = w.Write(resp)
 
 	return err
 }
 
-func filterNonEmpty(models []string) []string {
-	out := make([]string, 0, len(models))
+func filterNonEmpty(in []string) []string {
+	var out []string
 
-	for _, m := range models {
-		if m != "" {
-			out = append(out, m)
+	for _, s := range in {
+		if s != "" {
+			out = append(out, s)
 		}
 	}
 
@@ -236,7 +250,29 @@ func stripToolsForceNoStream(body []byte) ([]byte, error) {
 
 	delete(m, "tools")
 	delete(m, "tool_choice")
+	delete(m, "functions")
+	delete(m, "function_call")
 	m["stream"] = false
+
+	return json.Marshal(m)
+}
+
+func appendJudgeTurn(body []byte, judgePrompt string) ([]byte, error) {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, err
+	}
+
+	judgeMsg := map[string]any{
+		"role":    "user",
+		"content": judgePrompt,
+	}
+
+	if arr, ok := m["messages"].([]any); ok {
+		m["messages"] = append(arr, judgeMsg)
+	} else {
+		m["messages"] = []any{judgeMsg}
+	}
 
 	return json.Marshal(m)
 }
@@ -244,38 +280,22 @@ func stripToolsForceNoStream(body []byte) ([]byte, error) {
 func buildJudgePrompt(answers []panelRes) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "You are the JUDGE in a model-fusion panel. %d expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\n", len(answers))
-	b.WriteString("Do NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\n")
-	b.WriteString("First, internally analyze the panel along these dimensions: consensus (points most sources agree on - treat as higher-confidence), contradictions (where they disagree - resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis - more complete and correct than any single response, with no filler.\n\n")
-	b.WriteString("=== PANEL RESPONSES ===\n")
+	b.WriteString("You are a synthesis judge. Below are draft responses from multiple AI models to the above prompt.\n")
+	b.WriteString("Synthesize the best, most complete, accurate, and concise final response.\n\n")
 
 	for i, a := range answers {
-		fmt.Fprintf(&b, "[Source %d]\n%s\n\n", i+1, a.text)
+		b.WriteString("### Response ")
+		b.WriteString(string(rune('A' + i)))
+		b.WriteString(" (from ")
+		b.WriteString(a.model)
+		b.WriteString("):\n")
+		b.WriteString(a.text)
+		b.WriteString("\n\n")
 	}
 
-	b.WriteString("=== END PANEL RESPONSES ===\n\n")
-	b.WriteString("Now write the final answer to the user's original request.")
+	b.WriteString("Final Answer:")
 
 	return b.String()
-}
-
-func appendJudgeTurn(body []byte, text string) ([]byte, error) {
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, err
-	}
-
-	if msgs, ok := m["messages"].([]any); ok {
-		m["messages"] = append(msgs, map[string]any{"role": "user", "content": text})
-	} else if input, ok := m["input"].([]any); ok {
-		m["input"] = append(input, map[string]any{"role": "user", "content": text})
-	} else if contents, ok := m["contents"].([]any); ok {
-		m["contents"] = append(contents, map[string]any{"role": "user", "parts": []any{map[string]any{"text": text}}})
-	} else {
-		m["messages"] = []any{map[string]any{"role": "user", "content": text}}
-	}
-
-	return json.Marshal(m)
 }
 
 func extractPanelText(raw []byte) string {
@@ -283,32 +303,9 @@ func extractPanelText(raw []byte) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	// strip SSE if present
+
 	if bytes.HasPrefix(raw, []byte("data:")) {
-		var texts []string
-
-		for _, line := range bytes.Split(raw, []byte("\n")) {
-			line = bytes.TrimSpace(line)
-			if !bytes.HasPrefix(line, []byte("data:")) {
-				continue
-			}
-
-			data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-			if bytes.Equal(data, []byte("[DONE]")) {
-				break
-			}
-
-			var chunk map[string]any
-			if json.Unmarshal(data, &chunk) != nil {
-				continue
-			}
-
-			if t := textFromJSON(chunk); t != "" {
-				texts = append(texts, t)
-			}
-		}
-
-		return strings.Join(texts, "")
+		return extractSSEText(raw)
 	}
 
 	var j map[string]any
@@ -319,24 +316,99 @@ func extractPanelText(raw []byte) string {
 	return textFromJSON(j)
 }
 
+func extractSSEText(raw []byte) string {
+	var texts []string
+
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+
+		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if bytes.Equal(data, []byte("[DONE]")) {
+			break
+		}
+
+		var chunk map[string]any
+		if json.Unmarshal(data, &chunk) != nil {
+			continue
+		}
+
+		if t := textFromJSON(chunk); t != "" {
+			texts = append(texts, t)
+		}
+	}
+
+	return strings.Join(texts, "")
+}
+
+func textFromChoices(choices []any) string {
+	if len(choices) == 0 {
+		return ""
+	}
+
+	c0, ok := choices[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	if msg, ok := c0["message"].(map[string]any); ok {
+		if t := contentToString(msg["content"]); t != "" {
+			return t
+		}
+	}
+
+	if d, ok := c0["delta"].(map[string]any); ok {
+		if t := contentToString(d["content"]); t != "" {
+			return t
+		}
+	}
+
+	if t, ok := c0["text"].(string); ok {
+		return t
+	}
+
+	return ""
+}
+
+func textFromCandidates(cands []any) string {
+	if len(cands) == 0 {
+		return ""
+	}
+
+	c0, ok := cands[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	content, ok := c0["content"].(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	parts, ok := content["parts"].([]any)
+	if !ok {
+		return ""
+	}
+
+	var b strings.Builder
+
+	for _, p := range parts {
+		if pm, ok := p.(map[string]any); ok {
+			if t, ok := pm["text"].(string); ok {
+				b.WriteString(t)
+			}
+		}
+	}
+
+	return b.String()
+}
+
 func textFromJSON(jsonMap map[string]any) string {
-	if choices, ok := jsonMap["choices"].([]any); ok && len(choices) > 0 {
-		if c0, ok := choices[0].(map[string]any); ok {
-			if msg, ok := c0["message"].(map[string]any); ok {
-				if t := contentToString(msg["content"]); t != "" {
-					return t
-				}
-			}
-
-			if d, ok := c0["delta"].(map[string]any); ok {
-				if t := contentToString(d["content"]); t != "" {
-					return t
-				}
-			}
-
-			if t, ok := c0["text"].(string); ok {
-				return t
-			}
+	if choices, ok := jsonMap["choices"].([]any); ok {
+		if t := textFromChoices(choices); t != "" {
+			return t
 		}
 	}
 
@@ -344,23 +416,9 @@ func textFromJSON(jsonMap map[string]any) string {
 		return t
 	}
 
-	if cands, ok := jsonMap["candidates"].([]any); ok && len(cands) > 0 {
-		if c0, ok := cands[0].(map[string]any); ok {
-			if content, ok := c0["content"].(map[string]any); ok {
-				if parts, ok := content["parts"].([]any); ok {
-					var b strings.Builder
-
-					for _, p := range parts {
-						if pm, ok := p.(map[string]any); ok {
-							if t, ok := pm["text"].(string); ok {
-								b.WriteString(t)
-							}
-						}
-					}
-
-					return b.String()
-				}
-			}
+	if cands, ok := jsonMap["candidates"].([]any); ok {
+		if t := textFromCandidates(cands); t != "" {
+			return t
 		}
 	}
 
@@ -374,8 +432,8 @@ func contentToString(c any) string {
 	case []any:
 		var b strings.Builder
 
-		for _, block := range v {
-			if m, ok := block.(map[string]any); ok {
+		for _, item := range v {
+			if m, ok := item.(map[string]any); ok {
 				if t, ok := m["text"].(string); ok {
 					b.WriteString(t)
 				}

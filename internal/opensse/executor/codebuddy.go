@@ -21,11 +21,13 @@ const (
 
 var codeBuddyAgentPattern = regexp.MustCompile(`(?i)you are claude code|claude.?code.+official.+cli|anthropic.+official.+cli|anxthxropic.+official.+cli|you are (?:cursor|windsurf|cline|aider|continue|copilot|cody)|you are an? (?:ai )?(?:coding |code )?agent|cc_entrypoint\s*=\s*(?:cli|vscode|jetbrains|gui)|claude.?code.+issues|give feedback.+claude.?code|you are .{0,30}(?:powerful )?ai agent|orchestration capabilities|OhMyOpenCode|<agent-identity>|<Role>|<Behavior_Instructions>`)
 
+// CodeBuddyExecutor handles CodeBuddy CN and International providers.
 type CodeBuddyExecutor struct {
 	DefaultExecutor
 	providerID string
 }
 
+// NewCodeBuddyExecutor creates a new CodeBuddyExecutor.
 func NewCodeBuddyExecutor(providerID string, client *http.Client) *CodeBuddyExecutor {
 	if client == nil {
 		client = http.DefaultClient
@@ -69,109 +71,120 @@ func flattenCodeBuddyContent(content any) string {
 	}
 }
 
+func sanitizeCodeBuddySystemMsg(msg map[string]any) map[string]any {
+	text := flattenCodeBuddyContent(msg["content"])
+	if text == "" {
+		return msg
+	}
+
+	if len(text) <= 2000 && !codeBuddyAgentPattern.MatchString(text) {
+		return msg
+	}
+
+	cloned := make(map[string]any, len(msg))
+	for k, v := range msg {
+		cloned[k] = v
+	}
+
+	if _, ok := msg["content"].(string); ok {
+		cloned["content"] = codeBuddyNeutralPrompt
+	} else {
+		cloned["content"] = []any{map[string]any{"type": "text", "text": codeBuddyNeutralPrompt}}
+	}
+
+	return cloned
+}
+
+func sanitizeCodeBuddyCNMessages(rawMsgs []any) []any {
+	newMsgs := make([]any, 0, len(rawMsgs))
+
+	for _, item := range rawMsgs {
+		msg, ok := item.(map[string]any)
+		if !ok {
+			newMsgs = append(newMsgs, item)
+			continue
+		}
+
+		role, _ := msg["role"].(string) // nolint:errcheck
+		if role != "system" {
+			newMsgs = append(newMsgs, msg)
+			continue
+		}
+
+		newMsgs = append(newMsgs, sanitizeCodeBuddySystemMsg(msg))
+	}
+
+	return newMsgs
+}
+
+func applyCodeBuddyReasoning(body map[string]any) {
+	eff, hasEff := body["reasoning_effort"].(string)
+	if !hasEff {
+		return
+	}
+
+	if eff == "none" || eff == "off" {
+		delete(body, "reasoning_effort")
+	} else if eff != "" {
+		body["reasoning_summary"] = "auto"
+	}
+}
+
 func transformCodeBuddyCN(body map[string]any) map[string]any {
 	body["stream"] = true
 
 	if rawMsgs, ok := body["messages"].([]any); ok {
-		var newMsgs []any
-
-		for _, item := range rawMsgs {
-			msg, ok := item.(map[string]any)
-			if !ok {
-				newMsgs = append(newMsgs, item)
-				continue
-			}
-
-			role, _ := msg["role"].(string)
-			if role != "system" {
-				newMsgs = append(newMsgs, msg)
-				continue
-			}
-
-			text := flattenCodeBuddyContent(msg["content"])
-			if text == "" {
-				newMsgs = append(newMsgs, msg)
-				continue
-			}
-
-			if len(text) > 2000 || codeBuddyAgentPattern.MatchString(text) {
-				cloned := make(map[string]any, len(msg))
-				for k, v := range msg {
-					cloned[k] = v
-				}
-
-				if _, ok := msg["content"].(string); ok {
-					cloned["content"] = codeBuddyNeutralPrompt
-				} else {
-					cloned["content"] = []any{map[string]any{"type": "text", "text": codeBuddyNeutralPrompt}}
-				}
-
-				newMsgs = append(newMsgs, cloned)
-			} else {
-				newMsgs = append(newMsgs, msg)
-			}
-		}
-
-		body["messages"] = newMsgs
+		body["messages"] = sanitizeCodeBuddyCNMessages(rawMsgs)
 	}
 
-	eff, hasEff := body["reasoning_effort"].(string)
-	if hasEff {
-		if eff == "none" || eff == "off" {
-			delete(body, "reasoning_effort")
-		} else if eff != "" {
-			body["reasoning_summary"] = "auto"
-		}
-	}
+	applyCodeBuddyReasoning(body)
 
 	return body
+}
+
+func sanitizeCodeBuddyIntlItem(item any) (map[string]any, bool) {
+	msg, ok := item.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+
+	role, _ := msg["role"].(string) // nolint:errcheck
+	if role == "system" || role == "developer" {
+		return nil, false
+	}
+
+	if role == "user" {
+		if contentStr, ok := msg["content"].(string); ok {
+			cloned := make(map[string]any, len(msg))
+			for k, v := range msg {
+				cloned[k] = v
+			}
+
+			cloned["content"] = []any{
+				map[string]any{"type": "text", "text": contentStr},
+			}
+
+			return cloned, true
+		}
+	}
+
+	return msg, true
 }
 
 func transformCodeBuddyIntl(body map[string]any) map[string]any {
 	body["stream"] = true
 
-	eff, hasEff := body["reasoning_effort"].(string)
-	if hasEff {
-		if eff == "none" || eff == "off" {
-			delete(body, "reasoning_effort")
-		} else if eff != "" {
-			body["reasoning_summary"] = "auto"
-		}
-	}
+	applyCodeBuddyReasoning(body)
 
-	source, _ := body["messages"].([]any)
+	source, _ := body["messages"].([]any) // nolint:errcheck
 	newMessages := []any{
 		map[string]any{"role": "system", "content": codeBuddyIntlSystem},
 	}
 
 	for _, item := range source {
-		msg, ok := item.(map[string]any)
-		if !ok {
-			continue
+		if transformed, ok := sanitizeCodeBuddyIntlItem(item); ok {
+			newMessages = append(newMessages, transformed)
 		}
-
-		role, _ := msg["role"].(string)
-		if role == "system" || role == "developer" {
-			continue
-		}
-
-		if role == "user" {
-			if contentStr, ok := msg["content"].(string); ok {
-				cloned := make(map[string]any, len(msg))
-				for k, v := range msg {
-					cloned[k] = v
-				}
-
-				cloned["content"] = []any{
-					map[string]any{"type": "text", "text": contentStr},
-				}
-				newMessages = append(newMessages, cloned)
-
-				continue
-			}
-		}
-
-		newMessages = append(newMessages, msg)
 	}
 
 	body["messages"] = newMessages
@@ -179,7 +192,8 @@ func transformCodeBuddyIntl(body map[string]any) map[string]any {
 	return body
 }
 
-func (e *CodeBuddyExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+// Execute executes CodeBuddy requests.
+func (e *CodeBuddyExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, _ bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err

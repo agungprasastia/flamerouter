@@ -2,6 +2,28 @@ package utils
 
 import "encoding/json"
 
+func injectReasoningDelta(choices []any, reasoning string) bool {
+	if len(choices) == 0 {
+		return false
+	}
+
+	choice, ok := choices[0].(map[string]any)
+	if !ok || choice == nil {
+		return false
+	}
+
+	delta, ok := choice["delta"].(map[string]any)
+	if !ok || delta == nil {
+		delta = map[string]any{}
+		choice["delta"] = delta
+	}
+
+	delta["reasoning_content"] = reasoning
+	choices[0] = choice
+
+	return true
+}
+
 // InjectReasoning adds reasoning/thinking content into an SSE chunk (OpenAI shape).
 func InjectReasoning(chunk []byte, reasoning string) []byte {
 	if reasoning == "" || len(chunk) == 0 {
@@ -13,24 +35,11 @@ func InjectReasoning(chunk []byte, reasoning string) []byte {
 		return chunk
 	}
 
-	choices, _ := c["choices"].([]any)
-	if len(choices) == 0 {
+	choices, ok := c["choices"].([]any)
+	if !ok || !injectReasoningDelta(choices, reasoning) {
 		return chunk
 	}
 
-	choice, _ := choices[0].(map[string]any)
-	if choice == nil {
-		return chunk
-	}
-
-	delta, _ := choice["delta"].(map[string]any)
-	if delta == nil {
-		delta = map[string]any{}
-		choice["delta"] = delta
-	}
-
-	delta["reasoning_content"] = reasoning
-	choices[0] = choice
 	c["choices"] = choices
 
 	out, err := json.Marshal(c)

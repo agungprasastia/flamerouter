@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func (s *Server) handleListProxyPools(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListProxyPools(w http.ResponseWriter, _ *http.Request) {
 	pools, err := s.st.ListProxyPools()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
@@ -34,66 +34,90 @@ func (s *Server) handleListProxyPools(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]any{"proxyPools": list})
 }
 
-func (s *Server) handleCreateProxyPool(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		IsActive *bool  `json:"isActive"`
-		Name     string `json:"name"`
-		Type     string `json:"type"`
-		Host     string `json:"host"`
-		Username string `json:"username"`
-		Password string `json:"password"`
-		ProxyURL string `json:"proxyUrl"`
-		Port     int    `json:"port"`
+type createProxyPoolReq struct {
+	IsActive *bool  `json:"isActive"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Host     string `json:"host"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	ProxyURL string `json:"proxyUrl"`
+	Port     int    `json:"port"`
+}
+
+func parseProxyURLField(rawURL string) (host string, port int, user, pass, scheme string, err error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return "", 0, "", "", "", fmt.Errorf("invalid proxy URL")
 	}
+
+	host = u.Hostname()
+
+	switch {
+	case u.Port() != "":
+		port, _ = strconv.Atoi(u.Port()) //nolint:errcheck // port parsed by net/url
+	case u.Scheme == "https":
+		port = 443
+	default:
+		port = 80
+	}
+
+	if u.User != nil {
+		user = u.User.Username()
+		pass, _ = u.User.Password()
+	}
+
+	return host, port, user, pass, u.Scheme, nil
+}
+
+func normalizeCreateProxyPoolReq(req *createProxyPoolReq) error {
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+
+	if req.Type == "" {
+		req.Type = "http"
+	}
+
+	if req.Host == "" && strings.TrimSpace(req.ProxyURL) != "" {
+		h, p, u, pass, scheme, err := parseProxyURLField(req.ProxyURL)
+		if err != nil {
+			return err
+		}
+
+		req.Host = h
+		req.Port = p
+		req.Username = u
+		req.Password = pass
+
+		if req.Type == "http" && scheme != "" {
+			req.Type = scheme
+		}
+	}
+
+	if req.Host == "" {
+		return fmt.Errorf("proxy URL is required")
+	}
+
+	if req.Port == 0 {
+		req.Port = 8080
+	}
+
+	return nil
+}
+
+func (s *Server) handleCreateProxyPool(w http.ResponseWriter, r *http.Request) {
+	var req createProxyPoolReq
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		writeErr(w, http.StatusBadRequest, "Name is required")
+	if err := normalizeCreateProxyPoolReq(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	if req.Type == "" {
-		req.Type = "http"
-	}
-	// accept proxyUrl form (9router)
-	if req.Host == "" && strings.TrimSpace(req.ProxyURL) != "" {
-		u, err := url.Parse(strings.TrimSpace(req.ProxyURL))
-		if err != nil || u.Host == "" {
-			writeErr(w, http.StatusBadRequest, "Invalid proxy URL")
-			return
-		}
-
-		req.Host = u.Hostname()
-		if u.Port() != "" {
-			req.Port, _ = strconv.Atoi(u.Port())
-		} else if u.Scheme == "https" {
-			req.Port = 443
-		} else {
-			req.Port = 80
-		}
-
-		if u.User != nil {
-			req.Username = u.User.Username()
-			req.Password, _ = u.User.Password()
-		}
-
-		if req.Type == "http" && u.Scheme != "" {
-			req.Type = u.Scheme
-		}
-	}
-
-	if req.Host == "" {
-		writeErr(w, http.StatusBadRequest, "Proxy URL is required")
-		return
-	}
-
-	if req.Port == 0 {
-		req.Port = 8080
 	}
 
 	id, err := s.st.CreateProxyPool(req.Name, req.Type, req.Host, req.Port, req.Username, req.Password)
@@ -103,6 +127,7 @@ func (s *Server) handleCreateProxyPool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.IsActive != nil && !*req.IsActive {
+		//nolint:errcheck // best-effort update
 		_ = s.st.UpdateProxyPool(id, req.Name, req.Type, req.Host, req.Port, req.Username, req.Password, false)
 	}
 
@@ -154,6 +179,133 @@ func (s *Server) handleDeleteProxyPool(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]any{"success": true})
 }
 
+type proxyTestResult struct {
+	statusText string
+	err        string
+	status     int
+	ok         bool
+}
+
+func testRelayProxy(ctx context.Context, proxyURL string) proxyTestResult {
+	var res proxyTestResult
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxyURL, nil)
+	if err != nil {
+		res.err = err.Error()
+		return res
+	}
+
+	req.Header.Set("x-relay-target", "https://httpbin.org")
+	req.Header.Set("x-relay-path", "/get")
+
+	resp, err := netutil.DoHTTP(http.DefaultClient, req)
+	if err != nil {
+		res.err = err.Error()
+		res.status = 500
+
+		return res
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort close on ping response
+
+	res.ok = resp.StatusCode >= 200 && resp.StatusCode < 300
+	res.status = resp.StatusCode
+	res.statusText = resp.Status
+
+	if !res.ok {
+		res.err = fmt.Sprintf("Proxy test failed with status %d", resp.StatusCode)
+	}
+
+	return res
+}
+
+func makeStandardProxyTransport(u *url.URL) *http.Transport {
+	dialer := &net.Dialer{
+		Timeout:         8 * time.Second,
+		Deadline:        time.Time{},
+		LocalAddr:       nil,
+		DualStack:       false,
+		FallbackDelay:   0,
+		KeepAlive:       0,
+		KeepAliveConfig: net.KeepAliveConfig{Enable: false, Idle: 0, Interval: 0, Count: 0},
+		Resolver:        nil,
+		Cancel:          nil,
+		Control:         nil,
+		ControlContext:  nil,
+	}
+
+	return &http.Transport{
+		Proxy:                  http.ProxyURL(u),
+		DialContext:            dialer.DialContext,
+		OnProxyConnectResponse: nil,
+		Dial:                   nil,
+		DialTLSContext:         nil,
+		DialTLS:                nil,
+		TLSClientConfig:        nil,
+		TLSHandshakeTimeout:    0,
+		DisableKeepAlives:      false,
+		DisableCompression:     false,
+		MaxIdleConns:           0,
+		MaxIdleConnsPerHost:    0,
+		MaxConnsPerHost:        0,
+		IdleConnTimeout:        0,
+		ResponseHeaderTimeout:  0,
+		ExpectContinueTimeout:  0,
+		TLSNextProto:           nil,
+		ProxyConnectHeader:     nil,
+		GetProxyConnectHeader:  nil,
+		MaxResponseHeaderBytes: 0,
+		WriteBufferSize:        0,
+		ReadBufferSize:         0,
+		ForceAttemptHTTP2:      false,
+		HTTP2:                  nil,
+		Protocols:              nil,
+	}
+}
+
+func testStandardProxy(ctx context.Context, proxyURL string) proxyTestResult {
+	var res proxyTestResult
+
+	u, err := url.Parse(proxyURL)
+	if err != nil || u.Host == "" {
+		res.err = "invalid proxy URL"
+		res.status = 500
+
+		return res
+	}
+
+	client := &http.Client{
+		Transport:     makeStandardProxyTransport(u),
+		CheckRedirect: nil,
+		Jar:           nil,
+		Timeout:       10 * time.Second,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://httpbin.org/get", nil)
+	if err != nil {
+		res.err = err.Error()
+		return res
+	}
+
+	resp, err := netutil.DoHTTP(client, req)
+	if err != nil {
+		res.err = err.Error()
+		res.status = 500
+
+		return res
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort close on test response
+
+	res.ok = resp.StatusCode >= 200 && resp.StatusCode < 300
+	res.status = resp.StatusCode
+	res.statusText = resp.Status
+
+	if !res.ok {
+		res.err = fmt.Sprintf("Proxy test failed with status %d", resp.StatusCode)
+	}
+
+	return res
+}
+
 // POST /api/proxy-pools/{id}/test.
 func (s *Server) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -167,83 +319,24 @@ func (s *Server) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	started := time.Now()
 
-	var result struct {
-		statusText string
-		err        string
-		status     int
-		ok         bool
-	}
-
 	typ := strings.ToLower(pool.Type)
 	proxyURL := buildProxyURL(pool.Type, pool.Host, pool.Port, pool.Username, pool.Password)
 
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	var result proxyTestResult
+
 	switch typ {
 	case "vercel", "cloudflare", "deno":
-		// relay: GET relay with x-relay-target headers
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxyURL, nil)
-		if err != nil {
-			result.err = err.Error()
-		} else {
-			req.Header.Set("x-relay-target", "https://httpbin.org")
-			req.Header.Set("x-relay-path", "/get")
-
-			res, err := netutil.DoHTTP(http.DefaultClient, req)
-			if err != nil {
-				result.err = err.Error()
-				result.status = 500
-			} else {
-				_ = res.Body.Close()
-				result.ok = res.StatusCode >= 200 && res.StatusCode < 300
-				result.status = res.StatusCode
-				result.statusText = res.Status
-
-				if !result.ok {
-					result.err = fmt.Sprintf("Proxy test failed with status %d", res.StatusCode)
-				}
-			}
-		}
+		result = testRelayProxy(ctx, proxyURL)
 	default:
-		// HTTP/SOCKS-style: use as HTTP proxy to hit httpbin
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-
-		u, err := url.Parse(proxyURL)
-		if err != nil || u.Host == "" {
-			result.err = "Invalid proxy URL"
-			result.status = 500
-		} else {
-			transport := &http.Transport{
-				Proxy:       http.ProxyURL(u),
-				DialContext: (&net.Dialer{Timeout: 8 * time.Second}).DialContext,
-			}
-			client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://httpbin.org/get", nil)
-			if err != nil {
-				result.err = err.Error()
-			} else {
-				res, err := netutil.DoHTTP(client, req)
-				if err != nil {
-					result.err = err.Error()
-					result.status = 500
-				} else {
-					_ = res.Body.Close()
-					result.ok = res.StatusCode >= 200 && res.StatusCode < 300
-					result.status = res.StatusCode
-					result.statusText = res.Status
-
-					if !result.ok {
-						result.err = fmt.Sprintf("Proxy test failed with status %d", res.StatusCode)
-					}
-				}
-			}
-		}
+		result = testStandardProxy(ctx, proxyURL)
 	}
 
+	//nolint:errcheck // best-effort status update
 	_ = s.st.UpdateProxyPoolTestStatus(id, result.ok)
+
 	elapsed := time.Since(started).Milliseconds()
 	writeJSONOK(w, map[string]any{
 		"ok": result.ok, "status": result.status, "statusText": result.statusText,
@@ -251,24 +344,30 @@ func (s *Server) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func resolveProxyScheme(typ string) string {
+	scheme := strings.ToLower(typ)
+	switch scheme {
+	case "", "http", "https":
+		if scheme == "" {
+			return "http"
+		}
+
+		return scheme
+	case "socks5", "socks":
+		return "socks5"
+	case "vercel", "cloudflare", "deno":
+		return "https"
+	default:
+		return "http"
+	}
+}
+
 func buildProxyURL(typ, host string, port int, user, pass string) string {
 	if strings.Contains(host, "://") {
 		return host
 	}
 
-	scheme := typ
-	if scheme == "" || scheme == "http" || scheme == "https" {
-		if scheme == "" {
-			scheme = "http"
-		}
-	} else if scheme == "socks5" || scheme == "socks" {
-		scheme = "socks5"
-	} else if scheme == "vercel" || scheme == "cloudflare" || scheme == "deno" {
-		scheme = "https"
-	} else {
-		scheme = "http"
-	}
-
+	scheme := resolveProxyScheme(typ)
 	auth := ""
 
 	if user != "" {

@@ -10,19 +10,21 @@ import (
 )
 
 func init() {
-	RegisterSpecialized("azure", &AzureExecutor{Base: Base{Provider: "azure"}})
+	RegisterSpecialized("azure", &AzureExecutor{
+		Base: Base{
+			Provider: "azure",
+			Client:   nil,
+			Headers:  nil,
+			BaseURL:  "",
+			BaseURLs: nil,
+		},
+	})
 }
 
+// AzureExecutor executes OpenAI chat completions hosted on Azure.
 type AzureExecutor struct{ Base }
 
-func (e *AzureExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, err
-	}
-
-	m["stream"] = stream
-
+func resolveAzureURL(cred Credentials, model string) string {
 	endpoint := strPSD(cred, "azureEndpoint")
 	if endpoint == "" {
 		endpoint = envOr("AZURE_ENDPOINT", "https://api.openai.com")
@@ -43,13 +45,11 @@ func (e *AzureExecutor) Execute(ctx context.Context, cred Credentials, model str
 	}
 
 	endpoint = strings.TrimRight(endpoint, "/")
-	url := fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s", endpoint, deployment, apiVersion)
 
-	payload, err := json.Marshal(m)
-	if err != nil {
-		return nil, err
-	}
+	return fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s", endpoint, deployment, apiVersion)
+}
 
+func buildAzureHeaders(cred Credentials, stream bool) http.Header {
 	h := make(http.Header)
 	h.Set("Content-Type", "application/json")
 
@@ -73,6 +73,27 @@ func (e *AzureExecutor) Execute(ctx context.Context, cred Credentials, model str
 	if stream {
 		h.Set("Accept", "text/event-stream")
 	}
+
+	return h
+}
+
+// Execute performs Azure OpenAI chat completions.
+func (e *AzureExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, err
+	}
+
+	m["stream"] = stream
+
+	url := resolveAzureURL(cred, model)
+
+	payload, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+
+	h := buildAzureHeaders(cred, stream)
 
 	return e.DoPOST(ctx, url, h, payload)
 }

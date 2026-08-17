@@ -48,8 +48,8 @@ func injectMessagesSystem(body map[string]any, prompt string) {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
-		if role == "system" || role == "developer" {
+		role, ok := msg["role"].(string)
+		if ok && (role == "system" || role == "developer") {
 			appendToOpenAIMessage(msg, prompt)
 
 			body[key] = arr
@@ -73,6 +73,32 @@ func appendToOpenAIMessage(msg map[string]any, prompt string) {
 	}
 }
 
+func injectClaudeSystemArray(body map[string]any, arr []any, prompt string) {
+	block := map[string]any{"type": "text", "text": prompt}
+	lastCache := -1
+
+	for i := len(arr) - 1; i >= 0; i-- {
+		if m, ok := arr[i].(map[string]any); ok {
+			if _, has := m["cache_control"]; has {
+				lastCache = i
+				break
+			}
+		}
+	}
+
+	if lastCache >= 0 {
+		newArr := make([]any, 0, len(arr)+1)
+		newArr = append(newArr, arr[:lastCache]...)
+		newArr = append(newArr, block)
+		newArr = append(newArr, arr[lastCache:]...)
+		body["system"] = newArr
+
+		return
+	}
+
+	body["system"] = append(arr, block)
+}
+
 func injectClaudeSystem(body map[string]any, prompt string) {
 	if s, ok := body["system"].(string); ok && s != "" {
 		body["system"] = s + sep + prompt
@@ -80,28 +106,7 @@ func injectClaudeSystem(body map[string]any, prompt string) {
 	}
 
 	if arr, ok := body["system"].([]any); ok {
-		block := map[string]any{"type": "text", "text": prompt}
-		lastCache := -1
-
-		for i := len(arr) - 1; i >= 0; i-- {
-			if m, ok := arr[i].(map[string]any); ok {
-				if _, has := m["cache_control"]; has {
-					lastCache = i
-					break
-				}
-			}
-		}
-
-		if lastCache >= 0 {
-			newArr := make([]any, 0, len(arr)+1)
-			newArr = append(newArr, arr[:lastCache]...)
-			newArr = append(newArr, block)
-			newArr = append(newArr, arr[lastCache:]...)
-			body["system"] = newArr
-		} else {
-			body["system"] = append(arr, block)
-		}
-
+		injectClaudeSystemArray(body, arr, prompt)
 		return
 	}
 

@@ -44,7 +44,7 @@ func GetRotatedModels(models []string, comboName, strategy string, stickyLimit i
 
 	st := rotState[key]
 	if st == nil {
-		st = &rotationState{}
+		st = &rotationState{index: 0, consecutiveUseCount: 0}
 		rotState[key] = st
 	}
 
@@ -90,9 +90,10 @@ func rotateFromIndex(models []string, currentIndex int) []string {
 	return out
 }
 
+// Execute runs the combo using round-robin strategy.
 func (r *RoundRobin) Execute(ctx context.Context, w http.ResponseWriter, body []byte,
-	models []string, st *store.Store, exec executor.Executor,
-	fb *fallback.Fallback, opts Options,
+	models []string, st *store.Store, _ executor.Executor,
+	_ *fallback.Fallback, opts Options,
 ) error {
 	models = PrepareModelsWithCapacityAdapter(models, opts.ComboName, "round-robin", opts.StickyLimit, body, st)
 	return runSequential(ctx, w, body, models, opts)

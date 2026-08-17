@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-func TestProviderRegistryModelsParity(t *testing.T) {
-	// 1. Check top providers existence
+func verifyExpectedProviders(t *testing.T) {
+	t.Helper()
+
 	expectedProviders := []string{
 		"openai", "claude", "codex", "cursor", "kiro", "antigravity",
 		"github", "gemini", "deepseek", "groq", "openrouter", "xai",
@@ -23,8 +24,11 @@ func TestProviderRegistryModelsParity(t *testing.T) {
 			t.Fatalf("provider %q has 0 models", pid)
 		}
 	}
+}
 
-	// 2. Check alias resolution
+func verifyAliases(t *testing.T) {
+	t.Helper()
+
 	aliasTests := map[string]string{
 		"oa":   "openai",
 		"cc":   "claude",
@@ -46,39 +50,45 @@ func TestProviderRegistryModelsParity(t *testing.T) {
 			t.Fatalf("alias %q resolved to %v, want %q", alias, p, wantID)
 		}
 	}
+}
 
-	// 3. Verify specific new models from 9router
+func checkCodexModels(t *testing.T) {
+	t.Helper()
+
 	codex := provider.GetProvider("codex")
 	if codex == nil {
 		t.Fatal("codex provider not found")
 	}
-	hasGPT56 := false
 
 	for _, m := range codex.Models {
 		if m.ID == "gpt-5.6-sol" || m.ID == "gpt-5.6-terra" {
-			hasGPT56 = true
-			break
+			return
 		}
 	}
 
-	if !hasGPT56 {
-		t.Fatal("codex missing gpt-5.6 models")
-	}
+	t.Fatal("codex missing gpt-5.6 models")
+}
+
+func checkKiroModels(t *testing.T) {
+	t.Helper()
 
 	kiro := provider.GetProvider("kiro")
 	if kiro == nil {
 		t.Fatal("kiro provider not found")
 	}
-	hasClaude5 := false
 
 	for _, m := range kiro.Models {
 		if m.ID == "claude-opus-5" || m.ID == "claude-opus-4.8" {
-			hasClaude5 = true
-			break
+			return
 		}
 	}
 
-	if !hasClaude5 {
-		t.Fatal("kiro missing claude-opus-5 / 4.8 models")
-	}
+	t.Fatal("kiro missing claude-opus-5 / 4.8 models")
+}
+
+func TestProviderRegistryModelsParity(t *testing.T) {
+	verifyExpectedProviders(t)
+	verifyAliases(t)
+	checkCodexModels(t)
+	checkKiroModels(t)
 }

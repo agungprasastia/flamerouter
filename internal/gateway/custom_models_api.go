@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-func (s *Server) handleListCustomModels(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListCustomModels(w http.ResponseWriter, _ *http.Request) {
 	models, err := s.st.ListCustomModels()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")

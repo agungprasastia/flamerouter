@@ -16,7 +16,10 @@ func newTestStore(t *testing.T) *store.Store {
 		t.Fatalf("store.Open: %v", err)
 	}
 
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() {
+		//nolint:errcheck // test cleanup
+		_ = st.Close()
+	})
 
 	return st
 }
@@ -67,7 +70,9 @@ func TestRetryClassification(t *testing.T) {
 
 func TestSelectAccountExcludingRotates(t *testing.T) {
 	st := newTestStore(t)
+	//nolint:errcheck // test fixture
 	id1, _ := st.CreateConnection("openai", "api_key", "c1", "sk-1", "")
+	//nolint:errcheck // test fixture
 	id2, _ := st.CreateConnection("openai", "api_key", "c2", "sk-2", "")
 
 	fb := fallback.New(st)

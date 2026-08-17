@@ -29,98 +29,36 @@ func fetchCodebuddyIntlUsage(ctx context.Context, opts FetchOptions) (*QuotaResu
 	return queryCodebuddy(ctx, opts, "codebuddy-intl", codebuddyIntlQuotaURL)
 }
 
-func queryCodebuddy(ctx context.Context, opts FetchOptions, providerId, quotaURL string) (*QuotaResult, error) {
-	token := opts.AccessToken
-	if token == "" {
-		token = opts.APIKey
+func codebuddyCycleEndMs(acc map[string]any) float64 {
+	r := parseResetTime(acc["CycleEndTime"])
+	if r == nil {
+		return math.Inf(1)
 	}
 
-	if token == "" {
-		return &QuotaResult{Message: fmt.Sprintf("CodeBuddy (%s) credential not available.", providerId)}, nil
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, quotaURL, bytes.NewReader([]byte("{}")))
+	t, err := time.Parse(time.RFC3339Nano, *r)
 	if err != nil {
-		return nil, err
+		return math.Inf(1)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	return float64(t.UnixMilli())
+}
 
-	res, err := doHTTP(opts.HTTPClient, req)
-	if err != nil {
-		return &QuotaResult{Message: fmt.Sprintf("CodeBuddy (%s) error: %v", providerId, err)}, nil
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode == 401 || res.StatusCode == 403 {
-		return &QuotaResult{Message: "CodeBuddy CN credential invalid or expired."}, nil
-	}
-
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return &QuotaResult{Message: fmt.Sprintf("CodeBuddy CN quota API error (%d).", res.StatusCode)}, nil
-	}
-
-	var jsonBody struct {
-		Msg  string `json:"msg"`
-		Data struct {
-			Response struct {
-				Data struct {
-					Accounts []map[string]any `json:"Accounts"`
-				} `json:"Data"`
-			} `json:"Response"`
-		} `json:"data"`
-		Code int `json:"code"`
-	}
-
-	if err := json.NewDecoder(res.Body).Decode(&jsonBody); err != nil {
-		return &QuotaResult{Message: "CodeBuddy CN quota response was not JSON."}, nil
-	}
-
-	if jsonBody.Code != 0 {
-		msg := jsonBody.Msg
-		if msg == "" {
-			msg = "unknown"
-		}
-
-		return &QuotaResult{Message: fmt.Sprintf("CodeBuddy CN quota error: %s", msg)}, nil
-	}
-
-	accounts := jsonBody.Data.Response.Data.Accounts
-	if len(accounts) == 0 {
-		return &QuotaResult{Message: "CodeBuddy CN connected. No credit package found."}, nil
-	}
-
-	cycleEndMs := func(acc map[string]any) float64 {
-		r := parseResetTime(acc["CycleEndTime"])
-		if r == nil {
-			return math.Inf(1)
-		}
-
-		t, err := time.Parse(time.RFC3339Nano, *r)
-		if err != nil {
-			return math.Inf(1)
-		}
-
-		return float64(t.UnixMilli())
-	}
-
+func isCodebuddyRefill(acc map[string]any) bool {
 	const refillGapMs = 2.0 * 24.0 * 60.0 * 60.0 * 1000.0
 
-	isRefill := func(acc map[string]any) bool {
-		ce := cycleEndMs(acc)
-		de := toFiniteFloat(acc["DeductionEndTime"], math.NaN())
+	ce := codebuddyCycleEndMs(acc)
+	de := toFiniteFloat(acc["DeductionEndTime"], math.NaN())
 
-		return !math.IsInf(ce, 0) && !math.IsNaN(de) && (de-ce > refillGapMs)
-	}
+	return !math.IsInf(ce, 0) && !math.IsNaN(de) && (de-ce > refillGapMs)
+}
 
+func splitCodebuddyAccounts(accounts []map[string]any) ([]map[string]any, []map[string]any) {
 	var refills []map[string]any
 
 	var bonuses []map[string]any
 
 	for _, acc := range accounts {
-		if isRefill(acc) {
+		if isCodebuddyRefill(acc) {
 			refills = append(refills, acc)
 		} else {
 			bonuses = append(bonuses, acc)
@@ -128,12 +66,17 @@ func queryCodebuddy(ctx context.Context, opts FetchOptions, providerId, quotaURL
 	}
 
 	sort.Slice(refills, func(i, j int) bool {
-		return cycleEndMs(refills[i]) < cycleEndMs(refills[j])
-	})
-	sort.Slice(bonuses, func(i, j int) bool {
-		return cycleEndMs(bonuses[i]) < cycleEndMs(bonuses[j])
+		return codebuddyCycleEndMs(refills[i]) < codebuddyCycleEndMs(refills[j])
 	})
 
+	sort.Slice(bonuses, func(i, j int) bool {
+		return codebuddyCycleEndMs(bonuses[i]) < codebuddyCycleEndMs(bonuses[j])
+	})
+
+	return refills, bonuses
+}
+
+func buildCodebuddyQuotas(refills, bonuses []map[string]any) map[string]QuotaItem {
 	quotas := make(map[string]QuotaItem)
 	seenRefill := make(map[string]int)
 
@@ -182,9 +125,13 @@ func queryCodebuddy(ctx context.Context, opts FetchOptions, providerId, quotaURL
 		quotas[name] = item
 	}
 
-	plan := "CodeBuddy"
+	return quotas
+}
 
+func determineCodebuddyPlan(accounts, refills []map[string]any) string {
+	plan := "CodeBuddy"
 	firstPkg := accounts[0]
+
 	if len(refills) > 0 {
 		firstPkg = refills[0]
 	}
@@ -195,31 +142,259 @@ func queryCodebuddy(ctx context.Context, opts FetchOptions, providerId, quotaURL
 		plan = spn
 	}
 
+	return plan
+}
+
+type codebuddyJSONBody struct {
+	Msg  string `json:"msg"`
+	Data struct {
+		Response struct {
+			Data struct {
+				Accounts []map[string]any `json:"Accounts"`
+			} `json:"Data"`
+		} `json:"Response"`
+	} `json:"data"`
+	Code int `json:"code"`
+}
+
+func checkCodebuddyResponseStatus(res *http.Response, providerID string) *QuotaResult {
+	if res.StatusCode == 401 || res.StatusCode == 403 {
+		return &QuotaResult{
+			Provider:           providerID,
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            "CodeBuddy CN credential invalid or expired.",
+			Details:            nil,
+			Quotas:             nil,
+		}
+	}
+
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return &QuotaResult{
+			Provider:           providerID,
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            fmt.Sprintf("CodeBuddy CN quota API error (%d).", res.StatusCode),
+			Details:            nil,
+			Quotas:             nil,
+		}
+	}
+
+	return nil
+}
+
+func parseCodebuddySuccessBody(jsonBody codebuddyJSONBody, providerID string) *QuotaResult {
+	accounts := jsonBody.Data.Response.Data.Accounts
+	if len(accounts) == 0 {
+		return &QuotaResult{
+			Provider:           providerID,
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            "CodeBuddy CN connected. No credit package found.",
+			Details:            nil,
+			Quotas:             nil,
+		}
+	}
+
+	refills, bonuses := splitCodebuddyAccounts(accounts)
+	quotas := buildCodebuddyQuotas(refills, bonuses)
+	plan := determineCodebuddyPlan(accounts, refills)
+
 	return &QuotaResult{
-		Provider: providerId,
-		Plan:     plan,
-		Quotas:   quotas,
-	}, nil
+		Provider:           providerID,
+		Plan:               plan,
+		Limit:              0,
+		Used:               0,
+		Remaining:          0,
+		TotalUsagePct:      0,
+		LimitReached:       nil,
+		ReviewLimitReached: nil,
+		IsQuotaExceeded:    nil,
+		ResetCredits:       nil,
+		ResetsAt:           nil,
+		Message:            "",
+		Details:            nil,
+		Quotas:             quotas,
+	}
+}
+
+func parseCodebuddyResponse(res *http.Response, providerID string) *QuotaResult {
+	var jsonBody codebuddyJSONBody
+
+	if err := json.NewDecoder(res.Body).Decode(&jsonBody); err != nil {
+		return &QuotaResult{
+			Provider:           providerID,
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            "CodeBuddy CN quota response was not JSON.",
+			Details:            nil,
+			Quotas:             nil,
+		}
+	}
+
+	if jsonBody.Code != 0 {
+		msg := jsonBody.Msg
+		if msg == "" {
+			msg = "unknown"
+		}
+
+		return &QuotaResult{
+			Provider:           providerID,
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            fmt.Sprintf("CodeBuddy CN quota error: %s", msg),
+			Details:            nil,
+			Quotas:             nil,
+		}
+	}
+
+	return parseCodebuddySuccessBody(jsonBody, providerID)
+}
+
+func executeCodebuddyRequest(ctx context.Context, opts FetchOptions, providerID, quotaURL, token string) (*http.Response, *QuotaResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, quotaURL, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	res, err := doHTTP(opts.HTTPClient, req)
+	if err != nil {
+		return nil, &QuotaResult{
+			Provider:           providerID,
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            fmt.Sprintf("CodeBuddy (%s) error: %v", providerID, err),
+			Details:            nil,
+			Quotas:             nil,
+		}, nil
+	}
+
+	return res, nil, nil
+}
+
+func queryCodebuddy(ctx context.Context, opts FetchOptions, providerID, quotaURL string) (*QuotaResult, error) {
+	token := opts.AccessToken
+	if token == "" {
+		token = opts.APIKey
+	}
+
+	if token == "" {
+		return &QuotaResult{
+			Provider:           providerID,
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            fmt.Sprintf("CodeBuddy (%s) credential not available.", providerID),
+			Details:            nil,
+			Quotas:             nil,
+		}, nil
+	}
+
+	res, errRes, err := executeCodebuddyRequest(ctx, opts, providerID, quotaURL, token)
+	if err != nil {
+		return nil, err
+	}
+
+	if errRes != nil || res == nil {
+		return errRes, nil
+	}
+
+	defer func() {
+		if res != nil && res.Body != nil {
+			if err := res.Body.Close(); err != nil {
+				_ = err
+			}
+		}
+	}()
+
+	if statusRes := checkCodebuddyResponseStatus(res, providerID); statusRes != nil {
+		return statusRes, nil
+	}
+
+	return parseCodebuddyResponse(res, providerID), nil
 }
 
 func refillCadence(acc map[string]any) string {
 	startStr := parseResetTime(acc["CycleStartTime"])
 	endStr := parseResetTime(acc["CycleEndTime"])
 
-	if startStr != nil && endStr != nil {
-		st, err1 := time.Parse(time.RFC3339Nano, *startStr)
-		et, err2 := time.Parse(time.RFC3339Nano, *endStr)
+	if startStr == nil || endStr == nil {
+		return "Monthly"
+	}
 
-		if err1 == nil && err2 == nil {
-			days := float64(et.UnixMilli()-st.UnixMilli()) / 86400000.0
-			if days <= 1.5 {
-				return "Daily"
-			}
+	st, err1 := time.Parse(time.RFC3339Nano, *startStr)
+	et, err2 := time.Parse(time.RFC3339Nano, *endStr)
 
-			if days <= 10.0 {
-				return "Weekly"
-			}
-		}
+	if err1 != nil || err2 != nil {
+		return "Monthly"
+	}
+
+	days := float64(et.UnixMilli()-st.UnixMilli()) / 86400000.0
+	if days <= 1.5 {
+		return "Daily"
+	}
+
+	if days <= 10.0 {
+		return "Weekly"
 	}
 
 	return "Monthly"

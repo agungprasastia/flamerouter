@@ -1,9 +1,12 @@
+// Package qoder provides constants, cryptographic signing (COSY), and encoding routines for Qoder API integration.
 package qoder
 
 import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+
+	/* #nosec G501 -- MD5 required by Qoder upstream COSY signature protocol */
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
@@ -76,9 +79,9 @@ func AESEncryptCBCBase64(plaintext []byte, keyStr string) (string, error) {
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// RSAEncryptPKCS1v15Base64 encrypts data using RSA PKCS1v15 with QODER_RSA_PUBLIC_KEY, returning base64.
+// RSAEncryptPKCS1v15Base64 encrypts data using RSA PKCS1v15 with RSAPublicKey, returning base64.
 func RSAEncryptPKCS1v15Base64(data []byte) (string, error) {
-	block, _ := pem.Decode([]byte(QODER_RSA_PUBLIC_KEY))
+	block, _ := pem.Decode([]byte(RSAPublicKey))
 	if block == nil {
 		return "", errors.New("failed to parse RSA public key PEM")
 	}
@@ -146,6 +149,7 @@ func encryptUserInfo(creds CosyCreds) (*encryptedUserInfo, error) {
 }
 
 func md5Hex(data []byte) string {
+	/* #nosec G401 -- MD5 required by Qoder upstream COSY signature protocol */
 	h := md5.Sum(data)
 	return hex.EncodeToString(h[:])
 }
@@ -173,6 +177,51 @@ type outerPayload struct {
 	IDEVersion  string `json:"ideVersion"`
 }
 
+func computeSignature(payloadB64, cosyKey, timestamp, sigPath string, body []byte) string {
+	var sigBuf bytes.Buffer
+
+	sigBuf.WriteString(payloadB64)
+	sigBuf.WriteByte('\n')
+	sigBuf.WriteString(cosyKey)
+	sigBuf.WriteByte('\n')
+	sigBuf.WriteString(timestamp)
+	sigBuf.WriteByte('\n')
+	sigBuf.Write(body)
+	sigBuf.WriteByte('\n')
+	sigBuf.WriteString(sigPath)
+
+	return md5Hex(sigBuf.Bytes())
+}
+
+func buildHeaderMap(creds CosyCreds, encInfo *encryptedUserInfo, payloadB64, sig, timestamp, sigPath, bodyHash, bodyLength string) map[string]string {
+	machineID := creds.MachineID
+	if machineID == "" {
+		machineID = GenerateMachineID()
+	}
+
+	return map[string]string{
+		"Authorization":          "Bearer COSY." + payloadB64 + "." + sig,
+		"Cosy-Key":               encInfo.CosyKey,
+		"Cosy-User":              creds.UserID,
+		"Cosy-Date":              timestamp,
+		"Cosy-Version":           IDEVersion,
+		"Cosy-Machineid":         machineID,
+		"Cosy-Machinetoken":      machineID,
+		"Cosy-Machinetype":       MachineType,
+		"Cosy-Machineos":         MachineOS,
+		"Cosy-Clienttype":        ClientType,
+		"Cosy-Clientip":          "127.0.0.1",
+		"Cosy-Bodyhash":          bodyHash,
+		"Cosy-Bodylength":        bodyLength,
+		"Cosy-Sigpath":           sigPath,
+		"Cosy-Data-Policy":       DataPolicy,
+		"Cosy-Organization-Id":   "",
+		"Cosy-Organization-Tags": "",
+		"Login-Version":          LoginVersion,
+		"X-Request-Id":           uuid.New().String(),
+	}
+}
+
 // BuildCosyHeaders generates the 17 Cosy-* and standard headers required for Qoder inference.
 func BuildCosyHeaders(body []byte, requestURL string, creds CosyCreds) (map[string]string, error) {
 	if creds.UserID == "" {
@@ -195,7 +244,7 @@ func BuildCosyHeaders(body []byte, requestURL string, creds CosyCreds) (map[stri
 		Version:     "v1",
 		RequestID:   reqUUID,
 		Info:        encInfo.Info,
-		CosyVersion: QODER_IDE_VERSION,
+		CosyVersion: IDEVersion,
 		IDEVersion:  "",
 	}
 
@@ -205,52 +254,10 @@ func BuildCosyHeaders(body []byte, requestURL string, creds CosyCreds) (map[stri
 	}
 
 	payloadB64 := base64.StdEncoding.EncodeToString(payloadBytes)
-
 	sigPath := ComputeSigPath(requestURL)
-	// Signature input: payloadB64 + "\n" + cosyKey + "\n" + timestamp + "\n" + body + "\n" + sigPath
-	var sigBuf bytes.Buffer
-
-	sigBuf.WriteString(payloadB64)
-	sigBuf.WriteByte('\n')
-	sigBuf.WriteString(encInfo.CosyKey)
-	sigBuf.WriteByte('\n')
-	sigBuf.WriteString(timestamp)
-	sigBuf.WriteByte('\n')
-	sigBuf.Write(body)
-	sigBuf.WriteByte('\n')
-	sigBuf.WriteString(sigPath)
-
-	sig := md5Hex(sigBuf.Bytes())
-
-	machineID := creds.MachineID
-	if machineID == "" {
-		machineID = GenerateMachineID()
-	}
-
+	sig := computeSignature(payloadB64, encInfo.CosyKey, timestamp, sigPath, body)
 	bodyHash := md5Hex(body)
 	bodyLength := strconv.Itoa(len(body))
 
-	headers := map[string]string{
-		"Authorization":          "Bearer COSY." + payloadB64 + "." + sig,
-		"Cosy-Key":               encInfo.CosyKey,
-		"Cosy-User":              creds.UserID,
-		"Cosy-Date":              timestamp,
-		"Cosy-Version":           QODER_IDE_VERSION,
-		"Cosy-Machineid":         machineID,
-		"Cosy-Machinetoken":      machineID,
-		"Cosy-Machinetype":       QODER_MACHINE_TYPE,
-		"Cosy-Machineos":         QODER_MACHINE_OS,
-		"Cosy-Clienttype":        QODER_CLIENT_TYPE,
-		"Cosy-Clientip":          "127.0.0.1",
-		"Cosy-Bodyhash":          bodyHash,
-		"Cosy-Bodylength":        bodyLength,
-		"Cosy-Sigpath":           sigPath,
-		"Cosy-Data-Policy":       QODER_DATA_POLICY,
-		"Cosy-Organization-Id":   "",
-		"Cosy-Organization-Tags": "",
-		"Login-Version":          QODER_LOGIN_VERSION,
-		"X-Request-Id":           uuid.New().String(),
-	}
-
-	return headers, nil
+	return buildHeaderMap(creds, encInfo, payloadB64, sig, timestamp, sigPath, bodyHash, bodyLength), nil
 }

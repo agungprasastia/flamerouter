@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flamerouter/internal/opensse/fallback"
+	"flamerouter/internal/opensse/rtk"
 	"flamerouter/internal/opensse/testutil"
 	"net/http"
 	"net/http/httptest"
@@ -21,13 +22,21 @@ func TestChatNonStreamTranslation(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-10","choices":[{"message":{"role":"assistant","content":"chat response"}}]}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
 	reqBody := []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hello"}]}`)
 	rec := httptest.NewRecorder()
 
-	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{})
+	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)
 	}
@@ -57,6 +66,7 @@ func TestChatStreamingTranslationAndDoneMarker(t *testing.T) {
 	fake := testutil.NewFakeExecutor(testutil.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       nil,
 		StreamBody: []byte(streamData),
 	})
 	fb := fallback.New(st)
@@ -64,7 +74,14 @@ func TestChatStreamingTranslationAndDoneMarker(t *testing.T) {
 	reqBody := []byte(`{"model":"openai/gpt-4o","stream":true,"messages":[{"role":"user","content":"hello"}]}`)
 	rec := httptest.NewRecorder()
 
-	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{})
+	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)
 	}
@@ -97,13 +114,21 @@ func TestChatStreamingUpstreamErrorDoesNotWriteSSE(t *testing.T) {
 		StatusCode: http.StatusBadRequest,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"error":{"message":"bad request model"}}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
 	reqBody := []byte(`{"model":"openai/gpt-4o","stream":true,"messages":[{"role":"user","content":"hello"}]}`)
 	rec := httptest.NewRecorder()
 
-	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{})
+	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -127,6 +152,7 @@ func TestMessagesEndpointTranslationToOpenAIProvider(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       []byte(`{"id":"chatcmpl-12","choices":[{"message":{"role":"assistant","content":"translated from openai"}}]}`),
+		StreamBody: nil,
 	})
 	fb := fallback.New(st)
 
@@ -135,7 +161,12 @@ func TestMessagesEndpointTranslationToOpenAIProvider(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
-		SourceFormat: "claude",
+		Usage:           nil,
+		ClientHeaders:   nil,
+		SourceFormat:    "claude",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
 	})
 	if err != nil {
 		t.Fatalf("ChatWithOptions: %v", err)

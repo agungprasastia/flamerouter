@@ -8,12 +8,29 @@ import (
 )
 
 func init() {
-	RegisterSpecialized("qwen", &QwenExecutor{Base: Base{Provider: "qwen", BaseURL: "https://portal.qwen.ai/v1/chat/completions"}})
-	RegisterSpecialized("dashscope", &QwenExecutor{Base: Base{Provider: "qwen", BaseURL: "https://portal.qwen.ai/v1/chat/completions"}})
+	RegisterSpecialized("qwen", &QwenExecutor{
+		Base: Base{
+			Provider: "qwen",
+			Client:   nil,
+			Headers:  nil,
+			BaseURL:  "https://portal.qwen.ai/v1/chat/completions",
+			BaseURLs: nil,
+		},
+	})
+	RegisterSpecialized("dashscope", &QwenExecutor{
+		Base: Base{
+			Provider: "qwen",
+			Client:   nil,
+			Headers:  nil,
+			BaseURL:  "https://portal.qwen.ai/v1/chat/completions",
+			BaseURLs: nil,
+		},
+	})
 }
 
 const qwenUserAgent = "QwenCode/0.12.3 (linux; x64)"
 
+// QwenExecutor handles requests for Qwen and Dashscope.
 type QwenExecutor struct{ Base }
 
 func (e *QwenExecutor) buildURL(cred Credentials) string {
@@ -55,7 +72,7 @@ func (e *QwenExecutor) transform(body map[string]any) map[string]any {
 	}
 
 	if t, ok := body["thinking"].(map[string]any); ok {
-		if tt, _ := t["type"].(string); tt == "enabled" {
+		if tt, okTT := t["type"].(string); okTT && tt == "enabled" {
 			thinkingActive = true
 		}
 	}
@@ -72,6 +89,7 @@ func (e *QwenExecutor) transform(body map[string]any) map[string]any {
 	return body
 }
 
+// Execute executes Qwen completion requests.
 func (e *QwenExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {

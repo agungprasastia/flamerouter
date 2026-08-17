@@ -17,7 +17,12 @@ func TestOIDCTest_MissingConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer st.Close()
+	defer func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("store close error: %v", err)
+		}
+	}()
+
 	h := NewOIDCHandler(NewJWTManager("test-secret"), st)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/test", nil)
 	rec := httptest.NewRecorder()
@@ -28,24 +33,34 @@ func TestOIDCTest_MissingConfig(t *testing.T) {
 	}
 }
 
-func TestOIDCTest_DiscoveryMock(t *testing.T) {
+func newOIDCDiscoveryServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"issuer":                 "http://" + r.Host,
 			"authorization_endpoint": "http://" + r.Host + "/auth",
 			"token_endpoint":         "http://" + r.Host + "/token",
 			"jwks_uri":               "http://" + r.Host + "/jwks",
-		})
+		}); err != nil {
+			t.Errorf("encode discovery error: %v", err)
+		}
 	})
-	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"Invalid authorization code"}`))
+
+		if _, err := w.Write([]byte(`{"error":"invalid_grant","error_description":"Invalid authorization code"}`)); err != nil {
+			t.Errorf("token write error: %v", err)
+		}
 	})
 
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
+	return httptest.NewServer(mux)
+}
+
+func setupOIDCStore(t *testing.T, srvURL string) *store.Store {
+	t.Helper()
 
 	dir := t.TempDir()
 
@@ -54,10 +69,31 @@ func TestOIDCTest_DiscoveryMock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer st.Close()
-	_ = st.SetSetting("oidcIssuerUrl", srv.URL)
-	_ = st.SetSetting("oidcClientId", "cid")
-	_ = st.SetSetting("oidcClientSecret", "sec")
+	if err := st.SetSetting("oidcIssuerUrl", srvURL); err != nil {
+		t.Fatalf("set setting error: %v", err)
+	}
+
+	if err := st.SetSetting("oidcClientId", "cid"); err != nil {
+		t.Fatalf("set setting error: %v", err)
+	}
+
+	if err := st.SetSetting("oidcClientSecret", "sec"); err != nil {
+		t.Fatalf("set setting error: %v", err)
+	}
+
+	return st
+}
+
+func TestOIDCTest_DiscoveryMock(t *testing.T) {
+	srv := newOIDCDiscoveryServer(t)
+	defer srv.Close()
+
+	st := setupOIDCStore(t, srv.URL)
+	defer func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("store close error: %v", err)
+		}
+	}()
 
 	h := NewOIDCHandler(NewJWTManager("test-secret"), st)
 	h.client = srv.Client()
@@ -88,7 +124,12 @@ func TestOIDCStart_NotConfiguredRedirects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer st.Close()
+	defer func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("store close error: %v", err)
+		}
+	}()
+
 	h := NewOIDCHandler(NewJWTManager("test-secret"), st)
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:20128/api/auth/oidc/start", nil)
 	rec := httptest.NewRecorder()

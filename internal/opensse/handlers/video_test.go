@@ -19,7 +19,7 @@ func videoTestStore(t *testing.T) *store.Store {
 		t.Fatal(err)
 	}
 
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() }) //nolint:errcheck // cleanup close
 
 	return st
 }
@@ -33,7 +33,7 @@ func TestVideoExtensionsAction(t *testing.T) {
 		gotPath = r.URL.Path
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"request_id":"r1","status":"pending"}`))
+		_, _ = w.Write([]byte(`{"request_id":"r1","status":"pending"}`)) //nolint:errcheck // test write
 	}))
 	t.Cleanup(srv.Close)
 
@@ -47,7 +47,7 @@ func TestVideoExtensionsAction(t *testing.T) {
 	body := []byte(`{"model":"xai/grok-imagine-video","prompt":"extend"}`)
 	req := httptest.NewRequest(http.MethodPost, "http://localhost/v1/videos/extensions", nil)
 	rr := httptest.NewRecorder()
-	_ = Video(context.Background(), rr, req, body, st, nil, fb)
+	_ = Video(context.Background(), rr, req, body, st, nil, fb) //nolint:errcheck // test invocation
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
@@ -75,7 +75,7 @@ func TestVideoPoll(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"request_id":"job-1","status":"done"}`))
+		_, _ = w.Write([]byte(`{"request_id":"job-1","status":"done"}`)) //nolint:errcheck // test write
 	}))
 	t.Cleanup(srv.Close)
 
@@ -88,7 +88,7 @@ func TestVideoPoll(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/videos/job-1", nil)
 	rr := httptest.NewRecorder()
-	_ = VideoPoll(context.Background(), rr, req, "job-1", st, fb)
+	_ = VideoPoll(context.Background(), rr, req, "job-1", st, fb) //nolint:errcheck // test invocation
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
@@ -113,7 +113,7 @@ func TestVideoPollMissingID(t *testing.T) {
 	fb := fallback.New(st)
 	req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/videos/", nil)
 	rr := httptest.NewRecorder()
-	_ = VideoPoll(context.Background(), rr, req, "", st, fb)
+	_ = VideoPoll(context.Background(), rr, req, "", st, fb) //nolint:errcheck // test invocation
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 got %d %s", rr.Code, rr.Body.String())
@@ -125,7 +125,7 @@ func TestVideoPollNoCredentials(t *testing.T) {
 	fb := fallback.New(st)
 	req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/videos/job-1", nil)
 	rr := httptest.NewRecorder()
-	_ = VideoPoll(context.Background(), rr, req, "job-1", st, fb)
+	_ = VideoPoll(context.Background(), rr, req, "job-1", st, fb) //nolint:errcheck // test invocation
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 got %d %s", rr.Code, rr.Body.String())

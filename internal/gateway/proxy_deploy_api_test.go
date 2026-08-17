@@ -32,7 +32,9 @@ func TestProxyDeployValidationAndDryRun(t *testing.T) {
 	}
 
 	var out map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
 
 	if out["script"] == nil || out["script"] == "" {
 		t.Fatalf("script missing: %+v", out)

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/model"
@@ -52,14 +53,14 @@ func (s *Server) handleTranslatorLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := filepath.Join(s.translatorLogsDir(), file)
+	path := filepath.Clean(filepath.Join(s.translatorLogsDir(), file))
 	// prevent path escape
 	if filepath.Base(path) != file {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid file name"})
 		return
 	}
 
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec
 	if err != nil {
 		if os.IsNotExist(err) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "File not found"})
@@ -97,18 +98,18 @@ func (s *Server) handleTranslatorSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dir := s.translatorLogsDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": err.Error()})
 		return
 	}
 
-	path := filepath.Join(dir, req.File)
+	path := filepath.Clean(filepath.Join(dir, req.File))
 	if filepath.Base(path) != req.File {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid file name"})
 		return
 	}
 
-	if err := os.WriteFile(path, []byte(req.Content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(req.Content), 0o600); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": err.Error()})
 		return
 	}
@@ -131,8 +132,11 @@ func (s *Server) handleTranslatorConsoleLogsStream(w http.ResponseWriter, r *htt
 
 	// init buffered
 	if logs := ops.DefaultConsole.Get(); len(logs) > 0 {
-		payload, _ := json.Marshal(map[string]any{"type": "init", "logs": logs})
-		_, _ = w.Write([]byte("data: " + string(payload) + "\n\n"))
+		payload, err := json.Marshal(map[string]any{"type": "init", "logs": logs})
+		if err == nil {
+			//nolint:errcheck // sse write
+			_, _ = w.Write([]byte("data: " + string(payload) + "\n\n"))
+		}
 
 		flusher.Flush()
 	}
@@ -140,16 +144,37 @@ func (s *Server) handleTranslatorConsoleLogsStream(w http.ResponseWriter, r *htt
 	ch := ops.DefaultConsole.Subscribe()
 	defer ops.DefaultConsole.Unsubscribe(ch)
 
+	s.streamConsoleLogs(r.Context(), w, flusher, ch)
+}
+
+func writeConsoleEvent(w http.ResponseWriter, line string, flusher http.Flusher) {
+	if line == "" {
+		payload, err := json.Marshal(map[string]any{"type": "clear"})
+		if err == nil {
+			//nolint:errcheck // sse write
+			_, _ = w.Write([]byte("data: " + string(payload) + "\n\n"))
+		}
+	} else {
+		payload, err := json.Marshal(map[string]any{"type": "line", "line": line})
+		if err == nil {
+			//nolint:errcheck // sse write
+			_, _ = w.Write([]byte("data: " + string(payload) + "\n\n"))
+		}
+	}
+
+	flusher.Flush()
+}
+
+func (s *Server) streamConsoleLogs(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, ch <-chan string) {
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()
-
-	ctx := r.Context()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ping.C:
+			//nolint:errcheck // sse ping
 			_, _ = w.Write([]byte(": ping\n\n"))
 
 			flusher.Flush()
@@ -158,17 +183,135 @@ func (s *Server) handleTranslatorConsoleLogsStream(w http.ResponseWriter, r *htt
 				return
 			}
 
-			if line == "" {
-				payload, _ := json.Marshal(map[string]any{"type": "clear"})
-				_, _ = w.Write([]byte("data: " + string(payload) + "\n\n"))
-			} else {
-				payload, _ := json.Marshal(map[string]any{"type": "line", "line": line})
-				_, _ = w.Write([]byte("data: " + string(payload) + "\n\n"))
-			}
-
-			flusher.Flush()
+			writeConsoleEvent(w, line, flusher)
 		}
 	}
+}
+
+func (s *Server) translateStep1(w http.ResponseWriter, clientBody map[string]any) {
+	modelStr, _ := clientBody["model"].(string) //nolint:errcheck // safe type assertion
+	ref := model.ParseModel(modelStr)
+
+	provider, m := ref.Provider, ref.Model
+	if provider == "" {
+		provider = "openai"
+	}
+
+	if m == "" {
+		m = modelStr
+	}
+
+	sourceFormat := translator.DetectSourceFormat(clientBody)
+	targetFormat := playgroundTargetFormat(provider)
+	writeJSONOK(w, map[string]any{
+		"success": true,
+		"result": map[string]any{
+			"provider": provider, "model": m,
+			"sourceFormat": sourceFormat, "targetFormat": targetFormat,
+		},
+	})
+}
+
+func (s *Server) translateStep2(w http.ResponseWriter, clientBody map[string]any) {
+	modelStr, _ := clientBody["model"].(string) //nolint:errcheck // safe type assertion
+	ref := model.ParseModel(modelStr)
+
+	provider, m := ref.Provider, ref.Model
+	if provider == "" {
+		provider = "openai"
+	}
+
+	if m == "" {
+		m = modelStr
+	}
+
+	sourceFormat := translator.DetectSourceFormat(clientBody)
+
+	stream := true
+	if v, ok := clientBody["stream"].(bool); ok {
+		stream = v
+	}
+
+	result := translator.DefaultRegistry.TranslateRequest(sourceFormat, translator.FormatOpenAI, clientBody, translator.TranslateOptions{
+		Model:        m,
+		Stream:       stream,
+		Provider:     provider,
+		ClientTool:   false,
+		Credentials:  nil,
+		ConnectionID: "",
+		StripList:    nil,
+	})
+	delete(result, "_toolNameMap")
+	writeJSONOK(w, map[string]any{"success": true, "result": map[string]any{"body": result}})
+}
+
+func (s *Server) translateStep3(w http.ResponseWriter, reqBody map[string]any, clientBody map[string]any, reqProvider, reqModel string) {
+	openaiBody := clientBody
+	if nested, ok := reqBody["body"].(map[string]any); ok && nested != nil {
+		openaiBody = nested
+	}
+
+	provider := reqProvider
+	modelName := reqModel
+
+	if provider == "" {
+		provider, _ = reqBody["provider"].(string) //nolint:errcheck // safe type assertion
+	}
+
+	if modelName == "" {
+		modelName, _ = reqBody["model"].(string) //nolint:errcheck // safe type assertion
+	}
+
+	if provider == "" || modelName == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "provider and model required"})
+		return
+	}
+
+	targetFormat := playgroundTargetFormat(provider)
+
+	stream := true
+	if v, ok := openaiBody["stream"].(bool); ok {
+		stream = v
+	}
+
+	conn := s.firstActiveConn(provider)
+	if conn == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "No active connection for provider: " + provider})
+		return
+	}
+
+	credMap := connCredMap(conn)
+	translated := translator.DefaultRegistry.TranslateRequest(translator.FormatOpenAI, targetFormat, openaiBody, translator.TranslateOptions{
+		Model:        modelName,
+		Stream:       stream,
+		Provider:     provider,
+		Credentials:  credMap,
+		ClientTool:   false,
+		ConnectionID: "",
+		StripList:    nil,
+	})
+	delete(translated, "_toolNameMap")
+
+	cred := connCred(conn)
+	url, headers, finalBody := playgroundBuild(provider, modelName, stream, cred, translated)
+	writeJSONOK(w, map[string]any{
+		"success": true,
+		"result":  map[string]any{"url": url, "headers": headers, "body": finalBody},
+	})
+}
+
+func extractPlaygroundClientBody(reqBody map[string]any) map[string]any {
+	clientBody := reqBody
+
+	if nested, ok := reqBody["body"].(map[string]any); ok && nested != nil {
+		if _, hasMsg := reqBody["messages"]; !hasMsg {
+			if _, hasContents := reqBody["contents"]; !hasContents {
+				clientBody = nested
+			}
+		}
+	}
+
+	return clientBody
 }
 
 // POST /api/translator/translate — playground steps 1–3 (9router parity).
@@ -190,113 +333,15 @@ func (s *Server) handleTranslatorTranslate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	clientBody := req.Body
-
-	if nested, ok := req.Body["body"].(map[string]any); ok && nested != nil {
-		// only unwrap if outer looks like envelope without messages
-		if _, hasMsg := req.Body["messages"]; !hasMsg {
-			if _, hasContents := req.Body["contents"]; !hasContents {
-				clientBody = nested
-			}
-		}
-	}
+	clientBody := extractPlaygroundClientBody(req.Body)
 
 	switch req.Step {
 	case 1:
-		modelStr, _ := clientBody["model"].(string)
-		ref := model.ParseModel(modelStr)
-
-		provider, m := ref.Provider, ref.Model
-		if provider == "" {
-			provider = "openai"
-		}
-
-		if m == "" {
-			m = modelStr
-		}
-
-		sourceFormat := translator.DetectSourceFormat(clientBody)
-		targetFormat := playgroundTargetFormat(provider)
-		writeJSONOK(w, map[string]any{
-			"success": true,
-			"result": map[string]any{
-				"provider": provider, "model": m,
-				"sourceFormat": sourceFormat, "targetFormat": targetFormat,
-			},
-		})
+		s.translateStep1(w, clientBody)
 	case 2:
-		modelStr, _ := clientBody["model"].(string)
-		ref := model.ParseModel(modelStr)
-
-		provider, m := ref.Provider, ref.Model
-		if provider == "" {
-			provider = "openai"
-		}
-
-		if m == "" {
-			m = modelStr
-		}
-
-		sourceFormat := translator.DetectSourceFormat(clientBody)
-
-		stream := true
-		if v, ok := clientBody["stream"].(bool); ok {
-			stream = v
-		}
-
-		result := translator.DefaultRegistry.TranslateRequest(sourceFormat, translator.FormatOpenAI, clientBody, translator.TranslateOptions{
-			Model: m, Stream: stream, Provider: provider,
-		})
-		delete(result, "_toolNameMap")
-		writeJSONOK(w, map[string]any{"success": true, "result": map[string]any{"body": result}})
+		s.translateStep2(w, clientBody)
 	case 3:
-		// body = { body: openaiBody, provider, model } or flat openai body + provider/model
-		openaiBody := clientBody
-		if nested, ok := req.Body["body"].(map[string]any); ok && nested != nil {
-			openaiBody = nested
-		}
-
-		provider := req.Provider
-		modelName := req.Model
-
-		if provider == "" {
-			provider, _ = req.Body["provider"].(string)
-		}
-
-		if modelName == "" {
-			modelName, _ = req.Body["model"].(string)
-		}
-
-		if provider == "" || modelName == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "provider and model required"})
-			return
-		}
-
-		targetFormat := playgroundTargetFormat(provider)
-
-		stream := true
-		if v, ok := openaiBody["stream"].(bool); ok {
-			stream = v
-		}
-
-		conn := s.firstActiveConn(provider)
-		if conn == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "No active connection for provider: " + provider})
-			return
-		}
-
-		credMap := connCredMap(conn)
-		translated := translator.DefaultRegistry.TranslateRequest(translator.FormatOpenAI, targetFormat, openaiBody, translator.TranslateOptions{
-			Model: modelName, Stream: stream, Provider: provider, Credentials: credMap,
-		})
-		delete(translated, "_toolNameMap")
-
-		cred := connCred(conn)
-		url, headers, finalBody := playgroundBuild(provider, modelName, stream, cred, translated)
-		writeJSONOK(w, map[string]any{
-			"success": true,
-			"result":  map[string]any{"url": url, "headers": headers, "body": finalBody},
-		})
+		s.translateStep3(w, req.Body, clientBody, req.Provider, req.Model)
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "Invalid step (1-3)"})
 	}
@@ -326,38 +371,53 @@ func (s *Server) handleTranslatorSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.executeTranslatorRequest(w, r, conn, req.Provider, req.Model, req.Body)
+}
+
+func (s *Server) executeTranslatorRequest(w http.ResponseWriter, r *http.Request, conn *store.Connection, providerID, model string, body map[string]any) {
 	stream := true
-	if v, ok := req.Body["stream"].(bool); ok {
+	if v, ok := body["stream"].(bool); ok {
 		stream = v
 	}
 
-	payload, err := json.Marshal(req.Body)
+	payload, err := json.Marshal(body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": err.Error()})
 		return
 	}
 
-	exec := executor.GetExecutor(req.Provider)
+	exec := executor.GetExecutor(providerID)
 
-	res, err := exec.Execute(r.Context(), connCred(conn), req.Model, payload, stream)
+	res, err := exec.Execute(r.Context(), connCred(conn), model, payload, stream)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": err.Error()})
 		return
 	}
 
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck // best-effort body close
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		errText, _ := io.ReadAll(io.LimitReader(res.Body, 8192))
-		writeJSON(w, res.StatusCode, map[string]any{
-			"success": false,
-			"error":   "Provider error: " + http.StatusText(res.StatusCode),
-			"details": string(errText),
-		})
-
+		forwardTranslatorError(w, res)
 		return
 	}
 
+	forwardTranslatorStream(w, res)
+}
+
+func forwardTranslatorError(w http.ResponseWriter, res *executor.Result) {
+	errText, err := io.ReadAll(io.LimitReader(res.Body, 8192))
+	if err != nil {
+		errText = nil
+	}
+
+	writeJSON(w, res.StatusCode, map[string]any{
+		"success": false,
+		"error":   "Provider error: " + http.StatusText(res.StatusCode),
+		"details": string(errText),
+	})
+}
+
+func forwardTranslatorStream(w http.ResponseWriter, res *executor.Result) {
 	ct := res.Header.Get("Content-Type")
 	if ct == "" {
 		ct = "text/event-stream"
@@ -367,7 +427,10 @@ func (s *Server) handleTranslatorSend(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(res.StatusCode)
-	_, _ = io.Copy(w, res.Body)
+
+	if _, err := io.Copy(w, res.Body); err != nil {
+		_ = err
+	}
 }
 
 // GET/DELETE /api/translator/console-logs.
@@ -393,19 +456,78 @@ func (s *Server) firstActiveConn(provider string) *store.Connection {
 		return nil
 	}
 
-	c := conns[0]
+	return &conns[0]
+}
 
-	return &c
+func playgroundTargetURL(provider, base string) string {
+	switch playgroundTargetFormat(provider) {
+	case translator.FormatClaude:
+		if !strings.HasSuffix(base, "/messages") {
+			return base + "/messages"
+		}
+
+		return base
+	case translator.FormatGemini, translator.FormatGeminiCLI:
+		return base
+	default:
+		if !strings.HasSuffix(base, "/chat/completions") && !strings.HasSuffix(base, "/responses") {
+			return base + "/chat/completions"
+		}
+
+		return base
+	}
+}
+
+// playgroundBuild: minimal url/headers/body for step-3 preview (no full executor surface).
+func playgroundBuild(provider, model string, stream bool, cred executor.Credentials, body map[string]any) (string, map[string]string, map[string]any) {
+	base := strings.TrimRight(cred.BaseURL, "/")
+	if base == "" {
+		base = "https://api.openai.com/v1"
+	}
+
+	url := playgroundTargetURL(provider, base)
+	headers := map[string]string{"Content-Type": "application/json"}
+
+	tok := cred.AccessToken
+	if tok == "" {
+		tok = cred.APIKey
+	}
+
+	if tok != "" {
+		headers["Authorization"] = "Bearer " + tok
+	}
+
+	if stream {
+		headers["Accept"] = "text/event-stream"
+	}
+
+	if body != nil {
+		body["model"] = model
+		body["stream"] = stream
+	}
+
+	return url, headers, body
 }
 
 func connCred(c *store.Connection) executor.Credentials {
 	if c == nil {
-		return executor.Credentials{}
+		return executor.Credentials{
+			APIKey:               "",
+			AccessToken:          "",
+			RefreshToken:         "",
+			BaseURL:              "",
+			ProjectID:            "",
+			ProviderSpecificData: nil,
+		}
 	}
 
 	return executor.Credentials{
-		APIKey: c.APIKey, AccessToken: c.AccessToken, RefreshToken: c.RefreshToken,
-		BaseURL: c.BaseURL, ProviderSpecificData: c.ProviderSpecificData,
+		APIKey:               c.APIKey,
+		AccessToken:          c.AccessToken,
+		RefreshToken:         c.RefreshToken,
+		BaseURL:              c.BaseURL,
+		ProjectID:            "",
+		ProviderSpecificData: c.ProviderSpecificData,
 	}
 }
 
@@ -442,49 +564,4 @@ func playgroundTargetFormat(providerID string) string {
 	}
 
 	return translator.FormatOpenAI
-}
-
-// playgroundBuild: minimal url/headers/body for step-3 preview (no full executor surface).
-func playgroundBuild(provider, model string, stream bool, cred executor.Credentials, body map[string]any) (string, map[string]string, map[string]any) {
-	base := strings.TrimRight(cred.BaseURL, "/")
-	if base == "" {
-		base = "https://api.openai.com/v1"
-	}
-
-	url := base
-
-	switch playgroundTargetFormat(provider) {
-	case translator.FormatClaude:
-		if !strings.HasSuffix(base, "/messages") {
-			url = base + "/messages"
-		}
-	case translator.FormatGemini, translator.FormatGeminiCLI:
-		// leave base; real path is model-specific
-	default:
-		if !strings.HasSuffix(base, "/chat/completions") && !strings.HasSuffix(base, "/responses") {
-			url = base + "/chat/completions"
-		}
-	}
-
-	headers := map[string]string{"Content-Type": "application/json"}
-
-	tok := cred.AccessToken
-	if tok == "" {
-		tok = cred.APIKey
-	}
-
-	if tok != "" {
-		headers["Authorization"] = "Bearer " + tok
-	}
-
-	if stream {
-		headers["Accept"] = "text/event-stream"
-	}
-
-	if body != nil {
-		body["model"] = model
-		body["stream"] = stream
-	}
-
-	return url, headers, body
 }

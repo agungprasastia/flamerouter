@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+//nolint:gosec // not a hardcoded credential, public endpoint URL
 const (
 	clinepassModelsURL      = "https://api.cline.bot/api/v1/models"
 	clinepassDefaultTimeout = 10 * time.Second
@@ -23,6 +24,7 @@ type ClinePassResolver struct {
 	Client *http.Client
 }
 
+// TTL returns cache TTL for ClinePass models.
 func (r *ClinePassResolver) TTL() time.Duration {
 	return clinepassCacheTTL
 }
@@ -40,13 +42,10 @@ type clinepassRawModel struct {
 	Name string `json:"name"`
 }
 
-func (r *ClinePassResolver) fetchRaw(ctx context.Context, token string, isAPIKey bool) ([]clinepassRawModel, int, error) {
-	ctx, cancel := context.WithTimeout(ctx, clinepassDefaultTimeout)
-	defer cancel()
-
+func buildClinePassRequest(ctx context.Context, token string, isAPIKey bool) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, clinepassModelsURL, nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	if isAPIKey {
@@ -59,25 +58,10 @@ func (r *ClinePassResolver) fetchRaw(ctx context.Context, token string, isAPIKey
 		}
 	}
 
-	resp, err := r.client().Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	if resp == nil || resp.Body == nil {
-		return nil, 0, fmt.Errorf("nil response from upstream")
-	}
-	defer resp.Body.Close()
+	return req, nil
+}
 
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, resp.StatusCode, fmt.Errorf("clinepass /models returned status %d: %s", resp.StatusCode, string(b))
-	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, resp.StatusCode, err
-	}
-
+func parseClinePassModels(bodyBytes []byte) ([]clinepassRawModel, error) {
 	var list []clinepassRawModel
 	if err := json.Unmarshal(bodyBytes, &list); err != nil {
 		var wrapper struct {
@@ -85,15 +69,56 @@ func (r *ClinePassResolver) fetchRaw(ctx context.Context, token string, isAPIKey
 		}
 
 		if err2 := json.Unmarshal(bodyBytes, &wrapper); err2 != nil {
-			return nil, resp.StatusCode, fmt.Errorf("decode clinepass models: %w", err)
+			return nil, fmt.Errorf("decode clinepass models: %w", err)
 		}
 
 		list = wrapper.Data
 	}
 
+	return list, nil
+}
+
+func (r *ClinePassResolver) fetchRaw(ctx context.Context, token string, isAPIKey bool) ([]clinepassRawModel, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, clinepassDefaultTimeout)
+	defer cancel()
+
+	req, err := buildClinePassRequest(ctx, token, isAPIKey)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	resp, err := r.client().Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if resp == nil || resp.Body == nil {
+		return nil, 0, fmt.Errorf("nil response from upstream")
+	}
+
+	defer func() {
+		//nolint:errcheck // best effort close
+		_ = resp.Body.Close()
+	}()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, fmt.Errorf("clinepass /models returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	list, err := parseClinePassModels(bodyBytes)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+
 	return list, resp.StatusCode, nil
 }
 
+// Resolve fetches active dynamic models for ClinePass connection.
 func (r *ClinePassResolver) Resolve(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
 	isAPIKey := conn.APIKey != ""
 
@@ -112,8 +137,7 @@ func (r *ClinePassResolver) Resolve(ctx context.Context, conn *store.Connection)
 	}
 
 	seen := make(map[string]bool)
-
-	var out []DynamicModel
+	out := make([]DynamicModel, 0, len(raw))
 
 	for _, m := range raw {
 		id := strings.TrimSpace(m.ID)
@@ -129,8 +153,17 @@ func (r *ClinePassResolver) Resolve(ctx context.Context, conn *store.Connection)
 		}
 
 		out = append(out, DynamicModel{
-			ID:   id,
-			Name: name,
+			ID:              id,
+			Name:            name,
+			Capabilities:    nil,
+			RawConfig:       nil,
+			UpstreamModelID: "",
+			Description:     "",
+			ContextLength:   0,
+			MaxOutputTokens: 0,
+			RateMultiplier:  0,
+			IsReasoning:     false,
+			IsVL:            false,
 		})
 	}
 

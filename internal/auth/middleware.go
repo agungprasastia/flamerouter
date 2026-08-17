@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Protected: remaining /api/*.
+// DashboardGuard enforces authentication middleware for protected dashboard API routes.
 func DashboardGuard(jwt *JWTManager, st *store.Store, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path

@@ -1,5 +1,9 @@
+// Package provider defines model provider configurations, registry listings,
+// and model capabilities for all supported AI backends.
 package provider
 
+// Provider describes an AI service provider, its transport configuration,
+// display metadata, and supported models.
 type Provider struct {
 	Transport    Transport `json:"transport"`
 	Thinking     *Thinking `json:"thinkingConfig,omitempty"`
@@ -13,6 +17,7 @@ type Provider struct {
 	HasFree      bool      `json:"hasFree,omitempty"`
 }
 
+// Display holds presentation metadata for a provider in user interfaces.
 type Display struct {
 	Notice       *Notice `json:"notice,omitempty"`
 	Name         string  `json:"name"`
@@ -24,12 +29,15 @@ type Display struct {
 	Deprecated   bool    `json:"deprecated,omitempty"`
 }
 
+// Notice contains user notices, registration URLs, or API key links.
 type Notice struct {
 	Text      string `json:"text,omitempty"`
 	SignupURL string `json:"signupUrl,omitempty"`
 	APIKeyURL string `json:"apiKeyUrl,omitempty"`
 }
 
+// Transport contains HTTP endpoint and protocol configuration for communicating
+// with a provider backend.
 type Transport struct {
 	Headers      map[string]string `json:"headers,omitempty"`
 	Auth         *AuthConfig       `json:"auth,omitempty"`
@@ -42,26 +50,31 @@ type Transport struct {
 	ForceStream  bool              `json:"forceStream,omitempty"`
 }
 
+// AuthConfig defines API key, OAuth, or request hook authentication options.
 type AuthConfig struct {
 	APIKey *AuthStyle `json:"apiKey,omitempty"`
 	OAuth  *AuthStyle `json:"oauth,omitempty"`
 	Hooks  []string   `json:"hooks,omitempty"`
 }
 
+// AuthStyle specifies header name and authorization scheme (e.g. Bearer).
 type AuthStyle struct {
 	Header string `json:"header"`
 	Scheme string `json:"scheme"`
 }
 
+// Quirks specifies provider-specific behavior workarounds.
 type Quirks struct {
 	CloakToolsOnOAuth bool `json:"cloakToolsOnOAuth,omitempty"`
 }
 
+// Thinking defines thinking / reasoning mode options and defaults.
 type Thinking struct {
 	DefaultMode string   `json:"defaultMode,omitempty"`
 	Options     []string `json:"options,omitempty"`
 }
 
+// Model represents an individual model supported by a provider.
 type Model struct {
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
@@ -70,6 +83,7 @@ type Model struct {
 	Dimensions int      `json:"dimensions,omitempty"`
 }
 
+// Capabilities describes the features and limits supported by a model.
 type Capabilities struct {
 	ThinkingFormat string `json:"thinkingFormat,omitempty"`
 	ContextWindow  int    `json:"contextWindow"`

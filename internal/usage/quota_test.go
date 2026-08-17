@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"encoding/binary"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -33,9 +34,16 @@ func TestDecodeGrokCreditsFrame(t *testing.T) {
 
 		header := make([]byte, 5)
 		header[0] = 0x00
+
+		if len(topBody) > math.MaxUint32 {
+			t.Fatalf("topBody too large")
+		}
+		// #nosec G115 -- bounded by math.MaxUint32
 		binary.BigEndian.PutUint32(header[1:5], uint32(len(topBody)))
 
-		fullFrame := append(header, topBody...)
+		fullFrame := make([]byte, 0, len(header)+len(topBody))
+		fullFrame = append(fullFrame, header...)
+		fullFrame = append(fullFrame, topBody...)
 
 		pct, reset, ok := DecodeGrokCreditsFrame(fullFrame)
 		if !ok {
@@ -63,7 +71,13 @@ func TestFetchProviderUsageRouting(t *testing.T) {
 	for _, p := range providers {
 		t.Run(p, func(t *testing.T) {
 			res := FetchProviderUsage(context.Background(), FetchOptions{
-				Provider: p,
+				Provider:             p,
+				AccessToken:          "",
+				APIKey:               "",
+				BaseURL:              "",
+				ProviderSpecificData: nil,
+				HTTPClient:           nil,
+				Force:                false,
 			})
 			if res == nil {
 				t.Fatalf("expected non-nil response for %s", p)
@@ -77,8 +91,15 @@ func TestFetchProviderUsageRouting(t *testing.T) {
 
 	t.Run("unsupported provider", func(t *testing.T) {
 		res := FetchProviderUsage(context.Background(), FetchOptions{
-			Provider: "unknown-provider-xyz",
+			Provider:             "unknown-provider-xyz",
+			AccessToken:          "",
+			APIKey:               "",
+			BaseURL:              "",
+			ProviderSpecificData: nil,
+			HTTPClient:           nil,
+			Force:                false,
 		})
+
 		if res.Message != "Usage API not implemented for unknown-provider-xyz" {
 			t.Fatalf("unexpected message: %s", res.Message)
 		}
@@ -86,24 +107,30 @@ func TestFetchProviderUsageRouting(t *testing.T) {
 }
 
 func TestGitHubUsageParsing(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+
+		if _, err := w.Write([]byte(`{
 			"copilot_plan": "individual",
 			"quota_reset_date": "2026-08-01T00:00:00Z",
 			"quota_snapshots": {
 				"chat": {"entitlement": 100, "remaining": 80, "unlimited": false},
 				"completions": {"entitlement": 200, "remaining": 50, "unlimited": false}
 			}
-		}`))
+		}`)); err != nil {
+			_ = err
+		}
 	}))
 	defer ts.Close()
 
 	opts := FetchOptions{
-		Provider:    "github",
-		AccessToken: "gh-test-token",
-		BaseURL:     ts.URL,
-		HTTPClient:  ts.Client(),
+		Provider:             "github",
+		AccessToken:          "gh-test-token",
+		APIKey:               "",
+		BaseURL:              ts.URL,
+		HTTPClient:           ts.Client(),
+		ProviderSpecificData: nil,
+		Force:                false,
 	}
 
 	res := FetchProviderUsage(context.Background(), opts)
@@ -177,12 +204,18 @@ func TestQoderUsageParsing(t *testing.T) {
 	var uRes QuotaResult
 	uRes.Quotas = map[string]QuotaItem{
 		"user": {
-			Used:      250.0,
-			Total:     1000.0,
-			Remaining: 750.0,
-			Unit:      "credits",
+			ResetAt:             nil,
+			Recurring:           nil,
+			DisplayName:         "",
+			Used:                250.0,
+			Total:               1000.0,
+			Remaining:           750.0,
+			RemainingPercentage: 75.0,
+			Unit:                "credits",
+			Unlimited:           false,
 		},
 	}
+
 	computeTopLevelNormalized(&uRes)
 
 	if uRes.Limit != 1000 || uRes.Used != 250 || uRes.Remaining != 750 {
@@ -191,22 +224,28 @@ func TestQoderUsageParsing(t *testing.T) {
 }
 
 func TestDeepseekUsageParsing(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+
+		if _, err := w.Write([]byte(`{
 			"is_available": true,
 			"balance_infos": [
 				{"currency": "USD", "total_balance": "12.50"}
 			]
-		}`))
+		}`)); err != nil {
+			_ = err
+		}
 	}))
 	defer ts.Close()
 
 	opts := FetchOptions{
-		Provider:   "deepseek",
-		APIKey:     "sk-test-key",
-		BaseURL:    ts.URL,
-		HTTPClient: ts.Client(),
+		Provider:             "deepseek",
+		AccessToken:          "",
+		APIKey:               "sk-test-key",
+		BaseURL:              ts.URL,
+		HTTPClient:           ts.Client(),
+		ProviderSpecificData: nil,
+		Force:                false,
 	}
 
 	res := FetchProviderUsage(context.Background(), opts)
@@ -239,20 +278,23 @@ func TestGrokCliBillingParsing(t *testing.T) {
 	}
 
 	onDemand := res.Quotas["On-demand"]
+
 	if onDemand.Used != 35 || onDemand.Total != 100 || onDemand.RemainingPercentage != 65 {
 		t.Fatalf("unexpected On-demand quota: %+v", onDemand)
 	}
 
 	prepaid := res.Quotas["Prepaid"]
+
 	if prepaid.Total != 12.5 || prepaid.RemainingPercentage != 100 {
 		t.Fatalf("unexpected Prepaid quota: %+v", prepaid)
 	}
 }
 
 func TestKimiUsageParsing(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+
+		if _, err := w.Write([]byte(`{
 			"user": {
 				"membership": {"level": "LEVEL_ADVANCED"}
 			},
@@ -262,15 +304,20 @@ func TestKimiUsageParsing(t *testing.T) {
 				"remaining": 75,
 				"resetTime": "2026-08-01T00:00:00Z"
 			}
-		}`))
+		}`)); err != nil {
+			_ = err
+		}
 	}))
 	defer ts.Close()
 
 	opts := FetchOptions{
-		Provider:   "kimi",
-		APIKey:     "kimi-test-key",
-		BaseURL:    ts.URL,
-		HTTPClient: ts.Client(),
+		Provider:             "kimi",
+		AccessToken:          "",
+		APIKey:               "kimi-test-key",
+		BaseURL:              ts.URL,
+		HTTPClient:           ts.Client(),
+		ProviderSpecificData: nil,
+		Force:                false,
 	}
 
 	res := FetchProviderUsage(context.Background(), opts)

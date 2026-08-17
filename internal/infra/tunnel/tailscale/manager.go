@@ -1,3 +1,4 @@
+// Package tailscale manages local Tailscale funnel processes.
 package tailscale
 
 import (
@@ -22,10 +23,21 @@ type Manager struct {
 	wantRun   bool
 }
 
+// New creates a new tailscale Manager instance.
 func New() *Manager {
-	return &Manager{status: "stopped"}
+	return &Manager{
+		cmd:       nil,
+		stopWatch: nil,
+		url:       "",
+		status:    "stopped",
+		port:      0,
+		mu:        sync.Mutex{},
+		watching:  false,
+		wantRun:   false,
+	}
 }
 
+// Install checks if tailscale CLI is available on PATH.
 func (m *Manager) Install() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -40,6 +52,7 @@ func (m *Manager) Install() error {
 	return fmt.Errorf("tailscale not found on PATH")
 }
 
+// Enable starts tailscale funnel on the specified port.
 func (m *Manager) Enable(port int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -60,7 +73,9 @@ func (m *Manager) startLocked() error {
 		m.status = "not_installed"
 		return fmt.Errorf("tailscale not found")
 	}
+
 	// funnel serve localhost:port
+	// #nosec G204 -- bin is resolved from LookPath and port is integer
 	cmd := exec.Command(bin, "funnel", fmt.Sprintf("%d", m.port))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -75,7 +90,9 @@ func (m *Manager) startLocked() error {
 	m.url = ""
 
 	go func() {
-		_ = cmd.Wait()
+		if waitErr := cmd.Wait(); waitErr != nil {
+			log.Printf("[tailscale] process wait: %v", waitErr)
+		}
 
 		m.mu.Lock()
 		m.status = "stopped"
@@ -99,6 +116,37 @@ func (m *Manager) ensureWatchdogLocked() {
 	go m.watchdog(ch)
 }
 
+func (m *Manager) checkHealth() {
+	m.mu.Lock()
+	want := m.wantRun
+	alive := m.cmd != nil && m.cmd.Process != nil
+	port := m.port
+	m.mu.Unlock()
+
+	if !want {
+		return
+	}
+
+	if !tailscaledOK() {
+		log.Printf("[tailscale] watchdog: tailscaled not healthy")
+		return
+	}
+
+	m.mu.Lock()
+	if !alive && m.wantRun {
+		log.Printf("[tailscale] watchdog: restarting funnel on port %d", port)
+
+		if startErr := m.startLocked(); startErr != nil {
+			log.Printf("[tailscale] restart failed: %v", startErr)
+		}
+	}
+
+	if u := funnelURL(); u != "" {
+		m.url = u
+	}
+	m.mu.Unlock()
+}
+
 func (m *Manager) watchdog(stop <-chan struct{}) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -108,33 +156,7 @@ func (m *Manager) watchdog(stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-t.C:
-			m.mu.Lock()
-			want := m.wantRun
-			port := m.port
-			m.mu.Unlock()
-
-			if !want {
-				continue
-			}
-			// check tailscaled / funnel status
-			if !tailscaledOK() {
-				log.Printf("[tailscale] watchdog: tailscaled not healthy")
-				continue
-			}
-			// if funnel process died, restart
-			m.mu.Lock()
-
-			alive := m.cmd != nil && m.cmd.Process != nil
-			if !alive && m.wantRun {
-				log.Printf("[tailscale] watchdog: restarting funnel on port %d", port)
-
-				_ = m.startLocked()
-			}
-			// try scrape status for URL
-			if u := funnelURL(); u != "" {
-				m.url = u
-			}
-			m.mu.Unlock()
+			m.checkHealth()
 		}
 	}
 }
@@ -178,6 +200,7 @@ func funnelURL() string {
 	return ""
 }
 
+// Disable stops tailscale funnel.
 func (m *Manager) Disable() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -190,11 +213,16 @@ func (m *Manager) Disable() error {
 	}
 
 	if m.cmd != nil && m.cmd.Process != nil {
-		_ = m.cmd.Process.Kill()
+		if killErr := m.cmd.Process.Kill(); killErr != nil {
+			log.Printf("[tailscale] kill process: %v", killErr)
+		}
 	}
 
 	if bin, err := exec.LookPath("tailscale"); err == nil {
-		_ = exec.Command(bin, "funnel", "reset").Run()
+		// #nosec G204 -- bin is resolved from LookPath
+		if resetErr := exec.Command(bin, "funnel", "reset").Run(); resetErr != nil {
+			log.Printf("[tailscale] reset funnel: %v", resetErr)
+		}
 	}
 
 	m.cmd = nil
@@ -204,6 +232,7 @@ func (m *Manager) Disable() error {
 	return nil
 }
 
+// Status returns the current status of tailscale funnel.
 func (m *Manager) Status() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -211,6 +240,7 @@ func (m *Manager) Status() string {
 	return m.status
 }
 
+// URL returns the current tailscale funnel URL if available.
 func (m *Manager) URL() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()

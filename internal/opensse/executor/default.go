@@ -29,21 +29,22 @@ type authDesc struct {
 }
 
 var authDescriptors = map[string]authDesc{
-	"claude":      {Combined: true, Header: "x-api-key", Scheme: "raw", AnthropicVersion: true, Hooks: []string{"claudeOverlay"}},
-	"openai":      {Combined: true, Header: "Authorization", Scheme: "bearer"},
-	"openrouter":  {Combined: true, Header: "Authorization", Scheme: "bearer"},
-	"kimi":        {Combined: true, Header: "Authorization", Scheme: "bearer", Hooks: []string{"kimiHeaders"}},
-	"kimi-coding": {Combined: true, Header: "Authorization", Scheme: "bearer", Hooks: []string{"kimiHeaders"}},
-	"cline":       {Combined: true, Header: "Authorization", Scheme: "bearer", Hooks: []string{"clineHeaders"}},
-	"clinepass":   {Combined: true, Header: "Authorization", Scheme: "bearer", Hooks: []string{"clineHeaders"}},
-	"kilocode":    {Combined: true, Header: "Authorization", Scheme: "bearer", Hooks: []string{"kilocodeOrg"}},
-	"deepseek":    {Combined: true, Header: "Authorization", Scheme: "bearer"},
-	"groq":        {Combined: true, Header: "Authorization", Scheme: "bearer"},
-	"mistral":     {Combined: true, Header: "Authorization", Scheme: "bearer"},
-	"together":    {Combined: true, Header: "Authorization", Scheme: "bearer"},
-	"fireworks":   {Combined: true, Header: "Authorization", Scheme: "bearer"},
+	"claude":      {Combined: true, Header: "x-api-key", Scheme: "raw", AnthropicVersion: true, Hooks: []string{"claudeOverlay"}, APIKey: nil, OAuth: nil},
+	"openai":      {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: nil, APIKey: nil, OAuth: nil},
+	"openrouter":  {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: nil, APIKey: nil, OAuth: nil},
+	"kimi":        {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: []string{"kimiHeaders"}, APIKey: nil, OAuth: nil},
+	"kimi-coding": {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: []string{"kimiHeaders"}, APIKey: nil, OAuth: nil},
+	"cline":       {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: []string{"clineHeaders"}, APIKey: nil, OAuth: nil},
+	"clinepass":   {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: []string{"clineHeaders"}, APIKey: nil, OAuth: nil},
+	"kilocode":    {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: []string{"kilocodeOrg"}, APIKey: nil, OAuth: nil},
+	"deepseek":    {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: nil, APIKey: nil, OAuth: nil},
+	"groq":        {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: nil, APIKey: nil, OAuth: nil},
+	"mistral":     {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: nil, APIKey: nil, OAuth: nil},
+	"together":    {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: nil, APIKey: nil, OAuth: nil},
+	"fireworks":   {Combined: true, Header: "Authorization", Scheme: "bearer", AnthropicVersion: false, Hooks: nil, APIKey: nil, OAuth: nil},
 }
 
+// DefaultExecutor handles requests to generic OpenAI, Claude, or Gemini endpoints.
 type DefaultExecutor struct {
 	client    *http.Client
 	headers   map[string]string
@@ -54,23 +55,34 @@ type DefaultExecutor struct {
 	urlSuffix string
 }
 
+// NewDefault creates a new DefaultExecutor.
 func NewDefault(c *http.Client) *DefaultExecutor {
 	if c == nil {
 		c = http.DefaultClient
 	}
 
-	return &DefaultExecutor{client: c}
+	return &DefaultExecutor{
+		client:    c,
+		headers:   nil,
+		quirks:    nil,
+		provider:  "",
+		format:    "",
+		baseURL:   "",
+		urlSuffix: "",
+	}
 }
 
+// NewDefaultForProvider creates a new DefaultExecutor configured for a given provider name.
 func NewDefaultForProvider(c *http.Client, provider string) *DefaultExecutor {
 	e := NewDefault(c)
 	e.provider = provider
-	// infer format from name
-	if provider == "claude" || strings.HasPrefix(provider, "anthropic-compatible") {
+
+	switch {
+	case provider == "claude" || strings.HasPrefix(provider, "anthropic-compatible"):
 		e.format = "claude"
-	} else if provider == "gemini" || strings.Contains(provider, "gemini") {
+	case provider == "gemini" || strings.Contains(provider, "gemini"):
 		e.format = "gemini"
-	} else {
+	default:
 		e.format = "openai"
 	}
 
@@ -87,14 +99,34 @@ func (e *DefaultExecutor) resolveAuthDesc() authDesc {
 			APIKey:           &authSpec{Header: "x-api-key", Scheme: "raw"},
 			OAuth:            &authSpec{Header: "Authorization", Scheme: "bearer"},
 			AnthropicVersion: true,
+			Combined:         false,
+			Header:           "",
+			Scheme:           "",
+			Hooks:            nil,
 		}
 	}
 
 	if e.format == "claude" {
-		return authDesc{Combined: true, Header: "x-api-key", Scheme: "raw", AnthropicVersion: true}
+		return authDesc{
+			Combined:         true,
+			Header:           "x-api-key",
+			Scheme:           "raw",
+			AnthropicVersion: true,
+			APIKey:           nil,
+			OAuth:            nil,
+			Hooks:            nil,
+		}
 	}
 
-	return authDesc{Combined: true, Header: "Authorization", Scheme: "bearer"}
+	return authDesc{
+		Combined:         true,
+		Header:           "Authorization",
+		Scheme:           "bearer",
+		AnthropicVersion: false,
+		APIKey:           nil,
+		OAuth:            nil,
+		Hooks:            nil,
+	}
 }
 
 func applyAuthHeader(h http.Header, header, scheme, token string) {
@@ -110,7 +142,16 @@ func (e *DefaultExecutor) applyAuth(h http.Header, desc authDesc, cred Credentia
 		applyHeaderHook(h, hook, cred)
 	}
 
-	if desc.Combined {
+	e.applyAuthToken(h, desc, cred)
+
+	if desc.AnthropicVersion && h.Get("anthropic-version") == "" {
+		h.Set("anthropic-version", anthropicAPIVersionDefault)
+	}
+}
+
+func (e *DefaultExecutor) applyAuthToken(h http.Header, desc authDesc, cred Credentials) {
+	switch {
+	case desc.Combined:
 		tok := cred.APIKey
 		if tok == "" {
 			tok = cred.AccessToken
@@ -122,16 +163,10 @@ func (e *DefaultExecutor) applyAuth(h http.Header, desc authDesc, cred Credentia
 		}
 
 		applyAuthHeader(h, header, scheme, tok)
-	} else {
-		if cred.APIKey != "" && desc.APIKey != nil {
-			applyAuthHeader(h, desc.APIKey.Header, desc.APIKey.Scheme, cred.APIKey)
-		} else if cred.AccessToken != "" && desc.OAuth != nil {
-			applyAuthHeader(h, desc.OAuth.Header, desc.OAuth.Scheme, cred.AccessToken)
-		}
-	}
-
-	if desc.AnthropicVersion && h.Get("anthropic-version") == "" {
-		h.Set("anthropic-version", anthropicAPIVersionDefault)
+	case cred.APIKey != "" && desc.APIKey != nil:
+		applyAuthHeader(h, desc.APIKey.Header, desc.APIKey.Scheme, cred.APIKey)
+	case cred.AccessToken != "" && desc.OAuth != nil:
+		applyAuthHeader(h, desc.OAuth.Header, desc.OAuth.Scheme, cred.AccessToken)
 	}
 }
 
@@ -158,23 +193,11 @@ func applyHeaderHook(h http.Header, hook string, cred Credentials) {
 		}
 	case "claudeOverlay":
 		// reserved for cached Claude Code identity headers
+		_ = cred
 	}
 }
 
-func (e *DefaultExecutor) buildURL(model string, stream bool, cred Credentials) string {
-	// runtime transport override
-	if cred.ProviderSpecificData != nil {
-		if rt, ok := cred.ProviderSpecificData["runtimeTransport"].(map[string]any); ok {
-			if bu, ok := rt["baseUrl"].(string); ok && bu != "" {
-				if suf, ok := rt["urlSuffix"].(string); ok {
-					return strings.TrimRight(bu, "/") + suf
-				}
-
-				return bu
-			}
-		}
-	}
-
+func (e *DefaultExecutor) buildCompatibleURL(cred Credentials) (string, bool) {
 	if strings.HasPrefix(e.provider, "openai-compatible-") {
 		base := strPSD(cred, "baseUrl")
 		if base == "" {
@@ -187,10 +210,10 @@ func (e *DefaultExecutor) buildURL(model string, stream bool, cred Credentials) 
 
 		base = strings.TrimRight(base, "/")
 		if strings.Contains(e.provider, "responses") {
-			return base + "/responses"
+			return base + "/responses", true
 		}
 
-		return base + "/chat/completions"
+		return base + "/chat/completions", true
 	}
 
 	if strings.HasPrefix(e.provider, "anthropic-compatible-") {
@@ -205,9 +228,13 @@ func (e *DefaultExecutor) buildURL(model string, stream bool, cred Credentials) 
 
 		base = strings.TrimRight(base, "/")
 
-		return base + "/messages"
+		return base + "/messages", true
 	}
 
+	return "", false
+}
+
+func (e *DefaultExecutor) buildFormatURL(model string, stream bool, cred Credentials) (string, bool) {
 	if e.format == "gemini" {
 		base := strings.TrimRight(cred.BaseURL, "/")
 		if base == "" {
@@ -219,7 +246,7 @@ func (e *DefaultExecutor) buildURL(model string, stream bool, cred Credentials) 
 			action = "streamGenerateContent?alt=sse"
 		}
 
-		return fmt.Sprintf("%s/%s:%s", base, model, action)
+		return fmt.Sprintf("%s/%s:%s", base, model, action), true
 	}
 
 	if e.format == "claude" {
@@ -229,12 +256,38 @@ func (e *DefaultExecutor) buildURL(model string, stream bool, cred Credentials) 
 		}
 
 		if !strings.HasSuffix(base, "/messages") {
-			return base + "/messages"
+			return base + "/messages", true
 		}
 
-		return base
+		return base, true
 	}
 
+	return "", false
+}
+
+func getRuntimeTransportURL(cred Credentials) (string, bool) {
+	if cred.ProviderSpecificData == nil {
+		return "", false
+	}
+
+	rt, ok := cred.ProviderSpecificData["runtimeTransport"].(map[string]any)
+	if !ok {
+		return "", false
+	}
+
+	bu, ok := rt["baseUrl"].(string)
+	if !ok || bu == "" {
+		return "", false
+	}
+
+	if suf, ok := rt["urlSuffix"].(string); ok {
+		return strings.TrimRight(bu, "/") + suf, true
+	}
+
+	return bu, true
+}
+
+func (e *DefaultExecutor) resolveBaseURL(cred Credentials) string {
 	base := strings.TrimRight(cred.BaseURL, "/")
 	if base == "" && e.baseURL != "" {
 		base = strings.TrimRight(e.baseURL, "/")
@@ -260,6 +313,73 @@ func (e *DefaultExecutor) buildURL(model string, stream bool, cred Credentials) 
 	return base + "/chat/completions"
 }
 
+func (e *DefaultExecutor) buildURL(model string, stream bool, cred Credentials) string {
+	// runtime transport override
+	if rtURL, ok := getRuntimeTransportURL(cred); ok {
+		return rtURL
+	}
+
+	if url, ok := e.buildCompatibleURL(cred); ok {
+		return url
+	}
+
+	if url, ok := e.buildFormatURL(model, stream, cred); ok {
+		return url
+	}
+
+	return e.resolveBaseURL(cred)
+}
+
+func injectJSONSchemaFallback(body map[string]any) {
+	rf, ok := body["response_format"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	t, _ := rf["type"].(string) // nolint:errcheck
+	if t != "json_schema" {
+		return
+	}
+
+	js, ok := rf["json_schema"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	schema, ok := js["schema"]
+	if !ok {
+		return
+	}
+
+	schemaJSON, _ := json.MarshalIndent(schema, "", "  ") // nolint:errcheck
+	prompt := "You must respond with valid JSON that strictly follows this JSON schema:\n```json\n" + string(schemaJSON) + "\n```\nRespond ONLY with the JSON object, no other text."
+	messages, _ := body["messages"].([]any) // nolint:errcheck
+	found := false
+
+	for _, msgRaw := range messages {
+		msg, ok := msgRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if role, _ := msg["role"].(string); role == "system" { // nolint:errcheck
+			if s, ok := msg["content"].(string); ok {
+				msg["content"] = s + "\n\n" + prompt
+				found = true
+
+				break
+			}
+		}
+	}
+
+	if !found {
+		messages = append([]any{map[string]any{"role": "system", "content": prompt}}, messages...)
+	}
+
+	body["messages"] = messages
+	body["response_format"] = map[string]any{"type": "json_object"}
+}
+
 func (e *DefaultExecutor) transform(model string, body map[string]any) map[string]any {
 	if body == nil {
 		return body
@@ -270,41 +390,7 @@ func (e *DefaultExecutor) transform(model string, body map[string]any) map[strin
 	}
 	// json_schema → json_object fallback for openai-compatible
 	if strings.HasPrefix(e.provider, "openai-compatible-") {
-		if rf, ok := body["response_format"].(map[string]any); ok {
-			if t, _ := rf["type"].(string); t == "json_schema" {
-				if js, ok := rf["json_schema"].(map[string]any); ok {
-					if schema, ok := js["schema"]; ok {
-						schemaJSON, _ := json.MarshalIndent(schema, "", "  ")
-						prompt := "You must respond with valid JSON that strictly follows this JSON schema:\n```json\n" + string(schemaJSON) + "\n```\nRespond ONLY with the JSON object, no other text."
-						messages, _ := body["messages"].([]any)
-						found := false
-
-						for _, msgRaw := range messages {
-							msg, ok := msgRaw.(map[string]any)
-							if !ok {
-								continue
-							}
-
-							if role, _ := msg["role"].(string); role == "system" {
-								if s, ok := msg["content"].(string); ok {
-									msg["content"] = s + "\n\n" + prompt
-									found = true
-
-									break
-								}
-							}
-						}
-
-						if !found {
-							messages = append([]any{map[string]any{"role": "system", "content": prompt}}, messages...)
-						}
-
-						body["messages"] = messages
-						body["response_format"] = map[string]any{"type": "json_object"}
-					}
-				}
-			}
-		}
+		injectJSONSchemaFallback(body)
 	}
 
 	if e.provider != "" {
@@ -314,7 +400,33 @@ func (e *DefaultExecutor) transform(model string, body map[string]any) map[strin
 	return body
 }
 
-func (e *DefaultExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+func applyThirdPartyAnthropicHeaders(req *http.Header, cred Credentials) {
+	if cred.APIKey != "" && req.Get("Authorization") == "" {
+		req.Set("Authorization", "Bearer "+cred.APIKey)
+	}
+
+	req.Del("anthropic-dangerous-direct-browser-access")
+	req.Del("x-app")
+
+	if beta := req.Get("anthropic-beta"); beta != "" {
+		var kept []string
+
+		for _, f := range strings.Split(beta, ",") {
+			f = strings.TrimSpace(f)
+			if f != "" && f != "claude-code-20250219" {
+				kept = append(kept, f)
+			}
+		}
+
+		if len(kept) > 0 {
+			req.Set("anthropic-beta", strings.Join(kept, ","))
+		} else {
+			req.Del("anthropic-beta")
+		}
+	}
+}
+
+func (e *DefaultExecutor) prepareRequest(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*http.Request, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
@@ -354,29 +466,7 @@ func (e *DefaultExecutor) Execute(ctx context.Context, cred Credentials, model s
 
 		isOfficial := baseURL == "" || strings.Contains(baseURL, "api.anthropic.com")
 		if !isOfficial {
-			if cred.APIKey != "" && req.Header.Get("Authorization") == "" {
-				req.Header.Set("Authorization", "Bearer "+cred.APIKey)
-			}
-
-			req.Header.Del("anthropic-dangerous-direct-browser-access")
-			req.Header.Del("x-app")
-
-			if beta := req.Header.Get("anthropic-beta"); beta != "" {
-				var kept []string
-
-				for _, f := range strings.Split(beta, ",") {
-					f = strings.TrimSpace(f)
-					if f != "" && f != "claude-code-20250219" {
-						kept = append(kept, f)
-					}
-				}
-
-				if len(kept) > 0 {
-					req.Header.Set("anthropic-beta", strings.Join(kept, ","))
-				} else {
-					req.Header.Del("anthropic-beta")
-				}
-			}
+			applyThirdPartyAnthropicHeaders(&req.Header, cred)
 		}
 	}
 
@@ -386,11 +476,26 @@ func (e *DefaultExecutor) Execute(ctx context.Context, cred Credentials, model s
 		req.Header.Set("Accept", "application/json")
 	}
 
+	return req, nil
+}
+
+// Execute executes standard LLM requests across OpenAI/Claude/Gemini compatible formats.
+func (e *DefaultExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
+	req, err := e.prepareRequest(ctx, cred, model, body, stream)
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := e.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close() // nolint:errcheck
+		}
+
 		return nil, fmt.Errorf("nil response from upstream")
 	}
 

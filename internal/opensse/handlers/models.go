@@ -36,12 +36,12 @@ var kindEndpoint = map[string]string{
 }
 
 // Models handles GET /v1/models — LLM/chat models by default.
-func Models(w http.ResponseWriter, r *http.Request, st *store.Store) {
+func Models(w http.ResponseWriter, _ *http.Request, st *store.Store) {
 	writeModelList(w, st, []string{llmKind}, false)
 }
 
 // ModelsByKind handles GET /v1/models/{kind}.
-func ModelsByKind(w http.ResponseWriter, r *http.Request, st *store.Store, kind string) {
+func ModelsByKind(w http.ResponseWriter, _ *http.Request, st *store.Store, kind string) {
 	filter, ok := kindSlugMap[kind]
 	if !ok {
 		jsonError(w, http.StatusNotFound, "Unknown model kind: "+kind+". Supported: image, tts, stt, embedding, image-to-text, web, video")
@@ -69,7 +69,7 @@ func ModelsInfo(w http.ResponseWriter, r *http.Request, st *store.Store) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(info)
+	_ = json.NewEncoder(w).Encode(info) //nolint:errcheck // handler encode
 	_ = st
 }
 
@@ -77,7 +77,7 @@ func writeModelList(w http.ResponseWriter, st *store.Store, kindFilter []string,
 	data := buildModelList(st, kindFilter, withCaps)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck // handler encode
 		"object": "list",
 		"data":   data,
 	})
@@ -88,23 +88,8 @@ func buildModelList(st *store.Store, kindFilter []string, withCaps bool) []map[s
 
 	seen := map[string]bool{}
 
-	// combos first (owned_by combo) — always llm
 	if kindIn(kindFilter, llmKind) && st != nil {
-		if combos, err := st.ListCombos(); err == nil {
-			for _, c := range combos {
-				if seen[c.Name] {
-					continue
-				}
-
-				seen[c.Name] = true
-
-				out = append(out, map[string]any{
-					"id":       c.Name,
-					"object":   "model",
-					"owned_by": "combo",
-				})
-			}
-		}
+		out = append(out, collectCombos(st, seen)...)
 	}
 
 	activeProviders := activeProviderSet(st)
@@ -113,92 +98,140 @@ func buildModelList(st *store.Store, kindFilter []string, withCaps bool) []map[s
 		if !providerMatchesKinds(p, kindFilter) {
 			continue
 		}
-		// if any connections exist, only providers with active conn
+
 		if len(activeProviders) > 0 && !activeProviders[p.ID] {
 			continue
 		}
 
-		alias := p.Alias
-		if alias == "" {
-			alias = p.ID
-		}
-
-		resolvedDynamic := false
-
-		if st != nil && kindIn(kindFilter, llmKind) {
-			if conns, err := st.ListActiveByProvider(p.ID); err == nil && len(conns) > 0 {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				dynModels, dynErr := models.DefaultEngine.ResolveModels(ctx, &conns[0])
-
-				cancel()
-
-				if dynErr == nil && len(dynModels) > 0 {
-					resolvedDynamic = true
-
-					for _, dm := range dynModels {
-						id := alias + "/" + dm.ID
-						if seen[id] {
-							continue
-						}
-
-						seen[id] = true
-
-						entry := map[string]any{
-							"id":       id,
-							"object":   "model",
-							"owned_by": alias,
-						}
-						if dm.Capabilities != nil {
-							entry["capabilities"] = dm.Capabilities
-						} else if withCaps || true {
-							entry["capabilities"] = provider.GetCapabilities(dm.ID)
-						}
-
-						if dm.ContextLength > 0 {
-							entry["context_length"] = dm.ContextLength
-						}
-
-						if dm.MaxOutputTokens > 0 {
-							entry["max_completion_tokens"] = dm.MaxOutputTokens
-						}
-
-						out = append(out, entry)
-					}
-				}
-			}
-		}
-
-		if !resolvedDynamic {
-			for _, m := range p.Models {
-				mk := modelKind(m)
-				if !kindIn(kindFilter, mk) && !(mk == "imageToText" && kindIn(kindFilter, llmKind)) {
-					continue
-				}
-
-				id := alias + "/" + m.ID
-				if seen[id] {
-					continue
-				}
-
-				seen[id] = true
-				entry := map[string]any{
-					"id":       id,
-					"object":   "model",
-					"owned_by": alias,
-				}
-
-				if withCaps || mk == llmKind {
-					caps := provider.GetCapabilities(m.ID)
-					entry["capabilities"] = caps
-				}
-
-				out = append(out, entry)
-			}
-		}
+		out = append(out, collectProviderModels(st, p, kindFilter, withCaps, seen)...)
 	}
 
 	if out == nil {
 		out = []map[string]any{}
+	}
+
+	return out
+}
+
+func collectCombos(st *store.Store, seen map[string]bool) []map[string]any {
+	combos, err := st.ListCombos()
+	if err != nil {
+		return nil
+	}
+
+	out := make([]map[string]any, 0, len(combos))
+
+	for _, c := range combos {
+		if seen[c.Name] {
+			continue
+		}
+
+		seen[c.Name] = true
+
+		out = append(out, map[string]any{
+			"id":       c.Name,
+			"object":   "model",
+			"owned_by": "combo",
+		})
+	}
+
+	return out
+}
+
+func collectProviderModels(st *store.Store, p provider.Provider, kindFilter []string, withCaps bool, seen map[string]bool) []map[string]any {
+	alias := p.Alias
+	if alias == "" {
+		alias = p.ID
+	}
+
+	if st != nil && kindIn(kindFilter, llmKind) {
+		if dynList, ok := tryResolveDynamic(st, p.ID, alias, withCaps, seen); ok {
+			return dynList
+		}
+	}
+
+	return collectStaticModels(p, alias, kindFilter, withCaps, seen)
+}
+
+func tryResolveDynamic(st *store.Store, providerID, alias string, withCaps bool, seen map[string]bool) ([]map[string]any, bool) {
+	conns, err := st.ListActiveByProvider(providerID)
+	if err != nil || len(conns) == 0 {
+		return nil, false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	dynModels, dynErr := models.DefaultEngine.ResolveModels(ctx, &conns[0])
+	if dynErr != nil || len(dynModels) == 0 {
+		return nil, false
+	}
+
+	return formatDynamicModels(dynModels, alias, withCaps, seen), true
+}
+
+func formatDynamicModels(dynModels []models.DynamicModel, alias string, withCaps bool, seen map[string]bool) []map[string]any {
+	out := make([]map[string]any, 0, len(dynModels))
+
+	for _, dm := range dynModels {
+		id := alias + "/" + dm.ID
+		if seen[id] {
+			continue
+		}
+
+		seen[id] = true
+		entry := map[string]any{
+			"id":       id,
+			"object":   "model",
+			"owned_by": alias,
+		}
+
+		if dm.Capabilities != nil {
+			entry["capabilities"] = dm.Capabilities
+		} else if withCaps {
+			entry["capabilities"] = provider.GetCapabilities(dm.ID)
+		}
+
+		if dm.ContextLength > 0 {
+			entry["context_length"] = dm.ContextLength
+		}
+
+		if dm.MaxOutputTokens > 0 {
+			entry["max_completion_tokens"] = dm.MaxOutputTokens
+		}
+
+		out = append(out, entry)
+	}
+
+	return out
+}
+
+func collectStaticModels(p provider.Provider, alias string, kindFilter []string, withCaps bool, seen map[string]bool) []map[string]any {
+	out := make([]map[string]any, 0, len(p.Models))
+
+	for _, m := range p.Models {
+		mk := modelKind(m)
+		if !kindIn(kindFilter, mk) && !(mk == "imageToText" && kindIn(kindFilter, llmKind)) {
+			continue
+		}
+
+		id := alias + "/" + m.ID
+		if seen[id] {
+			continue
+		}
+
+		seen[id] = true
+		entry := map[string]any{
+			"id":       id,
+			"object":   "model",
+			"owned_by": alias,
+		}
+
+		if withCaps || mk == llmKind {
+			entry["capabilities"] = provider.GetCapabilities(m.ID)
+		}
+
+		out = append(out, entry)
 	}
 
 	return out

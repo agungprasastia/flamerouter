@@ -1,3 +1,4 @@
+// Package mitm provides local HTTPS MITM proxy and certificate generation for developer tools.
 package mitm
 
 import "sync"
@@ -9,16 +10,22 @@ type DNSOverride struct {
 	mu   sync.RWMutex
 }
 
+// NewDNSOverride initializes a new DNSOverride map.
 func NewDNSOverride() *DNSOverride {
-	return &DNSOverride{host: make(map[string]string)}
+	return &DNSOverride{
+		host: make(map[string]string),
+		mu:   sync.RWMutex{},
+	}
 }
 
+// Set stores a hostname to IP mapping.
 func (d *DNSOverride) Set(hostname, ip string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.host[hostname] = ip
 }
 
+// Get retrieves the mapped IP for a hostname.
 func (d *DNSOverride) Get(hostname string) (string, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -27,12 +34,14 @@ func (d *DNSOverride) Get(hostname string) (string, bool) {
 	return ip, ok
 }
 
+// Delete removes a hostname mapping.
 func (d *DNSOverride) Delete(hostname string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.host, hostname)
 }
 
+// Clear removes all hostname mappings.
 func (d *DNSOverride) Clear() {
 	d.mu.Lock()
 	defer d.mu.Unlock()

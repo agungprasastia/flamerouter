@@ -36,7 +36,7 @@ type StreamPayload struct {
 
 // StreamHub broadcasts real-time usage events to connected SSE clients.
 type StreamHub struct {
-	lastErrTs   time.Time
+	lastErrTS   time.Time
 	clients     map[chan []byte]struct{}
 	lastErrProv string
 	recentRing  []RecentRequestItem
@@ -44,14 +44,19 @@ type StreamHub struct {
 	mu          sync.RWMutex
 }
 
+// NewStreamHub constructs a new StreamHub for SSE real-time tracking.
 func NewStreamHub() *StreamHub {
 	return &StreamHub{
-		clients:    make(map[chan []byte]struct{}),
-		recentRing: make([]RecentRequestItem, 0, 50),
-		recentCap:  50,
+		clients:     make(map[chan []byte]struct{}),
+		recentRing:  make([]RecentRequestItem, 0, 50),
+		recentCap:   50,
+		lastErrTS:   time.Time{},
+		lastErrProv: "",
+		mu:          sync.RWMutex{},
 	}
 }
 
+// PushRecent appends a record to the recent request ring and broadcasts the update.
 func (h *StreamHub) PushRecent(r Record) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -62,7 +67,7 @@ func (h *StreamHub) PushRecent(r Record) {
 
 		if r.Provider != "" {
 			h.lastErrProv = r.Provider
-			h.lastErrTs = time.Now()
+			h.lastErrTS = time.Now()
 		}
 	}
 
@@ -96,6 +101,7 @@ func (h *StreamHub) PushRecent(r Record) {
 	}
 }
 
+// GetRecent returns the snapshot of recent requests, ordered newest first.
 func (h *StreamHub) GetRecent() []RecentRequestItem {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -122,7 +128,7 @@ func (h *StreamHub) buildPayloadLocked() StreamPayload {
 	}
 
 	errProv := ""
-	if time.Since(h.lastErrTs) < 10*time.Second {
+	if time.Since(h.lastErrTS) < 10*time.Second {
 		errProv = h.lastErrProv
 	}
 
@@ -137,14 +143,40 @@ func (h *StreamHub) buildPayloadLocked() StreamPayload {
 	}
 }
 
+// Broadcast broadcasts a completed request record.
 func (h *StreamHub) Broadcast(event Record) {
 	h.PushRecent(event)
+}
+
+func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, data []byte) {
+	if _, err := w.Write([]byte("data: ")); err != nil {
+		_ = err
+	}
+
+	if _, err := w.Write(data); err != nil {
+		_ = err
+	}
+
+	if _, err := w.Write([]byte("\n\n")); err != nil {
+		_ = err
+	}
+
+	flusher.Flush()
+}
+
+func writeSSEPing(w http.ResponseWriter, flusher http.Flusher) {
+	if _, err := w.Write([]byte(": ping\n\n")); err != nil {
+		_ = err
+	}
+
+	flusher.Flush()
 }
 
 func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", 500)
+
 		return
 	}
 
@@ -167,11 +199,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Send initial snapshot
 	if initData, err := json.Marshal(initPayload); err == nil {
-		_, _ = w.Write([]byte("data: "))
-		_, _ = w.Write(initData)
-		_, _ = w.Write([]byte("\n\n"))
-
-		flusher.Flush()
+		writeSSEEvent(w, flusher, initData)
 	}
 
 	ticker := time.NewTicker(25 * time.Second)
@@ -180,15 +208,9 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case data := <-ch:
-			_, _ = w.Write([]byte("data: "))
-			_, _ = w.Write(data)
-			_, _ = w.Write([]byte("\n\n"))
-
-			flusher.Flush()
+			writeSSEEvent(w, flusher, data)
 		case <-ticker.C:
-			_, _ = w.Write([]byte(": ping\n\n"))
-
-			flusher.Flush()
+			writeSSEPing(w, flusher)
 		case <-r.Context().Done():
 			return
 		}

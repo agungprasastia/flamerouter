@@ -20,22 +20,79 @@ type HeadroomStats struct {
 	Saved        int
 }
 
+func sendHeadroomRequest(endpoint string, payload []byte) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultHeadroomTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil || resp.Body == nil {
+		return nil, http.ErrHandlerTimeout
+	}
+
+	defer func() {
+		//nolint:errcheck // best effort body close
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, http.ErrHandlerTimeout
+	}
+
+	return io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+}
+
+func parseHeadroomResponse(raw []byte, origCount int) ([]any, *HeadroomStats) {
+	var data struct {
+		Messages []any `json:"messages"`
+		Stats    struct {
+			TokensBefore int `json:"tokens_before"`
+			TokensAfter  int `json:"tokens_after"`
+		} `json:"stats"`
+	}
+
+	if err := json.Unmarshal(raw, &data); err != nil || len(data.Messages) == 0 || len(data.Messages) != origCount {
+		return nil, nil
+	}
+
+	st := &HeadroomStats{
+		TokensBefore: data.Stats.TokensBefore,
+		TokensAfter:  data.Stats.TokensAfter,
+		Saved:        0,
+	}
+	if st.TokensBefore > st.TokensAfter {
+		st.Saved = st.TokensBefore - st.TokensAfter
+	}
+
+	return data.Messages, st
+}
+
 // CompressWithHeadroom POSTs OpenAI-shaped messages to headroom proxy /v1/compress.
 // Fail-open: returns nil stats and leaves body untouched on any error.
-func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, format string, compressUserMessages bool) *HeadroomStats {
+func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, _ string, compressUserMessages bool) *HeadroomStats {
 	if !enabled || body == nil || proxyURL == "" {
 		return nil
 	}
 
-	defer func() { recover() }()
+	defer func() {
+		//nolint:errcheck // recovery cleanup
+		_ = recover()
+	}()
 
-	// Only OpenAI-shaped messages[] for simplicity; Claude/Kiro need translators — fail-open skip
 	messages, ok := body["messages"].([]any)
 	if !ok || len(messages) == 0 {
 		return nil
 	}
-
-	endpoint := buildCompressEndpoint(proxyURL)
 
 	payload := map[string]any{"messages": messages, "model": model}
 	if compressUserMessages {
@@ -47,60 +104,17 @@ func CompressWithHeadroom(body map[string]any, enabled bool, proxyURL, model, fo
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultHeadroomTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
+	raw, err := sendHeadroomRequest(buildCompressEndpoint(proxyURL), b)
 	if err != nil {
 		return nil
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil
-	}
-	if resp == nil || resp.Body == nil {
+	newMsgs, st := parseHeadroomResponse(raw, len(messages))
+	if newMsgs == nil {
 		return nil
 	}
 
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
-
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
-	if err != nil {
-		return nil
-	}
-
-	var data struct {
-		Messages []any `json:"messages"`
-		Stats    struct {
-			TokensBefore int `json:"tokens_before"`
-			TokensAfter  int `json:"tokens_after"`
-		} `json:"stats"`
-	}
-
-	if err := json.Unmarshal(raw, &data); err != nil || len(data.Messages) == 0 {
-		return nil
-	}
-	// Only replace if count matches (preserve tool structure safety)
-	if len(data.Messages) != len(messages) {
-		return nil
-	}
-
-	body["messages"] = data.Messages
-
-	st := &HeadroomStats{
-		TokensBefore: data.Stats.TokensBefore,
-		TokensAfter:  data.Stats.TokensAfter,
-	}
-	if st.TokensBefore > st.TokensAfter {
-		st.Saved = st.TokensBefore - st.TokensAfter
-	}
+	body["messages"] = newMsgs
 
 	return st
 }

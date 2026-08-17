@@ -1,3 +1,5 @@
+// Package oauth provides OAuth authentication flows, token lifecycle helpers,
+// and specialized third-party login providers.
 package oauth
 
 import (
@@ -9,7 +11,7 @@ import (
 	"time"
 )
 
-// Default refresh lead — matches tokenrefresh.TokenExpiryBuffer / 9router TOKEN_EXPIRY_BUFFER_MS.
+// DefaultRefreshLead is the default refresh lead time matching tokenrefresh.TokenExpiryBuffer.
 const DefaultRefreshLead = 5 * time.Minute
 
 // CodexMaxRefreshAge is 8 days (codex.oauth.maxRefreshAgeMs).
@@ -41,35 +43,23 @@ func ShouldRefresh(provider string, expiresAt, lastRefreshAt time.Time, maxRefre
 		return true
 	}
 
-	if maxRefreshAge > 0 {
-		if lastRefreshAt.IsZero() || now.Sub(lastRefreshAt) >= maxRefreshAge {
-			return true
-		}
+	if maxRefreshAge > 0 && (lastRefreshAt.IsZero() || now.Sub(lastRefreshAt) >= maxRefreshAge) {
+		return true
 	}
 
 	return false
 }
 
-// MergeRefreshed merges refresh response into current credential map (9router mergeRefreshedCredentials).
-func MergeRefreshed(current, next map[string]any) map[string]any {
-	if next == nil {
-		return nil
+func mergeTokenKeys(next, out map[string]any) {
+	for _, key := range []string{"accessToken", "apiKey", "token"} {
+		if v, ok := next[key].(string); ok && v != "" {
+			out[key] = v
+		}
 	}
+}
 
-	out := map[string]any{}
-	nowIso := time.Now().UTC().Format(time.RFC3339)
-
-	if v, ok := next["accessToken"].(string); ok && v != "" {
-		out["accessToken"] = v
-	}
-
-	if v, ok := next["apiKey"].(string); ok && v != "" {
-		out["apiKey"] = v
-	}
-
-	if v, ok := next["token"].(string); ok && v != "" {
-		out["token"] = v
-	}
+func mergeBasicTokens(current, next, out map[string]any) {
+	mergeTokenKeys(next, out)
 
 	rt := strAny(next, "refreshToken")
 	if rt == "" {
@@ -88,7 +78,9 @@ func MergeRefreshed(current, next map[string]any) map[string]any {
 	if id != "" {
 		out["idToken"] = id
 	}
+}
 
+func mergeExpiryAndPSD(current, next, out map[string]any) {
 	if expIn, ok := asFloat(next["expiresIn"]); ok && expIn > 0 {
 		out["expiresIn"] = expIn
 		out["expiresAt"] = time.Now().UTC().Add(time.Duration(expIn) * time.Second).Format(time.RFC3339)
@@ -101,10 +93,16 @@ func MergeRefreshed(current, next map[string]any) map[string]any {
 	}
 
 	if nextPSD, ok := next["providerSpecificData"].(map[string]any); ok {
-		curPSD, _ := current["providerSpecificData"].(map[string]any)
+		var curPSD map[string]any
+		if cp, ok := current["providerSpecificData"].(map[string]any); ok {
+			curPSD = cp
+		}
+
 		out["providerSpecificData"] = mergeMaps(curPSD, nextPSD)
 	}
+}
 
+func mergeCopilotFields(next, out map[string]any, nowIso string) {
 	if v, ok := next["copilotToken"]; ok {
 		out["copilotToken"] = v
 	}
@@ -121,6 +119,20 @@ func MergeRefreshed(current, next map[string]any) map[string]any {
 			out["lastRefreshAt"] = nowIso
 		}
 	}
+}
+
+// MergeRefreshed merges refresh response into current credential map (9router mergeRefreshedCredentials).
+func MergeRefreshed(current, next map[string]any) map[string]any {
+	if next == nil {
+		return nil
+	}
+
+	out := map[string]any{}
+	nowIso := time.Now().UTC().Format(time.RFC3339)
+
+	mergeBasicTokens(current, next, out)
+	mergeExpiryAndPSD(current, next, out)
+	mergeCopilotFields(next, out, nowIso)
 
 	return out
 }
@@ -137,10 +149,12 @@ type CredManager struct {
 	mu        sync.Mutex
 }
 
+// NewCredManager constructs a CredManager using the given TokenRefresher.
 func NewCredManager(r TokenRefresher) *CredManager {
 	return &CredManager{
 		refresher: r,
 		locks:     make(map[string]*sync.Mutex),
+		mu:        sync.Mutex{},
 	}
 }
 
@@ -158,44 +172,14 @@ func (cm *CredManager) lockFor(id string) *sync.Mutex {
 	return m
 }
 
-// RefreshIfNeeded refreshes OAuth tokens when near expiry / max age; persists via st.
-// Returns (possibly updated) connection. Fail-open: refresh errors return original conn + err.
-func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, conn *store.Connection) (*store.Connection, error) {
-	if cm == nil || conn == nil || st == nil {
-		return conn, nil
-	}
-
-	if conn.AuthType != "oauth" && conn.RefreshToken == "" {
-		return conn, nil
-	}
-
-	if conn.RefreshToken == "" {
-		return conn, nil
-	}
-
+func (cm *CredManager) shouldRefreshConn(conn *store.Connection, maxAge time.Duration) bool {
 	expiresAt := parseTime(conn.ExpiresAt)
 	lastRefresh := lastRefreshFromPSD(conn.ProviderSpecificData)
-	maxAge := MaxRefreshAge(conn.Provider)
 
-	if !ShouldRefresh(conn.Provider, expiresAt, lastRefresh, maxAge, DefaultRefreshLead) {
-		return conn, nil
-	}
+	return ShouldRefresh(conn.Provider, expiresAt, lastRefresh, maxAge, DefaultRefreshLead)
+}
 
-	lk := cm.lockFor(conn.ID)
-	lk.Lock()
-	defer lk.Unlock()
-
-	// Re-check after lock (another goroutine may have refreshed).
-	if fresh, err := st.GetConnection(conn.ID); err == nil && fresh != nil {
-		conn = fresh
-		expiresAt = parseTime(conn.ExpiresAt)
-		lastRefresh = lastRefreshFromPSD(conn.ProviderSpecificData)
-
-		if !ShouldRefresh(conn.Provider, expiresAt, lastRefresh, maxAge, DefaultRefreshLead) {
-			return conn, nil
-		}
-	}
-
+func (cm *CredManager) executeRefresh(ctx context.Context, st *store.Store, conn *store.Connection) (*store.Connection, error) {
 	if cm.refresher == nil {
 		return conn, fmt.Errorf("no token refresher")
 	}
@@ -222,14 +206,15 @@ func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, con
 		return conn, err
 	}
 
-	// Stamp lastRefreshAt in PSD for max-age tracking (codex).
 	if conn.ProviderSpecificData == nil {
 		conn.ProviderSpecificData = map[string]any{}
 	}
 
 	conn.ProviderSpecificData["lastRefreshAt"] = time.Now().UTC().Format(time.RFC3339)
 	if b, err := json.Marshal(conn.ProviderSpecificData); err == nil {
-		_ = st.UpdateConnectionPSD(conn.ID, string(b))
+		if err := st.UpdateConnectionPSD(conn.ID, string(b)); err != nil {
+			return conn, err
+		}
 	}
 
 	conn.AccessToken = access
@@ -237,6 +222,33 @@ func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, con
 	conn.ExpiresAt = expStr
 
 	return conn, nil
+}
+
+// RefreshIfNeeded refreshes OAuth tokens when near expiry / max age; persists via st.
+// Returns (possibly updated) connection. Fail-open: refresh errors return original conn + err.
+func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, conn *store.Connection) (*store.Connection, error) {
+	if cm == nil || conn == nil || st == nil || conn.RefreshToken == "" {
+		return conn, nil
+	}
+
+	maxAge := MaxRefreshAge(conn.Provider)
+	if !cm.shouldRefreshConn(conn, maxAge) {
+		return conn, nil
+	}
+
+	lk := cm.lockFor(conn.ID)
+	lk.Lock()
+	defer lk.Unlock()
+
+	// Re-check after lock (another goroutine may have refreshed).
+	if fresh, err := st.GetConnection(conn.ID); err == nil && fresh != nil {
+		conn = fresh
+		if !cm.shouldRefreshConn(conn, maxAge) {
+			return conn, nil
+		}
+	}
+
+	return cm.executeRefresh(ctx, st, conn)
 }
 
 func parseTime(s string) time.Time {

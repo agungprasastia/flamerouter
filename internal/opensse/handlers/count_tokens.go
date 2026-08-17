@@ -16,7 +16,7 @@ func CountTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck // best effort encode
 		"input_tokens": estimateAnthropicInputTokens(body),
 	})
 }
@@ -91,25 +91,34 @@ func countValueChars(value any) int {
 	switch v := value.(type) {
 	case string:
 		return len(v)
-	case float64, bool, int, int64:
-		b, _ := json.Marshal(v)
-		return len(b)
 	case []any:
-		n := 0
-		for _, item := range v {
-			n += countValueChars(item)
-		}
-
-		return n
+		return countSliceChars(v)
 	case map[string]any:
-		n := 0
-		for k, item := range v {
-			n += len(k) + countValueChars(item)
+		return countMapChars(v)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return 0
 		}
 
-		return n
-	default:
-		b, _ := json.Marshal(v)
 		return len(b)
 	}
+}
+
+func countSliceChars(v []any) int {
+	n := 0
+	for _, item := range v {
+		n += countValueChars(item)
+	}
+
+	return n
+}
+
+func countMapChars(v map[string]any) int {
+	n := 0
+	for k, item := range v {
+		n += len(k) + countValueChars(item)
+	}
+
+	return n
 }

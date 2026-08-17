@@ -25,16 +25,23 @@ func LoadTokenSaverFromStore(st *store.Store) rtk.TokenSaverOptions {
 		return opts
 	}
 
+	applyTokenSaverBoolFlags(&opts, m)
+	applyTokenSaverStringFlags(&opts, m)
+
+	if v, ok := m["pxpipeMinChars"].(float64); ok && v > 0 {
+		opts.PxpipeMinChars = int(v)
+	}
+
+	return opts
+}
+
+func applyTokenSaverBoolFlags(opts *rtk.TokenSaverOptions, m map[string]any) {
 	if v, ok := m["rtkEnabled"].(bool); ok {
 		opts.RTK = v
 	}
 
 	if v, ok := m["headroomEnabled"].(bool); ok {
 		opts.Headroom = v
-	}
-
-	if v, ok := m["headroomUrl"].(string); ok && v != "" {
-		opts.HeadroomURL = v
 	}
 
 	if v, ok := m["headroomCompressUserMessages"].(bool); ok {
@@ -45,27 +52,27 @@ func LoadTokenSaverFromStore(st *store.Store) rtk.TokenSaverOptions {
 		opts.Caveman = v
 	}
 
-	if v, ok := m["cavemanLevel"].(string); ok && v != "" {
-		opts.CavemanLevel = v
-	}
-
 	if v, ok := m["ponytailEnabled"].(bool); ok {
 		opts.Ponytail = v
-	}
-
-	if v, ok := m["ponytailLevel"].(string); ok && v != "" {
-		opts.PonytailLevel = v
 	}
 
 	if v, ok := m["pxpipeEnabled"].(bool); ok {
 		opts.Pxpipe = v
 	}
+}
 
-	if v, ok := m["pxpipeMinChars"].(float64); ok && v > 0 {
-		opts.PxpipeMinChars = int(v)
+func applyTokenSaverStringFlags(opts *rtk.TokenSaverOptions, m map[string]any) {
+	if v, ok := m["headroomUrl"].(string); ok && v != "" {
+		opts.HeadroomURL = v
 	}
 
-	return opts
+	if v, ok := m["cavemanLevel"].(string); ok && v != "" {
+		opts.CavemanLevel = v
+	}
+
+	if v, ok := m["ponytailLevel"].(string); ok && v != "" {
+		opts.PonytailLevel = v
+	}
 }
 
 // LoadAccountStrategyFromStore reads fallbackStrategy + stickyRoundRobinLimit

@@ -45,7 +45,11 @@ func (s *Server) handlePxpipeStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = pxpipeProc.Stop()
+	if err := pxpipeProc.Stop(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	writeJSONOK(w, map[string]any{"success": true, "status": pxpipeProc.Status()})
 }
 
@@ -62,7 +66,7 @@ func (s *Server) handlePxpipeRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]any{"success": true, "status": pxpipeProc.Status()})
 }
 
-func (s *Server) handlePxpipeStatus(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePxpipeStatus(w http.ResponseWriter, _ *http.Request) {
 	enabled := false
 
 	var minChars any
@@ -70,15 +74,15 @@ func (s *Server) handlePxpipeStatus(w http.ResponseWriter, r *http.Request) {
 	var timeoutMs any
 
 	if s.st != nil {
-		if v, _ := s.st.GetSetting("pxpipeEnabled"); v == "true" || v == "1" {
+		if v, err := s.st.GetSetting("pxpipeEnabled"); err == nil && (v == "true" || v == "1") {
 			enabled = true
 		}
 
-		if v, _ := s.st.GetSetting("pxpipeMinChars"); v != "" {
+		if v, err := s.st.GetSetting("pxpipeMinChars"); err == nil && v != "" {
 			minChars = v
 		}
 
-		if v, _ := s.st.GetSetting("pxpipeTimeoutMs"); v != "" {
+		if v, err := s.st.GetSetting("pxpipeTimeoutMs"); err == nil && v != "" {
 			timeoutMs = v
 		}
 	}
@@ -93,15 +97,15 @@ func (s *Server) handlePxpipeStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handlePxpipeHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePxpipeHealth(w http.ResponseWriter, _ *http.Request) {
 	ok := pxpipeProc.Health()
 	writeJSONOK(w, map[string]any{"healthy": ok, "status": pxpipeProc.Status()})
 }
 
-func (s *Server) handlePxpipeStats(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePxpipeStats(w http.ResponseWriter, _ *http.Request) {
 	writeJSONOK(w, pxpipeProc.Stats())
 }
 
-func (s *Server) handlePxpipeLogs(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePxpipeLogs(w http.ResponseWriter, _ *http.Request) {
 	writeJSONOK(w, map[string]any{"logs": pxpipeProc.Logs()})
 }

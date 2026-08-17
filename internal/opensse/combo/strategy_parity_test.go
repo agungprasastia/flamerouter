@@ -19,14 +19,18 @@ func TestComboFallbackSequentialExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() {
+		if errClose := st.Close(); errClose != nil {
+			_ = errClose
+		}
+	})
 
 	fb := fallback.New(st)
 	start := &combo.FallbackStrategy{}
 
 	var attempted []string
 
-	singleRunner := func(ctx context.Context, w *httptest.ResponseRecorder, body []byte, modelStr string, stream bool) error {
+	singleRunner := func(_ context.Context, _ *httptest.ResponseRecorder, _ []byte, modelStr string, _ bool) error {
 		attempted = append(attempted, modelStr)
 
 		if modelStr == "openai/gpt-4o" {
@@ -38,8 +42,15 @@ func TestComboFallbackSequentialExecution(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	opts := combo.Options{
-		ComboName: "test-combo",
-		SingleModel: func(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, stream bool) error {
+		ClientHeaders:  nil,
+		SourceFormat:   "",
+		TargetFormat:   "",
+		TokenSaverJSON: "",
+		JudgeModel:     "",
+		StickyLimit:    0,
+		Stream:         false,
+		ComboName:      "test-combo",
+		SingleModel: func(ctx context.Context, _ http.ResponseWriter, body []byte, modelStr string, stream bool) error {
 			return singleRunner(ctx, rec, body, modelStr, stream)
 		},
 	}

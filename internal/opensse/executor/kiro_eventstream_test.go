@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"math"
 	"strings"
 	"testing"
 )
@@ -20,17 +21,26 @@ func buildEventFrame(eventType string, payload any) []byte {
 	hdr = append(hdr, byte(len(val)>>8), byte(len(val)))
 	hdr = append(hdr, val...)
 
-	pl, _ := json.Marshal(payload)
-	// totalLen | headersLen | preludeCRC | headers | payload | messageCRC
+	pl, err := json.Marshal(payload)
+	if err != nil {
+		pl = []byte("{}")
+	}
+
 	headersLen := len(hdr)
 	totalLen := 12 + headersLen + len(pl) + 4
 	out := make([]byte, totalLen)
-	binary.BigEndian.PutUint32(out[0:4], uint32(totalLen))
-	binary.BigEndian.PutUint32(out[4:8], uint32(headersLen))
-	// preludeCRC left 0
+
+	if totalLen <= math.MaxInt32 {
+		binary.BigEndian.PutUint32(out[0:4], uint32(totalLen)) // #nosec G115
+	}
+
+	if headersLen <= math.MaxInt32 {
+		binary.BigEndian.PutUint32(out[4:8], uint32(headersLen)) // #nosec G115
+	}
+
 	copy(out[12:], hdr)
 	copy(out[12+headersLen:], pl)
-	// messageCRC left 0
+
 	return out
 }
 
@@ -58,7 +68,11 @@ func TestTransformKiroEventStream(t *testing.T) {
 	data := append(append(frame1, frame2...), frame3...)
 
 	rc := transformKiroEventStream(strings.NewReader(string(data)), "claude-sonnet-4")
-	defer rc.Close()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			_ = err
+		}
+	}()
 
 	out, err := io.ReadAll(rc)
 	if err != nil {

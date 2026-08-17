@@ -38,54 +38,62 @@ func DefaultCapacityAdapterConfig() CapacityAdapterConfig {
 	}
 }
 
+func normalizeSlicePoolConfig(v []any) ModalityPoolConfig {
+	var models []string
+
+	for _, item := range v {
+		if s, ok := item.(string); ok && s != "" {
+			models = append(models, s)
+		} else if m, ok := item.(map[string]any); ok {
+			if ms, ok := m["model"].(string); ok && ms != "" {
+				models = append(models, ms)
+			}
+		}
+	}
+
+	return ModalityPoolConfig{Enabled: true, RoundRobin: false, Models: models}
+}
+
+func normalizeMapPoolConfig(v map[string]any) ModalityPoolConfig {
+	cfg := ModalityPoolConfig{Enabled: true, RoundRobin: false, Models: nil}
+	if en, ok := v["enabled"].(bool); ok {
+		cfg.Enabled = en
+	}
+
+	if rr, ok := v["roundRobin"].(bool); ok {
+		cfg.RoundRobin = rr
+	}
+
+	if arr, ok := v["models"].([]any); ok {
+		for _, item := range arr {
+			if s, ok := item.(string); ok && s != "" {
+				cfg.Models = append(cfg.Models, s)
+			}
+		}
+	} else if arr, ok := v["models"].([]string); ok {
+		cfg.Models = arr
+	}
+
+	return cfg
+}
+
 // NormalizePoolConfig normalizes an arbitrary JSON value/map/slice into ModalityPoolConfig.
 func NormalizePoolConfig(raw any) ModalityPoolConfig {
 	if raw == nil {
-		return ModalityPoolConfig{}
+		return ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil}
 	}
 
 	switch v := raw.(type) {
 	case []any:
-		var models []string
-
-		for _, item := range v {
-			if s, ok := item.(string); ok && s != "" {
-				models = append(models, s)
-			} else if m, ok := item.(map[string]any); ok {
-				if ms, ok := m["model"].(string); ok && ms != "" {
-					models = append(models, ms)
-				}
-			}
-		}
-
-		return ModalityPoolConfig{Enabled: true, RoundRobin: false, Models: models}
+		return normalizeSlicePoolConfig(v)
 	case []string:
 		return ModalityPoolConfig{Enabled: true, RoundRobin: false, Models: v}
 	case map[string]any:
-		cfg := ModalityPoolConfig{Enabled: true}
-		if en, ok := v["enabled"].(bool); ok {
-			cfg.Enabled = en
-		}
-
-		if rr, ok := v["roundRobin"].(bool); ok {
-			cfg.RoundRobin = rr
-		}
-
-		if arr, ok := v["models"].([]any); ok {
-			for _, item := range arr {
-				if s, ok := item.(string); ok && s != "" {
-					cfg.Models = append(cfg.Models, s)
-				}
-			}
-		} else if arr, ok := v["models"].([]string); ok {
-			cfg.Models = arr
-		}
-
-		return cfg
+		return normalizeMapPoolConfig(v)
 	case ModalityPoolConfig:
 		return v
 	default:
-		return ModalityPoolConfig{}
+		return ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil}
 	}
 }
 
@@ -147,7 +155,7 @@ func poolByCapName(capName string, cfg CapacityAdapterConfig) ModalityPoolConfig
 	case "videoInput":
 		return cfg.VideoInput
 	default:
-		return ModalityPoolConfig{}
+		return ModalityPoolConfig{Enabled: false, RoundRobin: false, Models: nil}
 	}
 }
 
@@ -205,7 +213,7 @@ func GetActiveAdapterStrategy(requiredCaps map[string]bool, cfg CapacityAdapterC
 
 // ModelSatisfiesCapabilities checks whether a model satisfies all required hard capabilities.
 func ModelSatisfiesCapabilities(modelStr string, requiredHard []string) bool {
-	_, modelName := splitProviderModel(modelStr)
+	modelName := splitProviderModel(modelStr)
 	caps := provider.GetCapabilities(modelName)
 
 	has := func(name string) bool {
@@ -235,14 +243,7 @@ func ModelSatisfiesCapabilities(modelStr string, requiredHard []string) bool {
 
 // AugmentModelsWithCapacityAdapter prepends capacity-adapter models when none of the original models satisfy requirements.
 func AugmentModelsWithCapacityAdapter(models []string, requiredCaps map[string]bool, cfg CapacityAdapterConfig) []string {
-	var hard []string
-
-	for _, k := range capabilityKeys {
-		if requiredCaps[k] && hardCaps[k] {
-			hard = append(hard, k)
-		}
-	}
-
+	hard := filterHardCapabilities(requiredCaps)
 	if len(hard) == 0 || len(models) == 0 {
 		return models
 	}
@@ -253,6 +254,27 @@ func AugmentModelsWithCapacityAdapter(models []string, requiredCaps map[string]b
 		}
 	}
 
+	pool := collectAdapterPool(models, hard, cfg)
+	if len(pool) == 0 {
+		return models
+	}
+
+	return append(pool, models...)
+}
+
+func filterHardCapabilities(requiredCaps map[string]bool) []string {
+	var hard []string
+
+	for _, k := range capabilityKeys {
+		if requiredCaps[k] && hardCaps[k] {
+			hard = append(hard, k)
+		}
+	}
+
+	return hard
+}
+
+func collectAdapterPool(models, hard []string, cfg CapacityAdapterConfig) []string {
 	origSet := make(map[string]bool, len(models))
 	for _, m := range models {
 		origSet[m] = true
@@ -266,11 +288,7 @@ func AugmentModelsWithCapacityAdapter(models []string, requiredCaps map[string]b
 		}
 	}
 
-	if len(pool) == 0 {
-		return models
-	}
-
-	return append(pool, models...)
+	return pool
 }
 
 // AdaptModelForCapabilities selects the best model for the requested capabilities given a configuration.
@@ -296,6 +314,10 @@ func AdaptModelForCapabilities(ctx context.Context, requestedModel string, requi
 		return requestedModel, nil
 	}
 
+	return selectAdaptedModel(requestedModel, reqMap, config)
+}
+
+func selectAdaptedModel(requestedModel string, reqMap map[string]bool, config CapacityAdapterConfig) (string, error) {
 	augmented := AugmentModelsWithCapacityAdapter([]string{requestedModel}, reqMap, config)
 	if len(augmented) > 0 && augmented[0] != requestedModel {
 		start := GetActiveAdapterStrategy(reqMap, config)

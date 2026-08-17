@@ -124,22 +124,35 @@ func TestFusion_NoJudgeReturnsFirstPanel(t *testing.T) {
 	rr := httptest.NewRecorder()
 	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"stream":false}`)
 	opts := Options{
-		Stream:     false,
-		JudgeModel: "",
-		SingleModel: func(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, stream bool) error {
+		Stream:         false,
+		JudgeModel:     "",
+		ClientHeaders:  nil,
+		SourceFormat:   "",
+		TargetFormat:   "",
+		TokenSaverJSON: "",
+		ComboName:      "",
+		StickyLimit:    0,
+		SingleModel: func(_ context.Context, w http.ResponseWriter, _ []byte, modelStr string, _ bool) error {
 			// Panel calls write into captureWriter; judge path would hit real w (httptest).
 			if _, ok := w.(*captureWriter); !ok {
 				judgeCalls.Add(1)
 			}
-			resp, _ := json.Marshal(map[string]any{
+
+			resp, err := json.Marshal(map[string]any{
 				"choices": []any{map[string]any{
 					"message": map[string]any{"role": "assistant", "content": "answer-from-" + modelStr},
 				}},
 			})
+			if err != nil {
+				return err
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(resp)
-			return nil
+
+			_, err = w.Write(resp)
+
+			return err
 		},
 	}
 
@@ -171,22 +184,34 @@ func TestFusion_WithJudgeCallsJudge(t *testing.T) {
 	rr := httptest.NewRecorder()
 	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"stream":false}`)
 	opts := Options{
-		Stream:     false,
-		JudgeModel: "p/judge",
-		SingleModel: func(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, stream bool) error {
+		Stream:         false,
+		JudgeModel:     "p/judge",
+		ClientHeaders:  nil,
+		SourceFormat:   "",
+		TargetFormat:   "",
+		TokenSaverJSON: "",
+		ComboName:      "",
+		StickyLimit:    0,
+		SingleModel: func(_ context.Context, w http.ResponseWriter, _ []byte, modelStr string, _ bool) error {
 			mu.Lock()
 			models = append(models, modelStr)
 			mu.Unlock()
 
-			resp, _ := json.Marshal(map[string]any{
+			resp, err := json.Marshal(map[string]any{
 				"choices": []any{map[string]any{
 					"message": map[string]any{"role": "assistant", "content": "text-" + modelStr},
 				}},
 			})
+			if err != nil {
+				return err
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(resp)
-			return nil
+
+			_, err = w.Write(resp)
+
+			return err
 		},
 	}
 
@@ -202,6 +227,7 @@ func TestFusion_WithJudgeCallsJudge(t *testing.T) {
 			foundJudge = true
 		}
 	}
+
 	recordedModels := append([]string(nil), models...)
 	mu.Unlock()
 

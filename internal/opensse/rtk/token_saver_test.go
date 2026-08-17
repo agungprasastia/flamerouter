@@ -10,18 +10,18 @@ func TestInjectCavemanOpenAI(t *testing.T) {
 	}
 	InjectCaveman(body, "openai", CavemanFull)
 
-	msgs := body["messages"].([]any)
-	if len(msgs) < 2 {
+	msgs, ok := body["messages"].([]any)
+	if !ok || len(msgs) < 2 {
 		t.Fatalf("expected system inject, got %d msgs", len(msgs))
 	}
 
-	sys := msgs[0].(map[string]any)
-	if sys["role"] != "system" {
+	sys, ok := msgs[0].(map[string]any)
+	if !ok || sys["role"] != "system" {
 		t.Fatalf("role=%v", sys["role"])
 	}
 
-	content, _ := sys["content"].(string)
-	if content == "" || len(content) < 20 {
+	content, ok := sys["content"].(string)
+	if !ok || content == "" || len(content) < 20 {
 		t.Fatalf("empty system prompt")
 	}
 }
@@ -40,10 +40,22 @@ func TestApplyTokenSaversRTK(t *testing.T) {
 	opts := DefaultTokenSaver()
 	opts.RTK = true
 	out := ApplyTokenSavers(body, opts)
-	msgs := out["messages"].([]any)
-	msg := msgs[0].(map[string]any)
 
-	content, _ := msg["content"].(string)
+	msgs, ok := out["messages"].([]any)
+	if !ok || len(msgs) == 0 {
+		t.Fatalf("missing messages")
+	}
+
+	msg, ok := msgs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("invalid msg format")
+	}
+
+	content, ok := msg["content"].(string)
+	if !ok {
+		t.Fatalf("content not string")
+	}
+
 	if len(content) >= len(big) {
 		// may not compress if filter doesn't shrink enough — still ok fail-open
 		t.Logf("content len before=%d after=%d", len(big), len(content))

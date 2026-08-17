@@ -54,6 +54,33 @@ func Resolve(comboStrategy string, perCombo map[string]string, comboName string)
 	}
 }
 
+func loadComboOverride(st *store.Store, comboName string, strategy, judge string) (string, string) {
+	raw, err := st.GetSetting("comboStrategies")
+	if err != nil || raw == "" {
+		return strategy, judge
+	}
+
+	var m map[string]map[string]any
+	if json.Unmarshal([]byte(raw), &m) != nil {
+		return strategy, judge
+	}
+
+	entry, ok := m[comboName]
+	if !ok {
+		return strategy, judge
+	}
+
+	if fs, ok := entry["fallbackStrategy"].(string); ok && fs != "" {
+		strategy = fs
+	}
+
+	if j, ok := entry["judgeModel"].(string); ok {
+		judge = j
+	}
+
+	return strategy, judge
+}
+
 // LoadStrategySettings reads comboStrategy + comboStrategies from store settings.
 func LoadStrategySettings(st *store.Store, comboName string) (strategy string, sticky int, judge string) {
 	strategy = "fallback"
@@ -73,28 +100,7 @@ func LoadStrategySettings(st *store.Store, comboName string) (strategy string, s
 		}
 	}
 
-	raw, err := st.GetSetting("comboStrategies")
-	if err != nil || raw == "" {
-		return
-	}
-
-	var m map[string]map[string]any
-	if json.Unmarshal([]byte(raw), &m) != nil {
-		return
-	}
-
-	entry, ok := m[comboName]
-	if !ok {
-		return
-	}
-
-	if fs, ok := entry["fallbackStrategy"].(string); ok && fs != "" {
-		strategy = fs
-	}
-
-	if j, ok := entry["judgeModel"].(string); ok {
-		judge = j
-	}
+	strategy, judge = loadComboOverride(st, comboName, strategy, judge)
 
 	return
 }

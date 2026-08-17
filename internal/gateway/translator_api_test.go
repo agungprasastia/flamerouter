@@ -12,6 +12,11 @@ import (
 func TestTranslatorTranslateStep1AndConsole(t *testing.T) {
 	h, _ := testServer(t)
 
+	testTranslatorStep1(t, h)
+	testTranslatorConsoleLogs(t, h)
+}
+
+func testTranslatorStep1(t *testing.T, h http.Handler) {
 	body := bytes.NewBufferString(`{"step":1,"body":{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/translator/translate", body)
 	rr := httptest.NewRecorder()
@@ -22,32 +27,39 @@ func TestTranslatorTranslateStep1AndConsole(t *testing.T) {
 	}
 
 	var out map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
 
 	if out["success"] != true {
 		t.Fatalf("success: %+v", out)
 	}
 
-	res, _ := out["result"].(map[string]any)
-	if res["provider"] != "openai" || res["sourceFormat"] != "openai" {
+	res, ok := out["result"].(map[string]any)
+	if !ok || res["provider"] != "openai" || res["sourceFormat"] != "openai" {
 		t.Fatalf("result: %+v", res)
 	}
+}
 
+func testTranslatorConsoleLogs(t *testing.T, h http.Handler) {
 	ops.DefaultConsole.Clear()
 	ops.DefaultConsole.Append("line-1")
 
-	req = httptest.NewRequest(http.MethodGet, "/api/translator/console-logs", nil)
-	rr = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/translator/console-logs", nil)
+	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("console get %d", rr.Code)
 	}
 
-	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
 
-	logs, _ := out["logs"].([]any)
-	if len(logs) != 1 || logs[0] != "line-1" {
+	logs, ok := out["logs"].([]any)
+	if !ok || len(logs) != 1 || logs[0] != "line-1" {
 		t.Fatalf("logs: %+v", out)
 	}
 

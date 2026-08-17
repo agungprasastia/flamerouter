@@ -12,29 +12,14 @@ import (
 
 func TestEngineCachingAndDeduplication(t *testing.T) {
 	callCount := 0
-	dummyResolver := &testDummyResolver{
-		ttl: 5 * time.Minute,
-		fn: func(ctx context.Context, conn *store.Connection) ([]DynamicModel, error) {
-			callCount++
-			return []DynamicModel{
-				{ID: "test-model-1", Name: "Test Model 1"},
-				{ID: "test-model-2", Name: "Test Model 2"},
-			}, nil
-		},
-	}
+	dummyResolver := createDummyResolver(&callCount)
 
 	engine := NewEngine()
 	engine.Register("dummy", dummyResolver)
 
-	conn := &store.Connection{
-		ID:          "conn-1",
-		Provider:    "dummy",
-		AccessToken: "dummy-token-123",
-	}
-
+	conn := createTestConn("conn-1", "dummy", "dummy-token-123")
 	ctx := context.Background()
 
-	// 1. Initial resolution
 	models1, err := engine.ResolveModels(ctx, conn)
 	if err != nil {
 		t.Fatalf("first resolve failed: %v", err)
@@ -44,14 +29,79 @@ func TestEngineCachingAndDeduplication(t *testing.T) {
 		t.Fatalf("expected 2 models and 1 fetch call, got %d models, %d calls", len(models1), callCount)
 	}
 
+	verifyEngineCacheAndInvalidation(t, engine, conn, &callCount)
+}
+
+func createDummyResolver(callCount *int) *testDummyResolver {
+	return &testDummyResolver{
+		ttl: 5 * time.Minute,
+		fn: func(_ context.Context, _ *store.Connection) ([]DynamicModel, error) {
+			*callCount++
+			return []DynamicModel{
+				{
+					ID:              "test-model-1",
+					Name:            "Test Model 1",
+					ContextLength:   0,
+					MaxOutputTokens: 0,
+					IsReasoning:     false,
+					IsVL:            false,
+					Capabilities:    nil,
+					RawConfig:       nil,
+					UpstreamModelID: "",
+					Description:     "",
+					RateMultiplier:  0,
+				},
+				{
+					ID:              "test-model-2",
+					Name:            "Test Model 2",
+					ContextLength:   0,
+					MaxOutputTokens: 0,
+					IsReasoning:     false,
+					IsVL:            false,
+					Capabilities:    nil,
+					RawConfig:       nil,
+					UpstreamModelID: "",
+					Description:     "",
+					RateMultiplier:  0,
+				},
+			}, nil
+		},
+	}
+}
+
+func createTestConn(id, provider, token string) *store.Connection {
+	return &store.Connection{
+		ID:                   id,
+		Provider:             provider,
+		AccessToken:          token,
+		ProviderSpecificData: nil,
+		RateLimitedUntil:     "",
+		LastError:            "",
+		Name:                 id,
+		LastUsedAt:           "",
+		BaseURL:              "",
+		APIKey:               "",
+		AuthType:             "bearer",
+		TestStatus:           "ok",
+		ExpiresAt:            "",
+		RefreshToken:         "",
+		ConsecutiveUseCount:  0,
+		Priority:             0,
+		IsActive:             true,
+	}
+}
+
+func verifyEngineCacheAndInvalidation(t *testing.T, engine *Engine, conn *store.Connection, callCount *int) {
+	ctx := context.Background()
+
 	// 2. Cached resolution (should not increment callCount)
 	models2, err := engine.ResolveModels(ctx, conn)
 	if err != nil {
 		t.Fatalf("cached resolve failed: %v", err)
 	}
 
-	if len(models2) != 2 || callCount != 1 {
-		t.Fatalf("expected 2 models from cache without new fetch call, got %d calls", callCount)
+	if len(models2) != 2 || *callCount != 1 {
+		t.Fatalf("expected 2 models from cache without new fetch call, got %d calls", *callCount)
 	}
 
 	// 3. Invalidation
@@ -62,8 +112,8 @@ func TestEngineCachingAndDeduplication(t *testing.T) {
 		t.Fatalf("post-invalidation resolve failed: %v", err)
 	}
 
-	if len(models3) != 2 || callCount != 2 {
-		t.Fatalf("expected 2 models and 2 fetch calls after invalidation, got %d calls", callCount)
+	if len(models3) != 2 || *callCount != 2 {
+		t.Fatalf("expected 2 models and 2 fetch calls after invalidation, got %d calls", *callCount)
 	}
 }
 
@@ -76,7 +126,8 @@ func TestCopilotResolver(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		//nolint:errcheck // test mock response
+		_, _ = fmt.Fprint(w, `{
 			"data": [
 				{"id":"gpt-4o","name":"GPT-4o","capabilities":{"type":"chat"},"policy":{"state":"enabled"}},
 				{"id":"text-embedding-3-small","name":"Text Embed","capabilities":{"type":"embedding"},"policy":{"state":"enabled"}},
@@ -88,23 +139,13 @@ func TestCopilotResolver(t *testing.T) {
 	defer server.Close()
 
 	resolver := &CopilotResolver{
-		Client: server.Client(),
+		Client:         server.Client(),
+		RefreshManager: nil,
 	}
 
-	// Override URL with test server client custom transport
-	oldTransport := server.Client().Transport
-	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = server.Listener.Addr().String()
+	mockTransport(server)
 
-		return oldTransport.RoundTrip(req)
-	})
-
-	conn := &store.Connection{
-		ID:          "gh-conn",
-		Provider:    "github",
-		AccessToken: "valid-copilot-token",
-	}
+	conn := createTestConn("gh-conn", "github", "valid-copilot-token")
 
 	res, err := resolver.Resolve(context.Background(), conn)
 	if err != nil {
@@ -120,10 +161,21 @@ func TestCopilotResolver(t *testing.T) {
 	}
 }
 
+func mockTransport(server *httptest.Server) {
+	oldTransport := server.Client().Transport
+	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = server.Listener.Addr().String()
+
+		return oldTransport.RoundTrip(req)
+	})
+}
+
 func TestKiroResolver(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		//nolint:errcheck // test mock response
+		_, _ = fmt.Fprint(w, `{
 			"models": [
 				{
 					"modelId": "claude-opus-4.8",
@@ -145,27 +197,23 @@ func TestKiroResolver(t *testing.T) {
 	defer server.Close()
 
 	resolver := &KiroResolver{
-		Client: server.Client(),
+		Client:         server.Client(),
+		RefreshManager: nil,
 	}
 
-	oldTransport := server.Client().Transport
-	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = server.Listener.Addr().String()
+	mockTransport(server)
 
-		return oldTransport.RoundTrip(req)
-	})
-
-	conn := &store.Connection{
-		ID:          "kiro-conn",
-		Provider:    "kiro",
-		AccessToken: "kiro-token",
-	}
+	conn := createTestConn("kiro-conn", "kiro", "kiro-token")
 
 	res, err := resolver.Resolve(context.Background(), conn)
 	if err != nil {
 		t.Fatalf("kiro resolve failed: %v", err)
 	}
+
+	verifyKiroModels(t, res)
+}
+
+func verifyKiroModels(t *testing.T, res []DynamicModel) {
 	// claude-opus-4.8 produces 4 variants (base, -thinking, -agentic, -thinking-agentic)
 	// auto produces 2 variants (base, -thinking)
 	if len(res) != 6 {
@@ -186,9 +234,10 @@ func TestKiroResolver(t *testing.T) {
 }
 
 func TestGrokCliResolver(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		//nolint:errcheck // test mock response
+		_, _ = fmt.Fprint(w, `{
 			"data": [
 				{"id":"grok-build","display_name":"Grok Build","context_length":500000,"max_output_tokens":64000},
 				{"id":"grok-4.5","display_name":"Grok 4.5","context_length":131072,"max_output_tokens":16384}
@@ -198,22 +247,13 @@ func TestGrokCliResolver(t *testing.T) {
 	defer server.Close()
 
 	resolver := &GrokCliResolver{
-		Client: server.Client(),
+		Client:         server.Client(),
+		RefreshManager: nil,
 	}
 
-	oldTransport := server.Client().Transport
-	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = server.Listener.Addr().String()
+	mockTransport(server)
 
-		return oldTransport.RoundTrip(req)
-	})
-
-	conn := &store.Connection{
-		ID:          "gcli-conn",
-		Provider:    "grok-cli",
-		AccessToken: "grok-token",
-	}
+	conn := createTestConn("gcli-conn", "grok-cli", "grok-token")
 
 	res, err := resolver.Resolve(context.Background(), conn)
 	if err != nil {
@@ -230,9 +270,10 @@ func TestGrokCliResolver(t *testing.T) {
 }
 
 func TestKimchiResolver(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		//nolint:errcheck // test mock response
+		_, _ = fmt.Fprint(w, `{
 			"models": [
 				{
 					"slug": "kimi-k2.7",
@@ -259,12 +300,8 @@ func TestKimchiResolver(t *testing.T) {
 		Client: server.Client(),
 	}
 
-	conn := &store.Connection{
-		ID:          "kimchi-conn",
-		Provider:    "kimchi",
-		AccessToken: "kimchi-token",
-		BaseURL:     server.URL,
-	}
+	conn := createTestConn("kimchi-conn", "kimchi", "kimchi-token")
+	conn.BaseURL = server.URL
 
 	res, err := resolver.Resolve(context.Background(), conn)
 	if err != nil {
@@ -281,9 +318,10 @@ func TestKimchiResolver(t *testing.T) {
 }
 
 func TestClinePassResolver(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		//nolint:errcheck // test mock response
+		_, _ = fmt.Fprint(w, `{
 			"data": [
 				{"id":"cline-pass/glm-5.2","name":"GLM 5.2 (ClinePass)"},
 				{"id":"cline-pass/kimi-k2.7-code","name":"Kimi K2.7 Code (ClinePass)"},
@@ -297,19 +335,10 @@ func TestClinePassResolver(t *testing.T) {
 		Client: server.Client(),
 	}
 
-	oldTransport := server.Client().Transport
-	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = server.Listener.Addr().String()
+	mockTransport(server)
 
-		return oldTransport.RoundTrip(req)
-	})
-
-	conn := &store.Connection{
-		ID:       "clinepass-conn",
-		Provider: "clinepass",
-		APIKey:   "cp-test-key",
-	}
+	conn := createTestConn("clinepass-conn", "clinepass", "")
+	conn.APIKey = "cp-test-key"
 
 	res, err := resolver.Resolve(context.Background(), conn)
 	if err != nil {
@@ -326,9 +355,10 @@ func TestClinePassResolver(t *testing.T) {
 }
 
 func TestQoderResolver(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		//nolint:errcheck // test mock response
+		_, _ = fmt.Fprint(w, `{
 			"chat": [
 				{
 					"key": "qmodel",
@@ -356,21 +386,11 @@ func TestQoderResolver(t *testing.T) {
 		Client: server.Client(),
 	}
 
-	oldTransport := server.Client().Transport
-	server.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = server.Listener.Addr().String()
+	mockTransport(server)
 
-		return oldTransport.RoundTrip(req)
-	})
-
-	conn := &store.Connection{
-		ID:          "qoder-conn",
-		Provider:    "qoder",
-		AccessToken: "dt-test-token",
-		ProviderSpecificData: map[string]any{
-			"userId": "user-123",
-		},
+	conn := createTestConn("qoder-conn", "qoder", "dt-test-token")
+	conn.ProviderSpecificData = map[string]any{
+		"userId": "user-123",
 	}
 
 	res, err := resolver.Resolve(context.Background(), conn)

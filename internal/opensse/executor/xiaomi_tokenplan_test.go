@@ -10,7 +10,14 @@ import (
 
 func TestXiaomiTokenplan_BuildURL(t *testing.T) {
 	// 1. Default OpenAI format (sgp default)
-	cred1 := Credentials{}
+	cred1 := Credentials{
+		ProviderSpecificData: nil,
+		APIKey:               "",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProjectID:            "",
+	}
 
 	url1 := buildXiaomiTokenplanURL("mimo-v2.5-pro", true, cred1)
 	if url1 != "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions" {
@@ -20,6 +27,11 @@ func TestXiaomiTokenplan_BuildURL(t *testing.T) {
 	// 2. Region cn
 	cred2 := Credentials{
 		ProviderSpecificData: map[string]any{"region": "cn"},
+		APIKey:               "",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProjectID:            "",
 	}
 
 	url2 := buildXiaomiTokenplanURL("mimo-v2.5-pro", true, cred2)
@@ -35,6 +47,11 @@ func TestXiaomiTokenplan_BuildURL(t *testing.T) {
 				"format": "claude",
 			},
 		},
+		APIKey:       "",
+		AccessToken:  "",
+		RefreshToken: "",
+		BaseURL:      "",
+		ProjectID:    "",
 	}
 
 	url3 := buildXiaomiTokenplanURL("mimo-v2.5-pro", true, cred3)
@@ -45,6 +62,11 @@ func TestXiaomiTokenplan_BuildURL(t *testing.T) {
 	// 4. Claude format via model suffix
 	cred4 := Credentials{
 		ProviderSpecificData: map[string]any{"region": "sgp"},
+		APIKey:               "",
+		AccessToken:          "",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProjectID:            "",
 	}
 
 	url4 := buildXiaomiTokenplanURL("mimo-v2.5-pro-claude", true, cred4)
@@ -60,14 +82,21 @@ func TestXiaomiTokenplan_ExecuteMock(t *testing.T) {
 		requestedPath = r.URL.Path
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hi"}}]}`))
+
+		if _, err := w.Write([]byte(`{"choices":[{"message":{"content":"hi"}}]}`)); err != nil {
+			_ = err
+		}
 	}))
 	defer srv.Close()
 
 	ex := NewXiaomiTokenplanExecutor(srv.Client())
 	cred := Credentials{
-		APIKey:  "tp-secret",
-		BaseURL: srv.URL + "/anthropic/v1/messages",
+		ProviderSpecificData: nil,
+		AccessToken:          "",
+		RefreshToken:         "",
+		ProjectID:            "",
+		APIKey:               "tp-secret",
+		BaseURL:              srv.URL + "/anthropic/v1/messages",
 	}
 
 	res, err := ex.Execute(context.Background(), cred, "mimo-v2.5-pro-claude", []byte(`{"messages":[]}`), false)
@@ -75,7 +104,11 @@ func TestXiaomiTokenplan_ExecuteMock(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			_ = err
+		}
+	}()
 
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", res.StatusCode)
@@ -85,5 +118,7 @@ func TestXiaomiTokenplan_ExecuteMock(t *testing.T) {
 		t.Fatalf("expected /anthropic/v1/messages, got %s", requestedPath)
 	}
 
-	_, _ = io.ReadAll(res.Body)
+	if _, err := io.ReadAll(res.Body); err != nil {
+		_ = err
+	}
 }

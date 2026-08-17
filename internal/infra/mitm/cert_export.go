@@ -1,3 +1,4 @@
+// Package mitm provides local HTTPS MITM proxy and certificate generation for developer tools.
 package mitm
 
 import (
@@ -11,7 +12,11 @@ func (s *Server) RootCAPEM() []byte {
 		return nil
 	}
 
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.rootCA.Raw})
+	return pem.EncodeToMemory(&pem.Block{
+		Type:    "CERTIFICATE",
+		Headers: nil,
+		Bytes:   s.rootCA.Raw,
+	})
 }
 
 // RootCA returns the root certificate (may be nil).

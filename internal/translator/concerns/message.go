@@ -1,50 +1,82 @@
 package concerns
 
+// CollapseTextParts collapses text parts into a single string when possible.
 func CollapseTextParts(content any) any {
 	parts, ok := content.([]any)
 	if !ok {
 		return content
 	}
 
-	if len(parts) == 1 {
-		if block, ok := parts[0].(map[string]any); ok {
-			if t, ok := block["type"].(string); ok && t == "text" {
-				if text, ok := block["text"].(string); ok {
-					return text
-				}
-			}
-		}
+	if singleText, ok := extractSingleTextPart(parts); ok {
+		return singleText
 	}
 
-	var texts []string
-
-	for _, part := range parts {
-		if block, ok := part.(map[string]any); ok {
-			if t, ok := block["type"].(string); ok && t == "text" {
-				if text, ok := block["text"].(string); ok {
-					texts = append(texts, text)
-				}
-			}
-		}
-	}
-
-	if len(texts) == len(parts) && len(texts) > 0 {
-		result := ""
-
-		for i, t := range texts {
-			if i > 0 {
-				result += "\n"
-			}
-
-			result += t
-		}
-
-		return result
-	}
-
-	return content
+	return collapseAllTextParts(parts, content)
 }
 
+func extractSingleTextPart(parts []any) (string, bool) {
+	if len(parts) != 1 {
+		return "", false
+	}
+
+	block, ok := parts[0].(map[string]any)
+	if !ok {
+		return "", false
+	}
+
+	t, ok := block["type"].(string)
+	if !ok || t != "text" {
+		return "", false
+	}
+
+	text, ok := block["text"].(string)
+	if !ok {
+		return "", false
+	}
+
+	return text, true
+}
+
+func collapseAllTextParts(parts []any, fallback any) any {
+	texts := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		block, ok := part.(map[string]any)
+		if !ok {
+			return fallback
+		}
+
+		t, ok := block["type"].(string)
+		if !ok || t != "text" {
+			return fallback
+		}
+
+		text, ok := block["text"].(string)
+		if !ok {
+			return fallback
+		}
+
+		texts = append(texts, text)
+	}
+
+	if len(texts) == 0 {
+		return fallback
+	}
+
+	result := ""
+
+	for i, t := range texts {
+		if i > 0 {
+			result += "\n"
+		}
+
+		result += t
+	}
+
+	return result
+}
+
+// DedupeToolUseBlocks removes duplicate tool_use blocks with identical ids within messages.
 func DedupeToolUseBlocks(messages []any) []any {
 	for i, msgRaw := range messages {
 		msg, ok := msgRaw.(map[string]any)
@@ -62,34 +94,37 @@ func DedupeToolUseBlocks(messages []any) []any {
 			continue
 		}
 
-		seen := make(map[string]bool)
-
-		deduped := make([]any, 0, len(blocks))
-
-		for _, block := range blocks {
-			b, ok := block.(map[string]any)
-			if !ok {
-				deduped = append(deduped, block)
-				continue
-			}
-
-			btype, _ := b["type"].(string)
-			if btype == "tool_use" {
-				id, _ := b["id"].(string)
-				if id != "" {
-					if seen[id] {
-						continue
-					}
-
-					seen[id] = true
-				}
-			}
-
-			deduped = append(deduped, block)
-		}
-
-		messages[i].(map[string]any)["content"] = deduped
+		msg["content"] = dedupeBlocks(blocks)
+		messages[i] = msg
 	}
 
 	return messages
+}
+
+func dedupeBlocks(blocks []any) []any {
+	seen := make(map[string]bool)
+	deduped := make([]any, 0, len(blocks))
+
+	for _, block := range blocks {
+		b, ok := block.(map[string]any)
+		if !ok {
+			deduped = append(deduped, block)
+			continue
+		}
+
+		btype, ok := b["type"].(string)
+		if ok && btype == "tool_use" {
+			if id, ok := b["id"].(string); ok && id != "" {
+				if seen[id] {
+					continue
+				}
+
+				seen[id] = true
+			}
+		}
+
+		deduped = append(deduped, block)
+	}
+
+	return deduped
 }

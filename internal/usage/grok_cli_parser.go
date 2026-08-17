@@ -11,6 +11,7 @@ import (
 	"strings"
 )
 
+/* #nosec G101 */
 const (
 	grokCreditsURL = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig"
 
@@ -41,20 +42,7 @@ func setGrokHeaders(h http.Header, token string, psd map[string]any) {
 	}
 }
 
-func parseGrokCliBilling(billing, user map[string]any) *QuotaResult {
-	root := billing
-	cfg := root
-
-	if c, ok := root["config"].(map[string]any); ok && c != nil {
-		cfg = c
-	}
-
-	periodEnd := getGrokPeriodEnd(cfg, root)
-	tier := getGrokSubscriptionTier(user, cfg)
-	subAccess := tier != "" && !strings.EqualFold(tier, "free") && !strings.EqualFold(tier, "none") && !strings.EqualFold(tier, "null")
-
-	quotas := make(map[string]QuotaItem)
-
+func addMonthlyQuota(quotas map[string]QuotaItem, cfg, root map[string]any, periodEnd *string) {
 	monthLimit := toFiniteFloat(getVal(cfg, root, "monthlyLimit", "monthly_limit"), math.NaN())
 	incUsed := toFiniteFloat(getVal(cfg, root, "includedUsed", "included_used"), math.NaN())
 	totUsed := toFiniteFloat(getVal(cfg, root, "totalUsed", "total_used"), math.NaN())
@@ -69,7 +57,9 @@ func parseGrokCliBilling(billing, user map[string]any) *QuotaResult {
 
 		quotas["Monthly included"] = makeQuota(u, monthLimit, periodEnd, false)
 	}
+}
 
+func addOnDemandQuota(quotas map[string]QuotaItem, cfg, root map[string]any, periodEnd *string, subAccess bool) {
 	onDemandCap := toFiniteFloat(getVal(cfg, root, "onDemandCap", "on_demand_cap"), math.NaN())
 	onDemandUsed := toFiniteFloat(getVal(cfg, root, "onDemandUsed", "on_demand_used"), math.NaN())
 
@@ -82,21 +72,31 @@ func parseGrokCliBilling(billing, user map[string]any) *QuotaResult {
 		quotas["On-demand"] = makeQuota(u, onDemandCap, periodEnd, false)
 	} else if !subAccess && !math.IsNaN(onDemandCap) && onDemandCap == 0 && !math.IsNaN(onDemandUsed) {
 		quotas["On-demand"] = QuotaItem{
+			ResetAt:             periodEnd,
+			Recurring:           nil,
+			DisplayName:         "",
+			Unit:                "",
 			Used:                1,
 			Total:               1,
+			Remaining:           0,
 			RemainingPercentage: 0,
-			ResetAt:             periodEnd,
 			Unlimited:           false,
 		}
 	}
+}
 
+func addPrepaidAndCredits(quotas map[string]QuotaItem, cfg, root map[string]any, periodEnd *string) {
 	prepaid := toFiniteFloat(getVal(cfg, root, "prepaidBalance", "prepaid_balance"), math.NaN())
 	if !math.IsNaN(prepaid) && prepaid > 0 {
 		quotas["Prepaid"] = QuotaItem{
+			ResetAt:             nil,
+			Recurring:           nil,
+			DisplayName:         "",
+			Unit:                "",
 			Used:                0,
 			Total:               prepaid,
+			Remaining:           prepaid,
 			RemainingPercentage: 100,
-			ResetAt:             nil,
 			Unlimited:           false,
 		}
 	}
@@ -106,42 +106,69 @@ func parseGrokCliBilling(billing, user map[string]any) *QuotaResult {
 		u := math.Max(0, math.Min(100, creditUsagePct))
 		quotas["Weekly SuperGrok"] = makeQuota(u, 100, periodEnd, false)
 	}
+}
+
+func parseGrokCliBilling(billing, user map[string]any) *QuotaResult {
+	root := billing
+	cfg := root
+
+	if c, ok := root["config"].(map[string]any); ok && c != nil {
+		cfg = c
+	}
+
+	periodEnd := getGrokPeriodEnd(cfg, root)
+	tier := getGrokSubscriptionTier(user, cfg)
+	subAccess := tier != "" && !strings.EqualFold(tier, "free") && !strings.EqualFold(tier, "none") && !strings.EqualFold(tier, "null")
+
+	quotas := make(map[string]QuotaItem)
+	addMonthlyQuota(quotas, cfg, root, periodEnd)
+	addOnDemandQuota(quotas, cfg, root, periodEnd, subAccess)
+	addPrepaidAndCredits(quotas, cfg, root, periodEnd)
 
 	plan := resolveGrokPlan(user, cfg)
 
 	return &QuotaResult{
-		Provider: "grok-cli",
-		Plan:     plan,
-		Quotas:   quotas,
-		ResetsAt: periodEnd,
+		Provider:           "grok-cli",
+		Plan:               plan,
+		Limit:              0,
+		Used:               0,
+		Remaining:          0,
+		TotalUsagePct:      0,
+		LimitReached:       nil,
+		ReviewLimitReached: nil,
+		IsQuotaExceeded:    nil,
+		ResetCredits:       nil,
+		ResetsAt:           periodEnd,
+		Message:            "",
+		Quotas:             quotas,
 		Details: map[string]any{
 			"subscriptionAccess": subAccess,
 		},
 	}
 }
 
-func getVal(cfg, root map[string]any, camel, snake string) any {
-	if cfg != nil {
-		if v, ok := cfg[camel]; ok && v != nil {
-			return v
-		}
-
-		if v, ok := cfg[snake]; ok && v != nil {
-			return v
-		}
+func getMapVal(m map[string]any, camel, snake string) any {
+	if m == nil {
+		return nil
 	}
 
-	if root != nil {
-		if v, ok := root[camel]; ok && v != nil {
-			return v
-		}
+	if v, ok := m[camel]; ok && v != nil {
+		return v
+	}
 
-		if v, ok := root[snake]; ok && v != nil {
-			return v
-		}
+	if v, ok := m[snake]; ok && v != nil {
+		return v
 	}
 
 	return nil
+}
+
+func getVal(cfg, root map[string]any, camel, snake string) any {
+	if v := getMapVal(cfg, camel, snake); v != nil {
+		return v
+	}
+
+	return getMapVal(root, camel, snake)
 }
 
 func getGrokPeriodEnd(cfg, root map[string]any) *string {
@@ -215,6 +242,16 @@ func resolveGrokPlan(user, cfg map[string]any) string {
 	return "Grok Build"
 }
 
+var grokTierNames = map[int]string{
+	0: "Free",
+	1: "SuperGrok",
+	2: "X Basic",
+	3: "X Premium",
+	4: "X Premium Plus",
+	5: "SuperGrok Heavy",
+	6: "SuperGrok Lite",
+}
+
 func planFromGrokAccessToken(token string) string {
 	parts := strings.Split(token, ".")
 	if len(parts) < 2 {
@@ -234,24 +271,7 @@ func planFromGrokAccessToken(token string) string {
 		return ""
 	}
 
-	switch data.Tier {
-	case 0:
-		return "Free"
-	case 1:
-		return "SuperGrok"
-	case 2:
-		return "X Basic"
-	case 3:
-		return "X Premium"
-	case 4:
-		return "X Premium Plus"
-	case 5:
-		return "SuperGrok Heavy"
-	case 6:
-		return "SuperGrok Lite"
-	default:
-		return ""
-	}
+	return grokTierNames[data.Tier]
 }
 
 func fetchGrokGrpcCredits(ctx context.Context, opts FetchOptions) (float64, *string, bool) {
@@ -270,7 +290,11 @@ func fetchGrokGrpcCredits(ctx context.Context, opts FetchOptions) (float64, *str
 		return 0, nil, false
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		if closeErr := res.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return 0, nil, false

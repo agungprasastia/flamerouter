@@ -19,7 +19,9 @@ func init() {
 	RegisterSpecialized("iflow", &IFlowExecutor{
 		Base: Base{
 			Provider: "iflow",
+			Client:   nil,
 			BaseURL:  "https://apis.iflow.cn/v1/chat/completions",
+			BaseURLs: nil,
 			Headers:  map[string]string{"User-Agent": "iFlow-Cli"},
 		},
 	})
@@ -90,6 +92,7 @@ func (e *IFlowExecutor) transform(body map[string]any, stream bool) map[string]a
 	return body
 }
 
+// Execute executes IFlow chat completions with signature authentication.
 func (e *IFlowExecutor) Execute(ctx context.Context, cred Credentials, model string, body []byte, stream bool) (*Result, error) {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {

@@ -13,70 +13,68 @@ func init() {
 	translator.Register(translator.FormatOllama, translator.FormatOpenAI, nil, ollamaToOpenAIResponse)
 }
 
-func ollamaToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) []map[string]any {
-	if chunk == nil {
-		return nil
+func initOllamaState(chunk map[string]any, state *concerns.ResponseState) {
+	if state.ResponseCreated {
+		return
 	}
 
-	if !state.ResponseCreated {
-		state.ResponseCreated = true
-		state.ResponseId = "chatcmpl-" + strconv.FormatInt(time.Now().UnixMilli(), 10)
-		state.Created = time.Now().Unix()
-		state.Model, _ = chunk["model"].(string)
+	state.ResponseCreated = true
+	state.ResponseID = "chatcmpl-" + strconv.FormatInt(time.Now().UnixMilli(), 10)
+	state.Created = time.Now().Unix()
 
-		if state.Model == "" {
-			state.Model = "ollama"
-		}
+	if m, ok := chunk["model"].(string); ok {
+		state.Model = m
 	}
 
-	meta := map[string]any{
-		"id":      state.ResponseId,
-		"created": state.Created,
-		"model":   state.Model,
+	if state.Model == "" {
+		state.Model = "ollama"
+	}
+}
+
+func handleOllamaDone(chunk map[string]any, meta map[string]any, state *concerns.ResponseState) []map[string]any {
+	usage := parseOllamaUsage(chunk)
+
+	finishReason := "stop"
+	if doneReason, ok := chunk["done_reason"].(string); ok {
+		finishReason = concerns.ToOpenAIFinish(doneReason, "ollama")
 	}
 
-	if done, ok := chunk["done"].(bool); ok && done {
-		usage := parseOllamaUsage(chunk)
-
-		finishReason := "stop"
-		if doneReason, ok := chunk["done_reason"].(string); ok {
-			finishReason = concerns.ToOpenAIFinish(doneReason, "ollama")
-		}
-
-		if state.HadToolCalls {
-			finishReason = "tool_calls"
-		}
-
-		result := buildOllamaChunk(meta, map[string]any{}, finishReason)
-		if usage != nil {
-			result["usage"] = usage
-		}
-
-		return []map[string]any{result}
+	if state.HadToolCalls {
+		finishReason = "tool_calls"
 	}
 
-	message, ok := chunk["message"].(map[string]any)
-	if !ok {
-		return nil
+	result := buildOllamaChunk(meta, map[string]any{}, finishReason)
+	if usage != nil {
+		result["usage"] = usage
 	}
 
-	content, _ := message["content"].(string)
-	thinking, _ := message["thinking"].(string)
-	toolCalls, _ := message["tool_calls"].([]any)
+	return []map[string]any{result}
+}
+
+func extractOllamaDelta(message map[string]any, state *concerns.ResponseState) map[string]any {
+	content := ""
+	if c, ok := message["content"].(string); ok {
+		content = c
+	}
+
+	thinking := ""
+	if t, ok := message["thinking"].(string); ok {
+		thinking = t
+	}
+
+	var toolCalls []any
+	if tc, ok := message["tool_calls"].([]any); ok {
+		toolCalls = tc
+	}
 
 	if content == "" && thinking == "" && len(toolCalls) == 0 {
 		return nil
 	}
 
-	if content != "" {
-		state.AccumulatedContent += content
-	}
+	state.AccumulatedContent += content
+	state.AccumulatedThinking += thinking
 
-	if thinking != "" {
-		state.AccumulatedThinking += thinking
-	}
-
-	delta := map[string]any{}
+	delta := make(map[string]any)
 	if content != "" {
 		delta["content"] = content
 	}
@@ -90,15 +88,45 @@ func ollamaToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState)
 		delta["tool_calls"] = convertOllamaToolCalls(toolCalls)
 	}
 
+	return delta
+}
+
+func ollamaToOpenAIResponse(chunk map[string]any, state *concerns.ResponseState) []map[string]any {
+	if chunk == nil {
+		return nil
+	}
+
+	initOllamaState(chunk, state)
+
+	meta := map[string]any{
+		"id":      state.ResponseID,
+		"created": state.Created,
+		"model":   state.Model,
+	}
+
+	if done, ok := chunk["done"].(bool); ok && done {
+		return handleOllamaDone(chunk, meta, state)
+	}
+
+	message, ok := chunk["message"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	delta := extractOllamaDelta(message, state)
+	if delta == nil {
+		return nil
+	}
+
 	return []map[string]any{buildOllamaChunk(meta, delta, nil)}
 }
 
-func buildOllamaChunk(meta, delta, finishReason any) map[string]any {
+func buildOllamaChunk(meta map[string]any, delta, finishReason any) map[string]any {
 	return map[string]any{
 		"object":  "chat.completion.chunk",
-		"created": meta.(map[string]any)["created"],
-		"id":      meta.(map[string]any)["id"],
-		"model":   meta.(map[string]any)["model"],
+		"created": meta["created"],
+		"id":      meta["id"],
+		"model":   meta["model"],
 		"choices": []any{map[string]any{
 			"index":         0,
 			"delta":         delta,
@@ -122,8 +150,58 @@ func parseOllamaUsage(chunk map[string]any) map[string]any {
 	}
 }
 
+func parseOllamaToolArgs(args any) string {
+	switch a := args.(type) {
+	case string:
+		return a
+	case map[string]any:
+		b, err := json.Marshal(a)
+		if err == nil {
+			return string(b)
+		}
+	}
+
+	return "{}"
+}
+
+func convertSingleOllamaToolCall(i int, tc map[string]any) map[string]any {
+	fn, ok := tc["function"].(map[string]any)
+	name := ""
+
+	var args any
+
+	if ok && fn != nil {
+		if n, nOk := fn["name"].(string); nOk {
+			name = n
+		}
+
+		args = fn["arguments"]
+	}
+
+	argsStr := parseOllamaToolArgs(args)
+
+	id := ""
+	if idVal, idOk := tc["id"].(string); idOk {
+		id = idVal
+	}
+
+	if id == "" {
+		id = "call_" + strconv.Itoa(i)
+	}
+
+	return map[string]any{
+		"index": i,
+		"id":    id,
+		"type":  schema.OpenaiBlockFunction,
+		"function": map[string]any{
+			"name":      name,
+			"arguments": argsStr,
+		},
+	}
+}
+
 func convertOllamaToolCalls(toolCalls []any) []any {
-	var result []any
+	result := make([]any, 0, len(toolCalls))
 
 	for i, tcRaw := range toolCalls {
 		tc, ok := tcRaw.(map[string]any)
@@ -131,43 +209,7 @@ func convertOllamaToolCalls(toolCalls []any) []any {
 			continue
 		}
 
-		fn, _ := tc["function"].(map[string]any)
-		name := ""
-
-		var args any
-
-		if fn != nil {
-			name, _ = fn["name"].(string)
-			args = fn["arguments"]
-		}
-
-		argsStr := "{}"
-		switch a := args.(type) {
-		case string:
-			argsStr = a
-		case map[string]any:
-			b, _ := json.Marshal(a)
-			argsStr = string(b)
-		}
-
-		id := ""
-		if idVal, ok := tc["id"].(string); ok {
-			id = idVal
-		}
-
-		if id == "" {
-			id = "call_" + strconv.Itoa(i)
-		}
-
-		result = append(result, map[string]any{
-			"index": i,
-			"id":    id,
-			"type":  schema.OpenaiBlockFunction,
-			"function": map[string]any{
-				"name":      name,
-				"arguments": argsStr,
-			},
-		})
+		result = append(result, convertSingleOllamaToolCall(i, tc))
 	}
 
 	return result

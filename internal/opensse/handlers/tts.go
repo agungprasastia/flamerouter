@@ -6,31 +6,35 @@ import (
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/store"
+	"fmt"
 	"io"
 	"net/http"
 )
 
-func TTS(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
+// TTS handles OpenAI text-to-speech requests.
+func TTS(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, _ executor.Executor, fb *fallback.Fallback) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
 		return err
 	}
 
-	input, _ := m["input"].(string)
+	input, _ := m["input"].(string) //nolint:errcheck // optional type assertion
 	if input == "" {
 		jsonError(w, http.StatusBadRequest, "missing required field: input")
 		return nil
 	}
 
-	modelStr, _ := m["model"].(string)
+	modelStr, _ := m["model"].(string) //nolint:errcheck // optional type assertion
 
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
 	if errMsg != "" || conn == nil {
 		if errMsg == "" {
 			errMsg = "connection not found"
 		}
+
 		jsonError(w, http.StatusBadRequest, errMsg)
+
 		return nil
 	}
 
@@ -43,7 +47,7 @@ func TTS(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Stor
 		m["voice"] = "alloy"
 	}
 
-	payload, _ := json.Marshal(m)
+	payload, _ := json.Marshal(m) //nolint:errcheck // safe internal map marshal
 
 	res, err := postOpenAIPath(ctx, cred, "/audio/speech", payload)
 	if err != nil {
@@ -51,13 +55,13 @@ func TTS(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Stor
 		return err
 	}
 
-	defer res.Body.Close()
-	respBody, _ := io.ReadAll(res.Body)
+	defer res.Body.Close()              //nolint:errcheck // best-effort body close
+	respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
 
 	if res.StatusCode >= 400 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(res.StatusCode)
-		_, _ = w.Write(respBody)
+		_, _ = w.Write(respBody) //nolint:errcheck // handler write
 
 		return nil
 	}
@@ -71,77 +75,72 @@ func TTS(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Stor
 
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(respBody)
+	_, _ = w.Write(respBody) //nolint:errcheck // handler write
 
 	return nil
 }
 
+// STT handles speech-to-text audio transcriptions.
 func STT(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
-	// Prefer multipart from request body when Content-Type is multipart —
-	// gateway may pass raw body; try JSON first then fail clearly.
+	_ = exec
+
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
-		// not JSON — treat as opaque; still need model
 		jsonError(w, http.StatusBadRequest, "STT requires multipart form (file + model) or JSON; use multipart via gateway")
 		return err
 	}
 
-	modelStr, _ := m["model"].(string)
+	modelStr, _ := m["model"].(string) //nolint:errcheck // optional type assertion
 
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
 	if errMsg != "" || conn == nil {
 		if errMsg == "" {
 			errMsg = "connection not found"
 		}
+
 		jsonError(w, http.StatusBadRequest, errMsg)
+
 		return nil
 	}
 
 	_ = providerID
 	cred := mediaCredentials(conn)
 
-	// If file is base64 in JSON (some clients)
-	fields := map[string]string{"model": modelName}
-	if lang, ok := m["language"].(string); ok && lang != "" {
-		fields["language"] = lang
-	}
+	fields := extractSTTFields(m, modelName)
+	fileData := extractSTTFileData(m)
 
-	if prompt, ok := m["prompt"].(string); ok && prompt != "" {
-		fields["prompt"] = prompt
-	}
-
-	if rf, ok := m["response_format"].(string); ok && rf != "" {
-		fields["response_format"] = rf
-	}
-
-	var fileData []byte
-
-	fileName := "audio.webm"
-
-	if b64, ok := m["file_base64"].(string); ok && b64 != "" {
-		// raw base64 without data: prefix
-		fileData = []byte(b64) // caller should send real bytes via multipart gateway path
-	}
-
-	// If no file, forward as JSON to transcriptions (some providers accept URL)
 	if fileData == nil {
-		ensureModelField(m, modelName)
-		payload, _ := json.Marshal(m)
-
-		res, err := postOpenAIPath(ctx, cred, "/audio/transcriptions", payload)
-		if err != nil {
-			jsonError(w, http.StatusBadGateway, err.Error())
-			return err
-		}
-
-		if res.StatusCode < 400 {
-			fb.ClearError(conn.ID)
-		}
-
-		return writeResult(w, res, true)
+		return forwardSTTJSON(ctx, w, cred, conn, modelName, m, fb)
 	}
 
-	res, err := postMultipart(ctx, cred, "/audio/transcriptions", fields, "file", fileName, fileData, "")
+	return forwardSTTMultipart(ctx, w, cred, conn, fields, fileData, fb)
+}
+
+func extractSTTFields(m map[string]any, modelName string) map[string]string {
+	fields := map[string]string{"model": modelName}
+
+	for _, k := range []string{"language", "prompt", "response_format"} {
+		if val, ok := m[k].(string); ok && val != "" {
+			fields[k] = val
+		}
+	}
+
+	return fields
+}
+
+func extractSTTFileData(m map[string]any) []byte {
+	if b64, ok := m["file_base64"].(string); ok && b64 != "" {
+		return []byte(b64)
+	}
+
+	return nil
+}
+
+func forwardSTTJSON(ctx context.Context, w http.ResponseWriter, cred executor.Credentials, conn *store.Connection, modelName string, m map[string]any, fb *fallback.Fallback) error {
+	ensureModelField(m, modelName)
+	payload, _ := json.Marshal(m) //nolint:errcheck // safe internal map marshal
+
+	res, err := postOpenAIPath(ctx, cred, "/audio/transcriptions", payload)
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return err
@@ -151,7 +150,21 @@ func STT(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Stor
 		fb.ClearError(conn.ID)
 	}
 
-	return writeResult(w, res, true)
+	return writeResult(w, res)
+}
+
+func forwardSTTMultipart(ctx context.Context, w http.ResponseWriter, cred executor.Credentials, conn *store.Connection, fields map[string]string, fileData []byte, fb *fallback.Fallback) error {
+	res, err := postMultipart(ctx, cred, "/audio/transcriptions", fields, "file", "audio.webm", fileData, "")
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return err
+	}
+
+	if res.StatusCode < 400 {
+		fb.ClearError(conn.ID)
+	}
+
+	return writeResult(w, res)
 }
 
 // STTMultipart handles real multipart HTTP request (gateway should call this when Content-Type is multipart).
@@ -168,35 +181,24 @@ func STTMultipart(ctx context.Context, w http.ResponseWriter, r *http.Request, s
 		if errMsg == "" {
 			errMsg = "connection not found"
 		}
+
 		jsonError(w, http.StatusBadRequest, errMsg)
+
 		return nil
 	}
 
 	_ = providerID
 	cred := mediaCredentials(conn)
 
-	file, hdr, err := r.FormFile("file")
+	fileName, fileData, err := extractMultipartFile(r)
 	if err != nil {
-		jsonError(w, http.StatusBadRequest, "missing file field")
+		jsonError(w, http.StatusBadRequest, err.Error())
 		return err
 	}
 
-	defer file.Close()
+	fields := extractMultipartFormFields(r, modelName)
 
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		return err
-	}
-
-	fields := map[string]string{"model": modelName}
-
-	for _, k := range []string{"language", "prompt", "response_format", "temperature"} {
-		if v := r.FormValue(k); v != "" {
-			fields[k] = v
-		}
-	}
-
-	res, err := postMultipart(ctx, cred, "/audio/transcriptions", fields, "file", hdr.Filename, fileData, hdr.Header.Get("Content-Type"))
+	res, err := postMultipart(ctx, cred, "/audio/transcriptions", fields, "file", fileName, fileData, r.Header.Get("Content-Type"))
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, err.Error())
 		return err
@@ -206,16 +208,45 @@ func STTMultipart(ctx context.Context, w http.ResponseWriter, r *http.Request, s
 		fb.ClearError(conn.ID)
 	}
 
-	return writeResult(w, res, true)
+	return writeResult(w, res)
 }
 
-func Voices(ctx context.Context, w http.ResponseWriter, st *store.Store) error {
+func extractMultipartFile(r *http.Request) (string, []byte, error) {
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		return "", nil, fmt.Errorf("missing file field")
+	}
+
+	defer file.Close() //nolint:errcheck // best-effort file close
+
+	fileData, err := io.ReadAll(file)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return hdr.Filename, fileData, nil
+}
+
+func extractMultipartFormFields(r *http.Request, modelName string) map[string]string {
+	fields := map[string]string{"model": modelName}
+
+	for _, k := range []string{"language", "prompt", "response_format", "temperature"} {
+		if v := r.FormValue(k); v != "" {
+			fields[k] = v
+		}
+	}
+
+	return fields
+}
+
+// Voices returns supported voice list.
+func Voices(_ context.Context, w http.ResponseWriter, _ *store.Store) error {
 	w.Header().Set("Content-Type", "application/json")
 	// Common OpenAI + common TTS voices list
-	_, _ = w.Write([]byte(`{"voices":[
+	_, err := w.Write([]byte(`{"voices":[
 		{"id":"alloy","name":"Alloy"},{"id":"echo","name":"Echo"},{"id":"fable","name":"Fable"},
 		{"id":"onyx","name":"Onyx"},{"id":"nova","name":"Nova"},{"id":"shimmer","name":"Shimmer"}
 	]}`))
 
-	return nil
+	return err
 }

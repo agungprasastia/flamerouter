@@ -1,3 +1,4 @@
+// Package clitools provides management and registry for supported CLI tools.
 package clitools
 
 import (
@@ -11,6 +12,7 @@ type Manager struct {
 	st *store.Store
 }
 
+// New creates a new CLI tools manager.
 func New(st *store.Store) *Manager {
 	return &Manager{st: st}
 }

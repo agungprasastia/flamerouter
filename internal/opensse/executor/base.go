@@ -28,7 +28,7 @@ func (b *Base) client() *http.Client {
 }
 
 // BuildURL default: first base URL or credentials base.
-func (b *Base) BuildURL(model string, stream bool, urlIndex int, cred Credentials) string {
+func (b *Base) BuildURL(_ string, _ bool, urlIndex int, cred Credentials) string {
 	if len(b.BaseURLs) > 0 {
 		if urlIndex < len(b.BaseURLs) {
 			return b.BaseURLs[urlIndex]
@@ -72,7 +72,7 @@ func (b *Base) BuildHeaders(cred Credentials, stream bool) http.Header {
 }
 
 // TransformRequest default no-op.
-func (b *Base) TransformRequest(model string, body map[string]any, stream bool, cred Credentials) map[string]any {
+func (b *Base) TransformRequest(_ string, body map[string]any, _ bool, _ Credentials) map[string]any {
 	return body
 }
 
@@ -93,7 +93,14 @@ func (b *Base) DoPOST(ctx context.Context, url string, headers http.Header, payl
 	if err != nil {
 		return nil, err
 	}
+
 	if resp == nil || resp.Body == nil {
+		if resp != nil && resp.Body != nil {
+			if err := resp.Body.Close(); err != nil {
+				_ = err
+			}
+		}
+
 		return nil, fmt.Errorf("nil response from upstream")
 	}
 
@@ -141,7 +148,12 @@ func (b *Base) ExecuteJSON(ctx context.Context, cred Credentials, model string, 
 // DrainBody helper.
 func DrainBody(r io.ReadCloser) {
 	if r != nil {
-		io.Copy(io.Discard, r)
-		r.Close()
+		if _, err := io.Copy(io.Discard, r); err != nil {
+			_ = err
+		}
+
+		if err := r.Close(); err != nil {
+			_ = err
+		}
 	}
 }

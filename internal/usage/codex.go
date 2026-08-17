@@ -15,34 +15,21 @@ func init() {
 	RegisterQuotaHandler("codex", fetchCodexUsage)
 }
 
-func fetchCodexUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error) {
-	if opts.AccessToken == "" {
-		return &QuotaResult{Plan: "unknown", Message: "No Codex access token available."}, nil
+func parseCodexPlan(data map[string]any) string {
+	if plan, ok := data["plan_type"].(string); ok && plan != "" {
+		return plan
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, codexUsageURL, nil)
-	if err != nil {
-		return nil, err
+	if summary, ok := data["summary"].(map[string]any); ok {
+		if plan, ok := summary["plan"].(string); ok && plan != "" {
+			return plan
+		}
 	}
 
-	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
-	req.Header.Set("Accept", "application/json")
+	return "unknown"
+}
 
-	res, err := doHTTP(opts.HTTPClient, req)
-	if err != nil {
-		return &QuotaResult{Message: fmt.Sprintf("Failed to fetch Codex usage: %v", err)}, nil
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return &QuotaResult{Message: fmt.Sprintf("Codex connected. Usage API temporarily unavailable (%d).", res.StatusCode)}, nil
-	}
-
-	var data map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
-		return &QuotaResult{Message: "Codex connected. Invalid response JSON."}, nil
-	}
-
+func parseCodexData(data map[string]any) *QuotaResult {
 	normalRL := extractCodexRateLimit(data)
 	reviewRL := extractCodexReviewRateLimit(data)
 
@@ -50,23 +37,16 @@ func fetchCodexUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	appendCodexQuotaWindows(quotas, "", normalRL)
 	appendCodexQuotaWindows(quotas, "review", reviewRL)
 
-	plan, _ := data["plan_type"].(string)
-	if plan == "" {
-		if summary, ok := data["summary"].(map[string]any); ok {
-			plan, _ = summary["plan"].(string)
-		}
-	}
-
-	if plan == "" {
-		plan = "unknown"
-	}
+	plan := parseCodexPlan(data)
 
 	var limReached *bool
+
 	if reached, ok := normalRL["limit_reached"].(bool); ok {
 		limReached = &reached
 	}
 
 	var revLimReached *bool
+
 	if reached, ok := reviewRL["limit_reached"].(bool); ok {
 		revLimReached = &reached
 	}
@@ -81,24 +61,102 @@ func fetchCodexUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, erro
 	return &QuotaResult{
 		Provider:           "codex",
 		Plan:               plan,
-		Quotas:             quotas,
+		Limit:              0,
+		Used:               0,
+		Remaining:          0,
+		TotalUsagePct:      0,
 		LimitReached:       limReached,
 		ReviewLimitReached: revLimReached,
+		IsQuotaExceeded:    nil,
 		ResetCredits:       resetCredits,
-	}, nil
+		ResetsAt:           nil,
+		Message:            "",
+		Details:            nil,
+		Quotas:             quotas,
+	}
+}
+
+func fetchCodexUsage(ctx context.Context, opts FetchOptions) (*QuotaResult, error) {
+	if opts.AccessToken == "" {
+		return &QuotaResult{
+			Provider:           "codex",
+			Plan:               "unknown",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            "No Codex access token available.",
+			Details:            nil,
+			Quotas:             nil,
+		}, nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, codexUsageURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
+	req.Header.Set("Accept", "application/json")
+
+	res, err := doHTTP(opts.HTTPClient, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch Codex usage: %w", err)
+	}
+
+	defer func() {
+		if closeErr := res.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
+
+	return handleCodexResponse(res)
+}
+
+func handleCodexResponse(res *http.Response) (*QuotaResult, error) {
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return &QuotaResult{
+			Provider:           "codex",
+			Plan:               "",
+			Limit:              0,
+			Used:               0,
+			Remaining:          0,
+			TotalUsagePct:      0,
+			LimitReached:       nil,
+			ReviewLimitReached: nil,
+			IsQuotaExceeded:    nil,
+			ResetCredits:       nil,
+			ResetsAt:           nil,
+			Message:            fmt.Sprintf("Codex connected. Usage API temporarily unavailable (%d).", res.StatusCode),
+			Details:            nil,
+			Quotas:             nil,
+		}, nil
+	}
+
+	var data map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("codex connected. Invalid response JSON: %w", err)
+	}
+
+	return parseCodexData(data), nil
 }
 
 func extractCodexRateLimit(data map[string]any) map[string]any {
-	if rl, ok := data["rate_limit"].(map[string]any); ok {
+	if rl, ok := data["rate_limit"].(map[string]any); ok && rl != nil {
 		return rl
 	}
 
-	if rl, ok := data["rate_limits"].(map[string]any); ok {
+	if rl, ok := data["rate_limits"].(map[string]any); ok && rl != nil {
 		return rl
 	}
 
-	if byID, ok := data["rate_limits_by_limit_id"].(map[string]any); ok {
-		if c, ok := byID["codex"].(map[string]any); ok {
+	if byID, ok := data["rate_limits_by_limit_id"].(map[string]any); ok && byID != nil {
+		if c, ok := byID["codex"].(map[string]any); ok && c != nil {
 			return c
 		}
 	}
@@ -107,29 +165,47 @@ func extractCodexRateLimit(data map[string]any) map[string]any {
 }
 
 func extractCodexReviewRateLimit(data map[string]any) map[string]any {
-	if rl, ok := data["code_review_rate_limit"].(map[string]any); ok {
+	if rl, ok := data["code_review_rate_limit"].(map[string]any); ok && rl != nil {
 		return rl
 	}
 
-	if rl, ok := data["review_rate_limit"].(map[string]any); ok {
+	if rl, ok := data["review_rate_limit"].(map[string]any); ok && rl != nil {
 		return rl
 	}
 
-	if byID, ok := data["rate_limits_by_limit_id"].(map[string]any); ok {
-		for _, k := range []string{"code_review", "codex_review", "review"} {
-			if v, ok := byID[k].(map[string]any); ok {
-				return v
-			}
+	if rl := extractCodexReviewByID(data); len(rl) > 0 {
+		return rl
+	}
+
+	return extractCodexReviewAdditional(data)
+}
+
+func extractCodexReviewByID(data map[string]any) map[string]any {
+	byID, ok := data["rate_limits_by_limit_id"].(map[string]any)
+	if !ok || byID == nil {
+		return nil
+	}
+
+	for _, k := range []string{"code_review", "codex_review", "review"} {
+		if v, ok := byID[k].(map[string]any); ok && v != nil {
+			return v
 		}
 	}
 
-	if addl, ok := data["additional_rate_limits"].([]any); ok {
-		for _, item := range addl {
-			if m, ok := item.(map[string]any); ok {
-				id := strings.ToLower(fmt.Sprintf("%v", m["limit_name"]))
-				if strings.Contains(id, "review") {
-					return m
-				}
+	return nil
+}
+
+func extractCodexReviewAdditional(data map[string]any) map[string]any {
+	addl, ok := data["additional_rate_limits"].([]any)
+	if !ok {
+		return map[string]any{}
+	}
+
+	for _, item := range addl {
+		if m, ok := item.(map[string]any); ok && m != nil {
+			id := strings.ToLower(fmt.Sprintf("%v", m["limit_name"]))
+			if strings.Contains(id, "review") {
+				return m
 			}
 		}
 	}
@@ -142,15 +218,8 @@ func appendCodexQuotaWindows(quotas map[string]QuotaItem, prefix string, rl map[
 		return
 	}
 
-	primary, _ := rl["primary_window"].(map[string]any)
-	if primary == nil {
-		primary, _ = rl["primary"].(map[string]any)
-	}
-
-	secondary, _ := rl["secondary_window"].(map[string]any)
-	if secondary == nil {
-		secondary, _ = rl["secondary"].(map[string]any)
-	}
+	primary := getCodexWindow(rl, "primary_window", "primary")
+	secondary := getCodexWindow(rl, "secondary_window", "secondary")
 
 	if primary != nil {
 		k := "session"
@@ -169,6 +238,16 @@ func appendCodexQuotaWindows(quotas map[string]QuotaItem, prefix string, rl map[
 
 		quotas[k] = formatCodexWindow(secondary)
 	}
+}
+
+func getCodexWindow(rl map[string]any, keys ...string) map[string]any {
+	for _, key := range keys {
+		if w, ok := rl[key].(map[string]any); ok && w != nil {
+			return w
+		}
+	}
+
+	return nil
 }
 
 func formatCodexWindow(w map[string]any) QuotaItem {
@@ -190,11 +269,14 @@ func formatCodexWindow(w map[string]any) QuotaItem {
 	}
 
 	return QuotaItem{
+		ResetAt:             res,
+		Recurring:           nil,
+		DisplayName:         "",
+		Unit:                "",
 		Used:                used,
 		Total:               100,
 		Remaining:           rem,
 		RemainingPercentage: rem,
-		ResetAt:             res,
 		Unlimited:           false,
 	}
 }

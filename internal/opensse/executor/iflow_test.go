@@ -25,9 +25,24 @@ func TestIFlowSignatureEmptyKey(t *testing.T) {
 }
 
 func TestIFlowBearerAccessTokenFallback(t *testing.T) {
-	e := &IFlowExecutor{Base: Base{Provider: "iflow", Headers: map[string]string{"User-Agent": "iFlow-Cli"}}}
+	e := &IFlowExecutor{
+		Base: Base{
+			Provider: "iflow",
+			Client:   nil,
+			Headers:  map[string]string{"User-Agent": "iFlow-Cli"},
+			BaseURL:  "",
+			BaseURLs: nil,
+		},
+	}
 
-	h := e.buildHeaders(Credentials{AccessToken: "tok-only"}, false)
+	h := e.buildHeaders(Credentials{
+		ProviderSpecificData: nil,
+		APIKey:               "",
+		AccessToken:          "tok-only",
+		RefreshToken:         "",
+		BaseURL:              "",
+		ProjectID:            "",
+	}, false)
 	if got := h.Get("Authorization"); got != "Bearer tok-only" {
 		t.Fatalf("Authorization=%q want Bearer tok-only", got)
 	}

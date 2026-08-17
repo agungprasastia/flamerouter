@@ -1,11 +1,14 @@
+// Package store provides SQLite persistent storage for flamerouter state.
 package store
 
 import "database/sql"
 
+// CustomModel describes custom model definitions.
 type CustomModel struct {
 	ID, Provider, ModelID, DisplayName, Capabilities string
 }
 
+// ListCustomModels returns all custom models.
 func (s *Store) ListCustomModels() ([]CustomModel, error) {
 	rows, err := s.db.Query(
 		`SELECT id, provider, model_id, COALESCE(display_name,''), COALESCE(capabilities,'{}') FROM custom_models ORDER BY provider, model_id`,
@@ -14,7 +17,11 @@ func (s *Store) ListCustomModels() ([]CustomModel, error) {
 		return nil, err
 	}
 
-	defer rows.Close()
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
 
 	var out []CustomModel
 
@@ -30,6 +37,7 @@ func (s *Store) ListCustomModels() ([]CustomModel, error) {
 	return out, rows.Err()
 }
 
+// CreateCustomModel inserts a custom model.
 func (s *Store) CreateCustomModel(provider, modelID, displayName, capabilities string) (string, error) {
 	id := newID()
 
@@ -45,13 +53,18 @@ func (s *Store) CreateCustomModel(provider, modelID, displayName, capabilities s
 	return id, err
 }
 
+// DeleteCustomModel deletes a custom model by id.
 func (s *Store) DeleteCustomModel(id string) error {
 	res, err := s.db.Exec(`DELETE FROM custom_models WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
 
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
 	if n == 0 {
 		return sql.ErrNoRows
 	}
@@ -59,13 +72,18 @@ func (s *Store) DeleteCustomModel(id string) error {
 	return nil
 }
 
+// DeleteCustomModelByModel deletes a custom model by provider and model ID.
 func (s *Store) DeleteCustomModelByModel(provider, modelID string) error {
 	res, err := s.db.Exec(`DELETE FROM custom_models WHERE provider=? AND model_id=?`, provider, modelID)
 	if err != nil {
 		return err
 	}
 
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
 	if n == 0 {
 		return sql.ErrNoRows
 	}
