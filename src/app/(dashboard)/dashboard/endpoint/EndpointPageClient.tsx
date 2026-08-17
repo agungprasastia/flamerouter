@@ -142,7 +142,6 @@ export default function APIPageClient({ machineId }: APIPageClientProps) {
 
   // API key visibility toggle state
 const [visibleKeys, setVisibleKeys] = useState(new Set<string>());
-  const defaultKeyProvisionedRef = useRef(false);
 
   // Client-side local/remote detection (UI hint only, not a security gate)
   const [isRemoteHost, setIsRemoteHost] = useState(false);
@@ -412,21 +411,7 @@ const [visibleKeys, setVisibleKeys] = useState(new Set<string>());
         return data.keys || [];
       };
 
-      let existing = await fetchKeys();
-      // Auto-provision a default key for first-time users so the endpoint works out of the box.
-       if (existing.length === 0 && !defaultKeyProvisionedRef.current) {
-         defaultKeyProvisionedRef.current = true;
-        try {
-          const createRes = await fetch("/api/keys", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: "Default Key" }),
-          });
-          if (createRes.ok) existing = await fetchKeys();
-        } catch {
-          /* fall through to empty render */
-        }
-      }
+      const existing = await fetchKeys();
       setKeys(existing);
     } catch (error) {
       console.log("Error fetching data:", error);
