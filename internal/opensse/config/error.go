@@ -2,9 +2,131 @@
 package config
 
 import (
+	"encoding/json"
+	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+var antigravityResetRegex = regexp.MustCompile(`(?i)reset after (?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?`)
+
+// ParseResetDelayFromError extracts retry delay in milliseconds from headers or error message.
+// Handles Retry-After, x-ratelimit-reset-after, x-ratelimit-reset, OpenAI/Codex usage_limit_reached, and Antigravity reset strings.
+func ParseResetDelayFromError(headers http.Header, errorText string) int64 {
+	if headers != nil {
+		if delay := parseHeadersResetDelay(headers); delay > 0 {
+			return delay
+		}
+	}
+
+	if errorText == "" {
+		return 0
+	}
+
+	if delay := parseJSONResetsAt(errorText); delay > 0 {
+		return delay
+	}
+
+	return parseAntigravityResetText(errorText)
+}
+
+func parseHeadersResetDelay(headers http.Header) int64 {
+	if ra := headers.Get("Retry-After"); ra != "" {
+		if delay := parseRetryAfterVal(ra); delay > 0 {
+			return delay
+		}
+	}
+
+	if rra := headers.Get("x-ratelimit-reset-after"); rra != "" {
+		if sec, err := strconv.ParseInt(strings.TrimSpace(rra), 10, 64); err == nil && sec > 0 {
+			return sec * 1000
+		}
+	}
+
+	if rr := headers.Get("x-ratelimit-reset"); rr != "" {
+		if sec, err := strconv.ParseInt(strings.TrimSpace(rr), 10, 64); err == nil && sec > 0 {
+			diff := time.Until(time.Unix(sec, 0)).Milliseconds()
+			if diff > 0 {
+				return diff
+			}
+		}
+	}
+
+	return 0
+}
+
+func parseRetryAfterVal(ra string) int64 {
+	if sec, err := strconv.ParseInt(strings.TrimSpace(ra), 10, 64); err == nil && sec > 0 {
+		return sec * 1000
+	}
+
+	if t, err := http.ParseTime(ra); err == nil {
+		diff := time.Until(t).Milliseconds()
+		if diff > 0 {
+			return diff
+		}
+	}
+
+	return 0
+}
+
+func parseJSONResetsAt(text string) int64 {
+	var body struct {
+		Error struct {
+			Type            string  `json:"type"`
+			ResetsAt        float64 `json:"resets_at"`
+			ResetsInSeconds float64 `json:"resets_in_seconds"`
+		} `json:"error"`
+	}
+
+	if err := json.Unmarshal([]byte(text), &body); err != nil {
+		return 0
+	}
+
+	if body.Error.ResetsAt > 0 {
+		diff := time.Until(time.Unix(int64(body.Error.ResetsAt), 0)).Milliseconds()
+		if diff > 0 {
+			return diff
+		}
+	}
+
+	if body.Error.ResetsInSeconds > 0 {
+		return int64(body.Error.ResetsInSeconds * 1000)
+	}
+
+	return 0
+}
+
+func parseAntigravityResetText(text string) int64 {
+	match := antigravityResetRegex.FindStringSubmatch(text)
+	if match == nil {
+		return 0
+	}
+
+	var totalMs int64
+
+	if match[1] != "" {
+		if h, err := strconv.ParseInt(match[1], 10, 64); err == nil {
+			totalMs += h * 3600 * 1000
+		}
+	}
+
+	if match[2] != "" {
+		if m, err := strconv.ParseInt(match[2], 10, 64); err == nil {
+			totalMs += m * 60 * 1000
+		}
+	}
+
+	if match[3] != "" {
+		if s, err := strconv.ParseInt(match[3], 10, 64); err == nil {
+			totalMs += s * 1000
+		}
+	}
+
+	return totalMs
+}
 
 // ErrorRule defines matching criteria and fallback/cooldown behavior for error responses.
 type ErrorRule struct {

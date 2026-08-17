@@ -60,3 +60,22 @@ func TestGetUnavailableUntil(t *testing.T) {
 		t.Fatalf("unexpected time: %v", time.Until(parsed))
 	}
 }
+
+func TestParseResetDelayFromError(t *testing.T) {
+	// Antigravity text
+	text := "Your quota will reset after 2h7m23s"
+	expected := int64((2*3600 + 7*60 + 23) * 1000)
+	delay := config.ParseResetDelayFromError(nil, text)
+
+	if delay != expected {
+		t.Fatalf("expected %d, got %d", expected, delay)
+	}
+
+	// Codex JSON error with resets_in_seconds
+	jsonErr := `{"error":{"type":"usage_limit_reached","resets_in_seconds":120}}`
+	delayJSON := config.ParseResetDelayFromError(nil, jsonErr)
+
+	if delayJSON != 120000 {
+		t.Fatalf("expected 120000, got %d", delayJSON)
+	}
+}

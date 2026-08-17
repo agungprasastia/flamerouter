@@ -34,6 +34,7 @@ var targetsNeedBase64 = map[string]bool{
 	"antigravity": true,
 	"ollama":      true,
 	"kiro":        true,
+	"codex":       true,
 }
 
 // PrefetchProviders kept for provider-based callers.
@@ -47,6 +48,7 @@ var PrefetchProviders = map[string]bool{
 	"ollama-local":   true,
 	"kiro":           true,
 	"openrouter":     true,
+	"codex":          true,
 }
 
 // ShouldPrefetchImages checks if the given provider needs remote images pre-fetched.

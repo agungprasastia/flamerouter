@@ -98,6 +98,111 @@ func resolveAntigravityProjectID(body map[string]any, cred Credentials) string {
 	return formats.GenerateProjectID()
 }
 
+const (
+	maxAntigravityOutputTokens = 64000
+	defaultThinkingAGSignature = "e2E="
+)
+
+func isAntigravityImageModel(model string) bool {
+	lower := strings.ToLower(model)
+
+	return strings.Contains(lower, "image") || strings.Contains(lower, "imagen")
+}
+
+func sanitizeClaudeSystemInstruction(req map[string]any) {
+	sysInst, ok := req["systemInstruction"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	parts, okParts := sysInst["parts"].([]any)
+	if !okParts {
+		return
+	}
+
+	oldText := "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+
+	for _, pRaw := range parts {
+		if p, okP := pRaw.(map[string]any); okP {
+			if txt, okT := p["text"].(string); okT && strings.Contains(txt, oldText) {
+				p["text"] = strings.ReplaceAll(txt, oldText, "")
+			}
+		}
+	}
+}
+
+func sanitizeSinglePart(p map[string]any) (map[string]any, bool, bool) {
+	hasFuncResp := false
+	if _, okFR := p["functionResponse"]; okFR {
+		hasFuncResp = true
+	}
+
+	if _, okFC := p["functionCall"]; okFC {
+		if sig, okSig := p["thoughtSignature"].(string); !okSig || sig == "" {
+			p["thoughtSignature"] = defaultThinkingAGSignature
+		}
+	}
+
+	if _, okTh := p["thought"]; okTh {
+		if _, okFC := p["functionCall"]; !okFC {
+			return nil, hasFuncResp, false
+		}
+	}
+
+	return p, hasFuncResp, true
+}
+
+func cleanParts(parts []any) ([]any, bool) {
+	var (
+		filtered    []any
+		hasFuncResp bool
+	)
+
+	for _, pRaw := range parts {
+		p, okPart := pRaw.(map[string]any)
+		if !okPart {
+			continue
+		}
+
+		sanitized, fr, keep := sanitizeSinglePart(p)
+		if fr {
+			hasFuncResp = true
+		}
+
+		if keep {
+			filtered = append(filtered, sanitized)
+		}
+	}
+
+	return filtered, hasFuncResp
+}
+
+func fixAntigravityContents(req map[string]any) {
+	contents, ok := req["contents"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, cRaw := range contents {
+		c, okC := cRaw.(map[string]any)
+		if !okC {
+			continue
+		}
+
+		parts, okP := c["parts"].([]any)
+		if !okP {
+			continue
+		}
+
+		filtered, hasFuncResp := cleanParts(parts)
+		c["parts"] = filtered
+
+		if hasFuncResp {
+			c["role"] = "user"
+		}
+	}
+}
+
 func (e *AntigravityExecutor) transform(model string, body map[string]any, cred Credentials) map[string]any {
 	var request map[string]any
 	if req, ok := body["request"].(map[string]any); ok {
@@ -109,14 +214,27 @@ func (e *AntigravityExecutor) transform(model string, body map[string]any, cred 
 	e.stripBlacklisted(request)
 	e.stripBlacklisted(body)
 	cleanAntigravityTools(request)
+	sanitizeClaudeSystemInstruction(request)
+	fixAntigravityContents(request)
+
+	if genCfg, ok := request["generationConfig"].(map[string]any); ok {
+		if maxTok, okTok := genCfg["maxOutputTokens"].(float64); okTok && maxTok > maxAntigravityOutputTokens {
+			genCfg["maxOutputTokens"] = maxAntigravityOutputTokens
+		}
+	}
 
 	project := resolveAntigravityProjectID(body, cred)
+	requestType := "agent"
+
+	if isAntigravityImageModel(model) {
+		requestType = "image_gen"
+	}
 
 	out := map[string]any{
 		"project":     project,
 		"model":       model,
 		"userAgent":   "antigravity",
-		"requestType": "agent",
+		"requestType": requestType,
 		"request":     request,
 	}
 
@@ -184,7 +302,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, cred Credentials, mod
 	}
 
 	action := "generateContent"
-	if stream {
+	if stream && !isAntigravityImageModel(model) {
 		action = "streamGenerateContent?alt=sse"
 	}
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flamerouter/internal/oauth"
 	"flamerouter/internal/opensse/combo"
+	"flamerouter/internal/opensse/config"
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/opensse/model"
@@ -469,7 +470,9 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 			respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
 			lastStatus, lastBody = res.StatusCode, respBody
 
-			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, string(respBody), 0)
+			resetsAtMs := config.ParseResetDelayFromError(res.Header, string(respBody))
+			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, string(respBody), resetsAtMs)
+
 			if shouldFallback {
 				excludeIDs[conn.ID] = true
 				lastErr = fmt.Errorf("%w: status %d", errUpstreamFailed, res.StatusCode)
@@ -484,7 +487,7 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 			return fmt.Errorf("%w: status %d", errUpstreamFailed, res.StatusCode)
 		}
 
-		completeChatResponse(w, res, conn.ID, providerID, modelName, st, fb, streamReq, sourceFormat, targetFormat, usageSink)
+		completeChatResponse(ctx, w, res, conn.ID, providerID, modelName, st, fb, streamReq, sourceFormat, targetFormat, usageSink)
 
 		return nil
 	}
@@ -509,7 +512,7 @@ func handleFallbackExhausted(w http.ResponseWriter, providerID string, excludeID
 	return lastErr
 }
 
-func completeChatResponse(w http.ResponseWriter, res *executor.Result, connID, providerID, modelName string, st *store.Store, fb *fallback.Fallback, streamReq bool, sourceFormat, targetFormat string, usageSink UsageSink) {
+func completeChatResponse(ctx context.Context, w http.ResponseWriter, res *executor.Result, connID, providerID, modelName string, st *store.Store, fb *fallback.Fallback, streamReq bool, sourceFormat, targetFormat string, usageSink UsageSink) {
 	if streamReq {
 		stream.WriteSSEHeaders(w)
 		flusher, _ := w.(http.Flusher) //nolint:errcheck // optional flusher assertion
@@ -517,7 +520,7 @@ func completeChatResponse(w http.ResponseWriter, res *executor.Result, connID, p
 		if translator.NeedsTranslation(sourceFormat, targetFormat) {
 			writeTranslatedStream(w, flusher, res.Body, sourceFormat, targetFormat)
 		} else {
-			_ = stream.Pipe(w, res.Body) //nolint:errcheck // stream pipe
+			_ = stream.PipeWithHeartbeat(ctx, w, res.Body, 15*time.Second) //nolint:errcheck // stream pipe
 		}
 
 		fb.ClearError(connID)
@@ -637,7 +640,9 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 		if res.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
 
-			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, string(respBody), 0)
+			resetsAtMs := config.ParseResetDelayFromError(res.Header, string(respBody))
+			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, string(respBody), resetsAtMs)
+
 			if shouldFallback {
 				excludeIDs[conn.ID] = true
 				continue
