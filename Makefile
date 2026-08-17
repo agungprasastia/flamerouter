@@ -1,31 +1,29 @@
-.PHONY: help serve version build test vet tidy ui-install ui-dev ui-build all clean
+.PHONY: help serve build test test-race lint nilaway vulncheck check tidy ui-install ui-dev ui-build clean
 
 GO       ?= go
-WEB      ?= web
 BINARY   ?= flamerouter
 ifeq ($(OS),Windows_NT)
 BINARY   := flamerouter.exe
 endif
 
 help: ## Show targets
-	@echo "FlameRouter — common targets:"
+	@echo "FlameRouter — available targets:"
 	@echo "  make serve      - run gateway (go run ./cmd/flamerouter serve)"
-	@echo "  make version    - print version"
 	@echo "  make build      - build binary to ./$(BINARY)"
-	@echo "  make test       - go test ./..."
-	@echo "  make vet        - go vet ./..."
+	@echo "  make test       - go test ./... -count=1"
+	@echo "  make test-race  - go test ./... -race -count=1 -shuffle=on"
+	@echo "  make lint       - golangci-lint run --config .golangci.yml ./..."
+	@echo "  make nilaway    - nilaway ./..."
+	@echo "  make vulncheck  - govulncheck ./..."
+	@echo "  make check      - run all quality gates (lint + nilaway + vulncheck + test-race)"
 	@echo "  make tidy       - go mod tidy"
-	@echo "  make ui-install - npm install in web/"
-	@echo "  make ui-dev     - Vite dev server (proxy to :20128)"
-	@echo "  make ui-build   - build SPA into internal/gateway/ui/dist"
-	@echo "  make all        - vet + test + ui-build + build"
+	@echo "  make ui-install - npm install"
+	@echo "  make ui-dev     - npm run dev"
+	@echo "  make ui-build   - npm run build"
 	@echo "  make clean      - remove local binary"
 
 serve: ## Run server
 	$(GO) run ./cmd/flamerouter serve
-
-version: ## Print version
-	$(GO) run ./cmd/flamerouter version
 
 build: ## Compile binary
 	$(GO) build -o $(BINARY) ./cmd/flamerouter
@@ -33,22 +31,31 @@ build: ## Compile binary
 test: ## Run all Go tests
 	$(GO) test ./... -count=1
 
-vet: ## Static analysis
-	$(GO) vet ./...
+test-race: ## Run tests with race detector and shuffle
+	$(GO) test ./... -race -count=1 -shuffle=on
+
+lint: ## Run golangci-lint
+	golangci-lint run --config .golangci.yml ./...
+
+nilaway: ## Run nilaway static analysis
+	nilaway ./...
+
+vulncheck: ## Run govulncheck
+	govulncheck ./...
+
+check: lint nilaway vulncheck test-race ## Run full quality gates
 
 tidy: ## Sync go.mod / go.sum
 	$(GO) mod tidy
 
 ui-install: ## Install frontend deps
-	cd $(WEB) && npm install
+	npm install
 
 ui-dev: ## Frontend dev server
-	cd $(WEB) && npm run dev
+	npm run dev
 
-ui-build: ## Build & embed dashboard assets
-	cd $(WEB) && npm run build
-
-all: vet test ui-build build ## Full local CI-ish pipeline
+ui-build: ## Build frontend
+	npm run build
 
 clean: ## Remove built binary
 	rm -f flamerouter flamerouter.exe 2>/dev/null || true
