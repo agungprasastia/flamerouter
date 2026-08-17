@@ -391,8 +391,11 @@ export function getHiddenQuotaRows(
  * @param {Object} data - Raw quota data from provider
  * @returns {Array<Object>} Normalized quota objects with { name, used, total, resetAt }
  */
-export function parseQuotaData(provider: string, data: Record<string, unknown> | null | undefined): QuotaEntry[] {
-  if (!data || typeof data !== "object") return [];
+export function parseQuotaData(provider: string, rawData: Record<string, unknown> | null | undefined): QuotaEntry[] {
+  if (!rawData || typeof rawData !== "object") return [];
+
+  // Support both wrapped response { quota: QuotaResult } and direct QuotaResult
+  const data = (rawData.quota && typeof rawData.quota === "object" ? rawData.quota : rawData) as Record<string, unknown>;
 
   const normalizedQuotas: QuotaEntry[] = [];
 

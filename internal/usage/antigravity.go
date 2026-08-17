@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	antigravityQuotaURL       = "https://cloudcode-pa.googleapis.com/v1alpha/projects/{project}:retrieveUserQuota"
-	antigravityLoadProjectURL = "https://cloudcode-pa.googleapis.com/v1alpha:loadCodeAssist"
+	antigravityQuotaURL       = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+	antigravityLoadProjectURL = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+	antigravityUserAgent      = "antigravity/ide/2.1.1 darwin/arm64"
+	antigravityVersion        = "2.1.1"
 )
 
 func init() {
@@ -159,11 +161,6 @@ func checkAntigravityStatus(res *http.Response) *QuotaResult {
 }
 
 func executeAntigravityRequest(ctx context.Context, opts FetchOptions, projectID string) (*http.Response, *QuotaResult, error) {
-	url := "https://cloudcode-pa.googleapis.com/v1alpha:retrieveUserQuota"
-	if projectID != "" {
-		url = strings.ReplaceAll(antigravityQuotaURL, "{project}", projectID)
-	}
-
 	reqBodyMap := map[string]any{}
 	if projectID != "" {
 		reqBodyMap["project"] = projectID
@@ -174,16 +171,16 @@ func executeAntigravityRequest(ctx context.Context, opts FetchOptions, projectID
 		reqBytes = []byte("{}")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, antigravityQuotaURL, bytes.NewReader(reqBytes))
 	if err != nil {
 		return nil, nil, err
 	}
 
 	req.Header.Set("Authorization", "Bearer "+opts.AccessToken)
-	req.Header.Set("User-Agent", "antigravity/1.0.0")
+	req.Header.Set("User-Agent", antigravityUserAgent)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Client-Name", "antigravity")
-	req.Header.Set("X-Client-Version", "1.0.0")
+	req.Header.Set("X-Client-Version", antigravityVersion)
 
 	res, err := doHTTP(opts.HTTPClient, req)
 	if err != nil {
@@ -309,7 +306,7 @@ func extractGoogleProjectID(psd map[string]any) string {
 }
 
 func getGoogleSubscriptionInfo(ctx context.Context, client *http.Client, token, url string) map[string]any {
-	bodyBytes := []byte(`{"metadata":{"ideType":"VSCODE"}}`)
+	bodyBytes := []byte(`{"metadata":{"ideType":9,"platform":1,"pluginType":2},"mode":1}`)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -317,7 +314,10 @@ func getGoogleSubscriptionInfo(ctx context.Context, client *http.Client, token, 
 	}
 
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", antigravityUserAgent)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Client-Name", "antigravity")
+	req.Header.Set("X-Client-Version", antigravityVersion)
 
 	res, err := doHTTP(client, req)
 	if err != nil {

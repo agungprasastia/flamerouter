@@ -523,6 +523,20 @@ func (s *Server) extractConnUsageData(connID string, limit int) ([]map[string]an
 	return out, prompt, completion, nil
 }
 
+func isAuthExpiredQuota(res *usage.QuotaResult) bool {
+	if res == nil || res.Message == "" {
+		return false
+	}
+	msg := strings.ToLower(res.Message)
+	patterns := []string{"expired", "authentication", "unauthorized", "401", "re-authorize", "re-auth"}
+	for _, p := range patterns {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "method")
@@ -555,6 +569,13 @@ func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	isOAuth := conn.AuthType == "oauth" || conn.RefreshToken != ""
+	if isOAuth && s.credMgr != nil && conn.RefreshToken != "" {
+		if refreshed, err := s.credMgr.RefreshIfNeeded(r.Context(), s.st, conn); err == nil && refreshed != nil {
+			conn = refreshed
+		}
+	}
+
 	force := r.URL.Query().Get("force") == "1"
 	usageRes := usage.FetchProviderUsage(r.Context(), usage.FetchOptions{
 		ProviderSpecificData: conn.ProviderSpecificData,
@@ -565,6 +586,21 @@ func (s *Server) handleUsageByConnection(w http.ResponseWriter, r *http.Request)
 		BaseURL:              conn.BaseURL,
 		Force:                force,
 	})
+
+	if isOAuth && s.credMgr != nil && conn.RefreshToken != "" && isAuthExpiredQuota(usageRes) {
+		if refreshed, err := s.credMgr.RefreshForce(r.Context(), s.st, conn); err == nil && refreshed != nil {
+			conn = refreshed
+			usageRes = usage.FetchProviderUsage(r.Context(), usage.FetchOptions{
+				ProviderSpecificData: conn.ProviderSpecificData,
+				HTTPClient:           nil,
+				Provider:             conn.Provider,
+				AccessToken:          conn.AccessToken,
+				APIKey:               conn.APIKey,
+				BaseURL:              conn.BaseURL,
+				Force:                force,
+			})
+		}
+	}
 
 	writeJSONOK(w, map[string]any{
 		"connectionId": connID,

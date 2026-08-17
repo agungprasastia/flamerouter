@@ -109,7 +109,8 @@ function kiroRegion(conn: ConnectionItem) {
 
 function getCodexResetCreditCount(quota: QuotaEntry | null | undefined) {
   const raw = quota?.raw as Record<string, unknown> | undefined;
-  const value = raw?.resetCredits as Record<string, unknown> | undefined;
+  const quotaPayload = (raw?.quota && typeof raw?.quota === "object" ? raw.quota : raw) as Record<string, unknown> | undefined;
+  const value = (quotaPayload?.resetCredits || raw?.resetCredits) as Record<string, unknown> | undefined;
   const count = typeof value?.availableCount === "number" ? value.availableCount : Number(value?.availableCount);
   return Number.isFinite(count) ? Math.max(0, count) : 0;
 }
@@ -283,13 +284,16 @@ export default function ProviderLimits() {
       const data = await response.json();
       console.log(`[ProviderLimits] Got quota for ${provider}:`, data);
 
+      // Support both wrapped response { quota: QuotaResult } and direct QuotaResult
+      const quotaPayload = (data?.quota && typeof data.quota === "object" ? data.quota : data) as Record<string, unknown>;
+
       // Parse quota data using provider-specific parser
-      const parsedQuotas = parseQuotaData(provider, data);
+      const parsedQuotas = parseQuotaData(provider, quotaPayload);
 
       const quotaEntry = {
         quotas: parsedQuotas,
-        plan: data.plan || null,
-        message: data.message || null,
+        plan: (quotaPayload?.plan as string) || (data.plan as string) || null,
+        message: (quotaPayload?.message as string) || (data.message as string) || null,
         raw: data,
       };
 

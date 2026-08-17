@@ -14,6 +14,7 @@ import (
 	"flamerouter/internal/store"
 	"flamerouter/internal/tokenrefresh"
 	"flamerouter/internal/usage"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -33,9 +34,27 @@ type Server struct {
 	fb       *fallback.Fallback
 	oauth    *oauth.Handler
 	refresh  *tokenrefresh.RefreshManager
+	credMgr  *oauth.CredManager
 	usageHub *usage.StreamHub
 	tracker  *usage.Tracker
 	mux      *http.ServeMux
+}
+
+type refreshAdapter struct {
+	rm *tokenrefresh.RefreshManager
+}
+
+func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken string) (string, string, time.Time, error) {
+	res, err := a.rm.Refresh(ctx, provider, refreshToken)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+
+	if res == nil {
+		return "", "", time.Time{}, fmt.Errorf("nil refresh result")
+	}
+
+	return res.AccessToken, res.RefreshToken, res.ExpiresAt, nil
 }
 
 // New creates and initializes a new HTTP handler for flamerouter.
@@ -43,6 +62,7 @@ func New(cfg *config.Config, st *store.Store, keys *auth.APIKeys, exec executor.
 	fb := fallback.New(st)
 	jwt := auth.NewJWTManager(cfg.JWTSecret)
 	hub := usage.NewStreamHub()
+	rm := tokenrefresh.NewRefreshManager()
 	s := &Server{
 		cfg:      cfg,
 		st:       st,
@@ -53,7 +73,8 @@ func New(cfg *config.Config, st *store.Store, keys *auth.APIKeys, exec executor.
 		exec:     exec,
 		fb:       fb,
 		oauth:    oauth.NewHandler(),
-		refresh:  tokenrefresh.NewRefreshManager(),
+		refresh:  rm,
+		credMgr:  oauth.NewCredManager(&refreshAdapter{rm: rm}),
 		usageHub: hub,
 		tracker:  usage.NewTracker(st, hub),
 		mux:      http.NewServeMux(),

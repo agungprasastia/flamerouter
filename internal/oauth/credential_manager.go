@@ -224,6 +224,19 @@ func (cm *CredManager) executeRefresh(ctx context.Context, st *store.Store, conn
 	return conn, nil
 }
 
+// RefreshForce forces a token refresh regardless of expiration; persists via st.
+func (cm *CredManager) RefreshForce(ctx context.Context, st *store.Store, conn *store.Connection) (*store.Connection, error) {
+	if cm == nil || conn == nil || st == nil || conn.RefreshToken == "" {
+		return conn, nil
+	}
+
+	lk := cm.lockFor(conn.ID)
+	lk.Lock()
+	defer lk.Unlock()
+
+	return cm.executeRefresh(ctx, st, conn)
+}
+
 // RefreshIfNeeded refreshes OAuth tokens when near expiry / max age; persists via st.
 // Returns (possibly updated) connection. Fail-open: refresh errors return original conn + err.
 func (cm *CredManager) RefreshIfNeeded(ctx context.Context, st *store.Store, conn *store.Connection) (*store.Connection, error) {
