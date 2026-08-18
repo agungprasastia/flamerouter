@@ -75,3 +75,27 @@ func TestDefaultExecutor_ForwardsChat(t *testing.T) {
 		t.Fatal("empty body or read error")
 	}
 }
+
+func TestDefaultExecutor_NullBodyNoPanic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"1"}`)) // nolint:errcheck
+	}))
+	defer srv.Close()
+
+	ex := executor.NewDefault(srv.Client())
+	creds := executor.Credentials{BaseURL: srv.URL + "/v1"} //nolint:exhaustruct // test fixture
+
+	res, err := ex.Execute(context.Background(), creds, "gpt-4o", []byte("null"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		_ = res.Body.Close() // nolint:errcheck
+	}()
+
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}

@@ -45,7 +45,14 @@ func VercelAIChatWithOptions(ctx context.Context, w http.ResponseWriter, body []
 		StickyLimit:     0,
 	})
 
-	if err != nil && len(cw.buf.Bytes()) == 0 {
+	if cw.code >= 400 || err != nil {
+		copyHeader(w.Header(), cw.header)
+		w.WriteHeader(cw.code)
+
+		if cw.buf.Len() > 0 {
+			_, _ = w.Write(cw.buf.Bytes()) //nolint:errcheck // best effort write
+		}
+
 		return err
 	}
 

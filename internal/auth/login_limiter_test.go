@@ -105,7 +105,7 @@ func TestLogin_FifthFailReturns429(t *testing.T) {
 	body := []byte(`{"password":"wrong"}`)
 	for i := 0; i < 4; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
-		req.Header.Set("x-9r-real-ip", "203.0.113.50")
+		req.RemoteAddr = "203.0.113.50:1234"
 		req.Header.Set("Content-Type", "application/json")
 
 		rr := httptest.NewRecorder()
@@ -117,7 +117,7 @@ func TestLogin_FifthFailReturns429(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
-	req.Header.Set("x-9r-real-ip", "203.0.113.50")
+	req.RemoteAddr = "203.0.113.50:1234"
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
@@ -135,8 +135,26 @@ func TestLogin_FifthFailReturns429(t *testing.T) {
 	}
 }
 
-func TestClientIP_PreferX9R(t *testing.T) {
+func TestClientIP_IgnoreHeadersWithoutTrust(t *testing.T) {
+	if err := os.Unsetenv("TRUST_PROXY"); err != nil {
+		t.Fatalf("unsetenv error: %v", err)
+	}
+
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.RemoteAddr = "192.168.1.100:54321"
+	r.Header.Set("x-9r-real-ip", "10.0.0.1")
+	r.Header.Set("X-Forwarded-For", "8.8.8.8")
+
+	if got := ClientIP(r); got != "192.168.1.100" {
+		t.Fatalf("want remote addr without trust, got %q", got)
+	}
+}
+
+func TestClientIP_PreferX9RWithTrust(t *testing.T) {
+	t.Setenv("TRUST_PROXY", "true")
+
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.RemoteAddr = "192.168.1.100:54321"
 	r.Header.Set("x-9r-real-ip", "10.0.0.1")
 	r.Header.Set("X-Forwarded-For", "8.8.8.8")
 
@@ -149,6 +167,7 @@ func TestClientIP_TrustProxyXFF(t *testing.T) {
 	t.Setenv("TRUST_PROXY", "true")
 
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.RemoteAddr = "192.168.1.100:54321"
 	r.Header.Set("X-Forwarded-For", "8.8.8.8, 1.1.1.1")
 
 	if got := ClientIP(r); got != "8.8.8.8" {
@@ -156,12 +175,13 @@ func TestClientIP_TrustProxyXFF(t *testing.T) {
 	}
 }
 
-func TestClientIP_UnknownWithoutTrust(t *testing.T) {
+func TestClientIP_UnknownWithoutRemoteAddr(t *testing.T) {
 	if err := os.Unsetenv("TRUST_PROXY"); err != nil {
 		t.Fatalf("unsetenv error: %v", err)
 	}
 
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.RemoteAddr = ""
 	r.Header.Set("X-Forwarded-For", "8.8.8.8")
 
 	if got := ClientIP(r); got != "unknown" {

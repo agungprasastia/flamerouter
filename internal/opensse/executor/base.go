@@ -118,6 +118,10 @@ func (b *Base) ExecuteJSON(ctx context.Context, cred Credentials, model string, 
 		return nil, err
 	}
 
+	if m == nil {
+		m = make(map[string]any)
+	}
+
 	if transform != nil {
 		m = transform(model, m, stream, cred)
 	} else {

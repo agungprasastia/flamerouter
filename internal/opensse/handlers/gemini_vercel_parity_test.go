@@ -160,3 +160,31 @@ func TestVercelAIChatStreamingPassesThrough(t *testing.T) {
 		t.Fatalf("expected stream data: %s", rec.Body.String())
 	}
 }
+
+func TestVercelAIChatUpstreamErrorPropagated(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
+		t.Fatalf("CreateConnection: %v", err)
+	}
+
+	fake := testutil.NewFakeExecutor(testutil.Response{
+		StatusCode: http.StatusUnauthorized,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       []byte(`{"error":{"message":"Invalid API key","type":"invalid_request_error"}}`),
+		StreamBody: nil,
+	})
+	fb := fallback.New(st)
+
+	reqBody := []byte(`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"test error"}]}`)
+	rec := httptest.NewRecorder()
+
+	_ = VercelAIChat(context.Background(), rec, reqBody, st, fake, fb) //nolint:errcheck // deliberate no-error assertion below
+
+	if rec.Code < 400 {
+		t.Fatalf("expected error status >= 400, got %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	if !strings.Contains(rec.Body.String(), "Invalid API key") && !strings.Contains(rec.Body.String(), "error") {
+		t.Fatalf("expected error response body, got: %s", rec.Body.String())
+	}
+}

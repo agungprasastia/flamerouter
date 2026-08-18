@@ -62,3 +62,18 @@ func TestTracker_PersistsUsage(t *testing.T) {
 	tr.Close()
 	t.Fatal("expected usage_daily row")
 }
+
+func TestTracker_DroppedCounter(t *testing.T) {
+	tr := &Tracker{ //nolint:exhaustruct // test fixture
+		st:   nil,
+		hub:  nil,
+		ch:   make(chan Record, 1),
+		done: make(chan struct{}),
+	}
+	tr.Track(Record{Provider: "p1"}) //nolint:exhaustruct // test fixture
+	tr.Track(Record{Provider: "p2"}) //nolint:exhaustruct // test fixture
+
+	if tr.Dropped() != 1 {
+		t.Fatalf("expected 1 dropped record, got %d", tr.Dropped())
+	}
+}

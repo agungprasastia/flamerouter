@@ -73,6 +73,10 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 
 	writeJSONOK(w, map[string]string{"status": "shutting down"})
 
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
 	go func() {
 		if err := ops.Shutdown(getHTTPServer()); err != nil {
 			_ = err

@@ -190,3 +190,27 @@ func testProviderNodesAndCustomModelsFlow(t *testing.T, h http.Handler, st *stor
 		t.Fatalf("expected ok in response, got %+v", testRes)
 	}
 }
+
+func TestPaginateSliceSafety(t *testing.T) {
+	items := []int{1, 2, 3, 4, 5}
+
+	res, total, pages := paginateSlice(items, -10, 2)
+	if total != 5 || pages != 3 || len(res) != 2 || res[0] != 1 {
+		t.Fatalf("unexpected result for negative page: res=%v total=%d pages=%d", res, total, pages)
+	}
+
+	res, total, pages = paginateSlice(items, 1000, 2)
+	if total != 5 || pages != 3 || len(res) != 0 {
+		t.Fatalf("unexpected result for large page: res=%v total=%d pages=%d", res, total, pages)
+	}
+
+	res, total, pages = paginateSlice(items, 1, -5)
+	if total != 5 || pages != 5 || len(res) != 1 || res[0] != 1 {
+		t.Fatalf("unexpected result for negative pageSize: res=%v total=%d pages=%d", res, total, pages)
+	}
+
+	res, total, pages = paginateSlice(items, 1, 10000)
+	if total != 5 || pages != 1 || len(res) != 5 {
+		t.Fatalf("unexpected result for huge pageSize: res=%v total=%d pages=%d", res, total, pages)
+	}
+}

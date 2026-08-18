@@ -9,7 +9,11 @@ import (
 func TestGenerateParseRoundTrip(t *testing.T) {
 	a := auth.New("endpoint-proxy-api-key-secret")
 
-	key, keyID := a.Generate("0123456789abcdef")
+	key, keyID, err := a.Generate("0123456789abcdef")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
 	if !strings.HasPrefix(key, "sk-") {
 		t.Fatalf("key=%s", key)
 	}
@@ -35,7 +39,11 @@ func TestGenerateParseRoundTrip(t *testing.T) {
 
 func TestVerifyCRC_RejectsTamper(t *testing.T) {
 	a := auth.New("endpoint-proxy-api-key-secret")
-	key, _ := a.Generate("0123456789abcdef")
+
+	key, _, err := a.Generate("0123456789abcdef")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
 
 	bad := key[:len(key)-1] + "0"
 	if a.VerifyCRC(bad) {

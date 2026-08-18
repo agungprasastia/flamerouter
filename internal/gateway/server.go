@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"flamerouter/internal/auth"
 	"flamerouter/internal/config"
@@ -45,17 +46,17 @@ type refreshAdapter struct {
 	rm *tokenrefresh.RefreshManager
 }
 
-func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken string) (string, string, time.Time, error) {
+func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken string) (string, string, string, time.Time, error) {
 	res, err := a.rm.Refresh(ctx, provider, refreshToken)
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", "", time.Time{}, err
 	}
 
 	if res == nil {
-		return "", "", time.Time{}, fmt.Errorf("nil refresh result")
+		return "", "", "", time.Time{}, fmt.Errorf("nil refresh result")
 	}
 
-	return res.AccessToken, res.RefreshToken, res.ExpiresAt, nil
+	return res.AccessToken, res.RefreshToken, res.IDToken, res.ExpiresAt, nil
 }
 
 // New creates and initializes a new HTTP handler for flamerouter.
@@ -360,7 +361,13 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 		}
 
 		mid := machineID(s.cfg.MachineIDSalt)
-		key, keyID := s.keys.Generate(mid)
+
+		key, keyID, errGen := s.keys.Generate(mid)
+		if errGen != nil {
+			http.Error(w, `{"error":"failed to generate key"}`, http.StatusInternalServerError)
+			return
+		}
+
 		hash := auth.HashKey(key)
 
 		_, err := s.st.CreateAPIKey(req.Name, keyID, hash, mid)
@@ -1093,10 +1100,17 @@ func (s *Server) handleOAuthGithubPoll(w http.ResponseWriter, r *http.Request, p
 		psd[k] = v
 	}
 
+	connName := "GitHub Copilot"
+	if name, ok := extra["githubName"].(string); ok && name != "" {
+		connName = name
+	} else if login, ok := extra["githubLogin"].(string); ok && login != "" {
+		connName = login
+	}
+
 	var connID string
 
 	if s.st != nil {
-		cid, createErr := s.st.CreateOAuthConnection(provider, "oauth", "GitHub Copilot", tok.AccessToken, tok.RefreshToken, expiresAt, psd)
+		cid, createErr := s.st.CreateOAuthConnection(provider, "oauth", connName, tok.AccessToken, tok.RefreshToken, expiresAt, psd)
 		if createErr != nil {
 			log.Printf("[oauth] failed to save connection: %v", createErr)
 		} else {
@@ -1377,11 +1391,13 @@ func (s *Server) authOK(r *http.Request) bool {
 	}
 
 	hash, _, found, err := s.st.LookupActiveByKeyID(keyID)
-	if err != nil || !found || hash != auth.HashKey(raw) {
+	if err != nil || !found {
 		return false
 	}
 
-	return true
+	expectedHash := auth.HashKey(raw)
+
+	return subtle.ConstantTimeCompare([]byte(hash), []byte(expectedHash)) == 1
 }
 
 func machineID(salt string) string {

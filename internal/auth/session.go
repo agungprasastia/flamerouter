@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"flamerouter/internal/config"
 	"flamerouter/internal/store"
@@ -241,7 +243,10 @@ func (sh *SessionHandler) checkPassword(password string) bool {
 		return VerifyPassword(password, hash, salt)
 	}
 
-	return password == sh.initialPassword
+	passHash := sha256.Sum256([]byte(password))
+	initHash := sha256.Sum256([]byte(sh.initialPassword))
+
+	return subtle.ConstantTimeCompare(passHash[:], initHash[:]) == 1
 }
 
 func isLoopback(r *http.Request) bool {

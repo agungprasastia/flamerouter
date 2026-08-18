@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"encoding/json"
+	"flamerouter/internal/oauth"
 	"flamerouter/internal/store"
 	"flamerouter/internal/tokenrefresh"
 	"fmt"
@@ -113,18 +114,17 @@ func (r *CopilotResolver) fetchRaw(ctx context.Context, token string) ([]copilot
 }
 
 func extractCopilotToken(conn *store.Connection) string {
-	token := conn.AccessToken
-	if token == "" && conn.ProviderSpecificData != nil {
+	if conn.ProviderSpecificData != nil {
 		if ct, ok := conn.ProviderSpecificData["copilotToken"].(string); ok && ct != "" {
-			token = ct
+			return ct
 		}
 	}
 
-	if token == "" {
-		token = conn.APIKey
+	if conn.AccessToken != "" {
+		return conn.AccessToken
 	}
 
-	return token
+	return conn.APIKey
 }
 
 func (r *CopilotResolver) tryRefresh(ctx context.Context, conn *store.Connection) (string, error) {
@@ -140,6 +140,11 @@ func (r *CopilotResolver) tryRefresh(ctx context.Context, conn *store.Connection
 	refreshed, err := rm.Refresh(ctx, "github", conn.RefreshToken)
 	if err != nil || refreshed == nil || refreshed.AccessToken == "" {
 		return "", err
+	}
+
+	ct, _, err := oauth.FetchCopilotToken(ctx, refreshed.AccessToken)
+	if err == nil && ct != "" {
+		return ct, nil
 	}
 
 	return refreshed.AccessToken, nil

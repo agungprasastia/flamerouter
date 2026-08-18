@@ -8,10 +8,7 @@ import (
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
-	}
+	_ = json.NewEncoder(w).Encode(v) //nolint:errcheck // best effort encode
 }
 
 func writeJSONOK(w http.ResponseWriter, v any) {

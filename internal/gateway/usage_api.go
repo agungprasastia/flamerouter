@@ -226,7 +226,7 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 
 	period := r.URL.Query().Get("period")
 	if period == "" {
-		period = "today"
+		period = "7d"
 	}
 
 	from, to := usageRange(r)
@@ -310,6 +310,16 @@ func filterRequestDetails(rows []store.RequestDetail, providerFilter, startDate,
 }
 
 func paginateSlice[T any](items []T, page, pageSize int) ([]T, int, int) {
+	if page < 1 {
+		page = 1
+	}
+
+	if pageSize < 1 {
+		pageSize = 1
+	} else if pageSize > 1000 {
+		pageSize = 1000
+	}
+
 	totalItems := len(items)
 	totalPages := 1
 
@@ -321,14 +331,17 @@ func paginateSlice[T any](items []T, page, pageSize int) ([]T, int, int) {
 		totalPages = 1
 	}
 
-	startIdx := (page - 1) * pageSize
-	endIdx := startIdx + pageSize
+	if page > totalPages {
+		return []T{}, totalItems, totalPages
+	}
 
-	if startIdx > totalItems {
+	startIdx := (page - 1) * pageSize
+	if startIdx < 0 || startIdx > totalItems {
 		startIdx = totalItems
 	}
 
-	if endIdx > totalItems {
+	endIdx := startIdx + pageSize
+	if endIdx < 0 || endIdx > totalItems {
 		endIdx = totalItems
 	}
 
@@ -392,6 +405,16 @@ func parsePaginationParams(r *http.Request) (int, int) {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			pageSize = n
 		}
+	}
+
+	if page < 1 {
+		page = 1
+	}
+
+	if pageSize < 1 {
+		pageSize = 1
+	} else if pageSize > 1000 {
+		pageSize = 1000
 	}
 
 	return page, pageSize

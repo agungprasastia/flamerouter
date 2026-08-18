@@ -139,7 +139,7 @@ func MergeRefreshed(current, next map[string]any) map[string]any {
 
 // TokenRefresher is satisfied by tokenrefresh.RefreshManager (avoids import cycle).
 type TokenRefresher interface {
-	Refresh(ctx context.Context, provider, refreshToken string) (accessToken, newRefreshToken string, expiresAt time.Time, err error)
+	Refresh(ctx context.Context, provider, refreshToken string) (accessToken, newRefreshToken, idToken string, expiresAt time.Time, err error)
 }
 
 // CredManager refresh-if-needed with per-connection mutex.
@@ -184,7 +184,7 @@ func (cm *CredManager) executeRefresh(ctx context.Context, st *store.Store, conn
 		return conn, fmt.Errorf("no token refresher")
 	}
 
-	access, refresh, exp, err := cm.refresher.Refresh(ctx, conn.Provider, conn.RefreshToken)
+	access, refresh, idToken, exp, err := cm.refresher.Refresh(ctx, conn.Provider, conn.RefreshToken)
 	if err != nil {
 		return conn, err
 	}
@@ -208,6 +208,18 @@ func (cm *CredManager) executeRefresh(ctx context.Context, st *store.Store, conn
 
 	if conn.ProviderSpecificData == nil {
 		conn.ProviderSpecificData = map[string]any{}
+	}
+
+	if idToken != "" {
+		conn.ProviderSpecificData["idToken"] = idToken
+	}
+
+	if conn.Provider == "github" || conn.Provider == "copilot" {
+		ct, ctExp, ctErr := fetchCopilotToken(ctx, access)
+		if ctErr == nil && ct != "" {
+			conn.ProviderSpecificData["copilotToken"] = ct
+			conn.ProviderSpecificData["copilotTokenExpiresAt"] = ctExp
+		}
 	}
 
 	conn.ProviderSpecificData["lastRefreshAt"] = time.Now().UTC().Format(time.RFC3339)

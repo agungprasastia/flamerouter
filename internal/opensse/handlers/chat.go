@@ -35,17 +35,17 @@ type refreshAdapter struct {
 	rm *tokenrefresh.RefreshManager
 }
 
-func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken string) (string, string, time.Time, error) {
+func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken string) (string, string, string, time.Time, error) {
 	res, err := a.rm.Refresh(ctx, provider, refreshToken)
 	if err != nil {
-		return "", "", time.Time{}, err
+		return "", "", "", time.Time{}, err
 	}
 
 	if res == nil {
-		return "", "", time.Time{}, fmt.Errorf("nil refresh result")
+		return "", "", "", time.Time{}, fmt.Errorf("nil refresh result")
 	}
 
-	return res.AccessToken, res.RefreshToken, res.ExpiresAt, nil
+	return res.AccessToken, res.RefreshToken, res.IDToken, res.ExpiresAt, nil
 }
 
 var (
@@ -437,19 +437,15 @@ func writeTranslatedNonStream(w http.ResponseWriter, respBody []byte, sourceForm
 	_, _ = w.Write(respBody) //nolint:errcheck // handler write
 }
 
-func recordUsageSinkDirect(st *store.Store, providerID, modelName, connID string, prompt, completion, cached, statusCode int, usageSink UsageSink) {
-	if statusCode >= 400 || usageSink == nil || (prompt == 0 && completion == 0) {
+func recordUsageSinkDirect(_ *store.Store, providerID, modelName, connID string, prompt, completion, cached, statusCode int, usageSink UsageSink) {
+	if usageSink == nil || (prompt == 0 && completion == 0) {
 		return
-	}
-
-	if st != nil {
-		_ = st.InsertUsage(providerID, modelName, prompt, completion, connID) //nolint:errcheck // best-effort usage insert
 	}
 
 	usageSink.OnUsage(providerID, modelName, connID, prompt, completion, cached, statusCode)
 }
 
-func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, connID string, statusCode int, reqBody []byte, usageSink UsageSink) {
+func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, connID string, statusCode int, _ []byte, usageSink UsageSink) {
 	var rm map[string]any
 	if json.Unmarshal(respBody, &rm) == nil {
 		if u, ok := usage.ExtractUsageFromChunk(rm); ok {
@@ -467,10 +463,7 @@ func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, co
 		}
 	}
 
-	contentLen := len(respBody)
-	prompt := usage.EstimateInputTokens(reqBody)
-	completion := usage.EstimateOutputTokens(contentLen)
-	recordUsageSinkDirect(st, providerID, modelName, connID, prompt, completion, 0, statusCode, usageSink)
+	recordUsageSinkDirect(st, providerID, modelName, connID, 0, 0, 0, statusCode, usageSink)
 }
 
 func resolveChatExecutor(exec executor.Executor, providerID string) executor.Executor {
@@ -583,7 +576,7 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 
 func handleFallbackExhausted(w http.ResponseWriter, providerID string, excludeIDs map[string]bool, lastStatus int, lastBody []byte, lastErr error) error {
 	if len(excludeIDs) == 0 {
-		http.Error(w, `{"error":"no active connection for provider `+providerID+`"}`, http.StatusBadRequest)
+		writeChatError(w, http.StatusBadRequest, "no active connection for provider "+providerID, "invalid_request_error", "bad_request")
 		return nil
 	}
 
@@ -595,7 +588,8 @@ func handleFallbackExhausted(w http.ResponseWriter, providerID string, excludeID
 		return lastErr
 	}
 
-	http.Error(w, `{"error":"all accounts unavailable"}`, http.StatusServiceUnavailable)
+	w.Header().Set("Retry-After", "30")
+	writeChatError(w, http.StatusServiceUnavailable, "all accounts unavailable", "server_error", "service_unavailable")
 
 	return lastErr
 }

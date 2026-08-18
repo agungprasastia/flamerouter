@@ -9,17 +9,11 @@ import (
 	"strings"
 )
 
-const codexPeekBytes = 256 * 1024
+const codexPeekBytes = 4 * 1024
 
 var (
 	codexSSERetryPatterns           = []string{"server_is_overloaded", "service_unavailable_error"}
 	codexSSEAccountFallbackPatterns = []string{"selected model is at capacity", "model_at_capacity"}
-	codexSSEUserOutputPatterns      = []string{
-		"event: response.output_text.delta",
-		"event: response.function_call_arguments.delta",
-		`"type":"response.output_text.delta"`,
-		`"type":"response.function_call_arguments.delta"`,
-	}
 )
 
 func init() {
@@ -165,10 +159,15 @@ func peekCodexSSEError(rc io.ReadCloser) peekResult {
 	}
 
 	buf := make([]byte, codexPeekBytes)
-	n, err := io.ReadFull(rc, buf)
+	n, err := rc.Read(buf)
 	readData := buf[:n]
 
 	if n == 0 {
+		if err != nil {
+			_ = rc.Close() //nolint:errcheck // best effort close
+			return peekResult{body: io.NopCloser(bytes.NewReader(nil)), matchedErr: "", isFallback: false}
+		}
+
 		return peekResult{body: rc, matchedErr: "", isFallback: false}
 	}
 
@@ -179,14 +178,14 @@ func peekCodexSSEError(rc io.ReadCloser) peekResult {
 		return peekResult{body: nil, matchedErr: matched, isFallback: fb}
 	}
 
-	for _, p := range codexSSEUserOutputPatterns {
-		if strings.Contains(lower, p) {
-			break
-		}
+	// Reconstruct reader
+	if err == io.EOF {
+		_ = rc.Close() //nolint:errcheck // best effort close
+		return peekResult{body: io.NopCloser(bytes.NewReader(readData)), matchedErr: "", isFallback: false}
 	}
 
-	// Reconstruct reader
-	if err == io.EOF || err == io.ErrUnexpectedEOF {
+	if err != nil {
+		_ = rc.Close() //nolint:errcheck // best effort close
 		return peekResult{body: io.NopCloser(bytes.NewReader(readData)), matchedErr: "", isFallback: false}
 	}
 

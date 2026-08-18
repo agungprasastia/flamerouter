@@ -23,6 +23,7 @@ const (
 type RefreshResult struct {
 	AccessToken  string
 	RefreshToken string
+	IDToken      string
 	ExpiresAt    time.Time
 	Error        string
 }
@@ -158,6 +159,7 @@ func (g *GenericOAuthRefresher) Refresh(ctx context.Context, refreshToken string
 		return &RefreshResult{
 			AccessToken:  "",
 			RefreshToken: "",
+			IDToken:      "",
 			ExpiresAt:    time.Time{},
 			Error:        err.Error(),
 		}, err
@@ -166,6 +168,7 @@ func (g *GenericOAuthRefresher) Refresh(ctx context.Context, refreshToken string
 	return &RefreshResult{
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
+		IDToken:      token.IDToken,
 		ExpiresAt:    token.ExpiresAt,
 		Error:        "",
 	}, nil
@@ -183,6 +186,7 @@ func (p *providerOAuthRefresher) Refresh(ctx context.Context, refreshToken strin
 		return &RefreshResult{
 			AccessToken:  "",
 			RefreshToken: "",
+			IDToken:      "",
 			ExpiresAt:    time.Time{},
 			Error:        err.Error(),
 		}, err
@@ -191,6 +195,7 @@ func (p *providerOAuthRefresher) Refresh(ctx context.Context, refreshToken strin
 	return &RefreshResult{
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
+		IDToken:      token.IDToken,
 		ExpiresAt:    token.ExpiresAt,
 		Error:        "",
 	}, nil

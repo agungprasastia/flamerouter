@@ -2,6 +2,7 @@ package usage
 
 import (
 	"flamerouter/internal/store"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,19 +27,21 @@ type Record struct {
 
 // Tracker records usage asynchronously via a buffered channel.
 type Tracker struct {
-	st   *store.Store
-	hub  *StreamHub
-	ch   chan Record
-	done chan struct{}
+	st      *store.Store
+	hub     *StreamHub
+	ch      chan Record
+	done    chan struct{}
+	dropped atomic.Uint64
 }
 
 // NewTracker creates and starts a new usage Tracker.
 func NewTracker(st *store.Store, hub *StreamHub) *Tracker {
 	t := &Tracker{
-		st:   st,
-		hub:  hub,
-		ch:   make(chan Record, 256),
-		done: make(chan struct{}),
+		st:      st,
+		hub:     hub,
+		ch:      make(chan Record, 4096),
+		done:    make(chan struct{}),
+		dropped: atomic.Uint64{},
 	}
 	go t.loop()
 
@@ -50,7 +53,13 @@ func (t *Tracker) Track(r Record) {
 	select {
 	case t.ch <- r:
 	default:
+		t.dropped.Add(1)
 	}
+}
+
+// Dropped returns the number of records dropped when the queue was full.
+func (t *Tracker) Dropped() uint64 {
+	return t.dropped.Load()
 }
 
 func (t *Tracker) loop() {

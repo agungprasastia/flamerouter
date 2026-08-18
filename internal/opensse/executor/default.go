@@ -432,6 +432,10 @@ func (e *DefaultExecutor) prepareRequest(ctx context.Context, cred Credentials, 
 		return nil, err
 	}
 
+	if m == nil {
+		m = make(map[string]any)
+	}
+
 	m["model"] = model
 	m["stream"] = stream
 	m = e.transform(model, m)

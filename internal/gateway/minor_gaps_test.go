@@ -113,3 +113,23 @@ func TestProxyPoolTestNotFound(t *testing.T) {
 		t.Fatalf("status %d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestUsageStatsDefaultPeriod7d(t *testing.T) {
+	h, _ := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/usage/stats", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if out["period"] != "7d" {
+		t.Fatalf("expected default period 7d, got %v", out["period"])
+	}
+}

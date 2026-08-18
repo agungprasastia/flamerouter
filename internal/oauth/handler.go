@@ -347,6 +347,19 @@ func FetchProviderUserProfile(ctx context.Context, provider, accessToken string)
 	case "antigravity":
 		em := fetchAntigravityUserInfo(ctx, accessToken)
 		return em, ""
+	case "github", "copilot":
+		uinfo, err := FetchGitHubUserInfo(ctx, accessToken)
+		if err == nil && uinfo != nil {
+			em, _ := uinfo["email"].(string)    //nolint:errcheck
+			login, _ := uinfo["login"].(string) //nolint:errcheck
+			name, _ := uinfo["name"].(string)   //nolint:errcheck
+
+			if name == "" {
+				name = login
+			}
+
+			return em, name
+		}
 	}
 
 	return "", ""
@@ -779,6 +792,7 @@ func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToke
 		RefreshToken string `json:"refresh_token"`
 		TokenType    string `json:"token_type"`
 		Scope        string `json:"scope"`
+		IDToken      string `json:"id_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
 
@@ -797,6 +811,6 @@ func (h *Handler) RefreshToken(ctx context.Context, provider string, refreshToke
 		TokenType:    tokenResp.TokenType,
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
 		Scope:        tokenResp.Scope,
-		IDToken:      "",
+		IDToken:      tokenResp.IDToken,
 	}, nil
 }

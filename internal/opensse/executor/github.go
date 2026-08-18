@@ -51,6 +51,13 @@ func (e *GithubExecutor) requiresMaxCompletionTokens(model string) bool {
 
 func (e *GithubExecutor) buildHeaders(cred Credentials, stream bool) map[string][]string {
 	tok := cred.AccessToken
+
+	if cred.ProviderSpecificData != nil {
+		if ct, ok := cred.ProviderSpecificData["copilotToken"].(string); ok && ct != "" {
+			tok = ct
+		}
+	}
+
 	if tok == "" {
 		tok = cred.APIKey
 	}

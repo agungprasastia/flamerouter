@@ -258,6 +258,55 @@ func ensureModelField(m map[string]any, modelName string) {
 	m["model"] = modelName
 }
 
+func writeChatError(w http.ResponseWriter, status int, message, errType, code string) {
+	if errType == "" {
+		if status >= 500 {
+			errType = "server_error"
+		} else {
+			errType = "invalid_request_error"
+		}
+	}
+
+	if code == "" {
+		switch status {
+		case http.StatusBadRequest:
+			code = "bad_request"
+		case http.StatusUnauthorized:
+			code = "invalid_api_key"
+		case http.StatusPaymentRequired:
+			code = "payment_required"
+		case http.StatusForbidden:
+			code = "insufficient_quota"
+		case http.StatusNotFound:
+			code = "model_not_found"
+		case http.StatusTooManyRequests:
+			code = "rate_limit_exceeded"
+		case http.StatusInternalServerError:
+			code = "internal_server_error"
+		case http.StatusBadGateway:
+			code = "bad_gateway"
+		case http.StatusServiceUnavailable:
+			code = "service_unavailable"
+		case http.StatusGatewayTimeout:
+			code = "gateway_timeout"
+		}
+	}
+
+	errBody := map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    errType,
+			"code":    code,
+		},
+	}
+
+	b, _ := json.Marshal(errBody) //nolint:errcheck // keys are plain strings, cannot fail
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(b) //nolint:errcheck // best effort write
+}
+
 func jsonError(w http.ResponseWriter, status int, msg string) {
-	http.Error(w, fmt.Sprintf(`{"error":%q}`, msg), status)
+	writeChatError(w, status, msg, "", "")
 }

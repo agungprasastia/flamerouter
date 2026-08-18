@@ -334,15 +334,7 @@ func TestUsageSinkRecordedOnNonStreamWithoutUsageObject(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	if !sink.called {
-		t.Fatal("expected UsageSink.OnUsage to be called for non-stream response")
-	}
-
-	if sink.provider != "openai" || sink.model != "gpt-4o" {
-		t.Fatalf("sink provider/model = %s/%s", sink.provider, sink.model)
-	}
-
-	if sink.prompt <= 0 || sink.completion <= 0 {
-		t.Fatalf("expected estimated tokens > 0, got prompt=%d, completion=%d", sink.prompt, sink.completion)
+	if sink.called {
+		t.Fatal("expected no UsageSink.OnUsage call without usage object")
 	}
 }

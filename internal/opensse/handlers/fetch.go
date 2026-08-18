@@ -116,9 +116,17 @@ func doFetchRequest(ctx context.Context, rawURL string) ([]byte, string, int, er
 		Transport: nil,
 		Jar:       nil,
 		Timeout:   30 * time.Second,
-		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return fmt.Errorf("too many redirects")
+			}
+
+			if req == nil || req.URL == nil {
+				return fmt.Errorf("invalid redirect URL")
+			}
+
+			if reqErr := netutil.AssertPublicURL(req.URL.String()); reqErr != nil {
+				return fmt.Errorf("redirect blocked: %w", reqErr)
 			}
 
 			return nil

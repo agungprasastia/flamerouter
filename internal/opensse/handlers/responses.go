@@ -21,7 +21,7 @@ func Responses(ctx context.Context, w http.ResponseWriter, body []byte, st *stor
 func ResponsesWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
-		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		writeChatError(w, http.StatusBadRequest, "invalid json", "invalid_request_error", "bad_request")
 		return err
 	}
 
@@ -43,7 +43,7 @@ func CompactResponses(ctx context.Context, w http.ResponseWriter, body []byte, s
 func CompactResponsesWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
-		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		writeChatError(w, http.StatusBadRequest, "invalid json", "invalid_request_error", "bad_request")
 		return err
 	}
 
@@ -135,7 +135,7 @@ func applyResponsesOptionalFields(result, body map[string]any) {
 func handleResponsesChat(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback, sourceFormat string, usageSink UsageSink) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
-		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		writeChatError(w, http.StatusBadRequest, "invalid json", "invalid_request_error", "bad_request")
 		return err
 	}
 
@@ -159,7 +159,7 @@ func handleResponsesChat(ctx context.Context, w http.ResponseWriter, body []byte
 	}
 
 	if mref.Provider == "" {
-		http.Error(w, `{"error":"model must be provider/model format"}`, http.StatusBadRequest)
+		writeChatError(w, http.StatusBadRequest, "model must be provider/model format", "invalid_request_error", "bad_request")
 		return nil
 	}
 

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"flamerouter/internal/config"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -136,17 +137,26 @@ func RecordSuccess(ip string) {
 	delete(loginAttempts, ip)
 }
 
-// ClientIP prefers x-9r-real-ip, then TRUST_PROXY XFF, else "unknown".
+// ClientIP extracts client IP address safely, checking proxy headers only if trusted.
 func ClientIP(r *http.Request) string {
-	if realIP := r.Header.Get("x-9r-real-ip"); realIP != "" {
-		return realIP
-	}
-
 	if config.TrustProxy() {
+		if realIP := r.Header.Get("x-9r-real-ip"); realIP != "" {
+			return strings.TrimSpace(realIP)
+		}
+
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			return strings.TrimSpace(parts[0])
 		}
+	}
+
+	if r.RemoteAddr != "" {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err == nil && host != "" {
+			return host
+		}
+
+		return r.RemoteAddr
 	}
 
 	return "unknown"

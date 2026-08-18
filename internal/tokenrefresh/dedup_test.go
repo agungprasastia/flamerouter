@@ -35,6 +35,7 @@ func (m *mockRefresher) Refresh(_ context.Context, refreshToken string) (*tokenr
 		AccessToken:  "new-access-token",
 		RefreshToken: refreshToken,
 		ExpiresAt:    time.Now().Add(1 * time.Hour),
+		IDToken:      "",
 		Error:        "",
 	}, nil
 }
@@ -175,6 +176,7 @@ func TestConcurrentCallsFailedRefreshDoesNotCacheError(t *testing.T) {
 				AccessToken:  "recovered-token",
 				RefreshToken: "",
 				ExpiresAt:    time.Time{},
+				IDToken:      "",
 				Error:        "",
 			}, nil
 		},

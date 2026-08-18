@@ -14,6 +14,16 @@ var (
 	mcpBridge     = mcp.New()
 )
 
+var localPlugins = map[string]struct {
+	command string
+	args    []string
+}{
+	"browsermcp": {
+		command: "npx",
+		args:    []string{"-y", "@browsermcp/mcp@latest"},
+	},
+}
+
 func getMCPBridge() *mcp.Bridge {
 	mcpBridgeOnce.Do(func() {
 		if mcpBridge == nil {
@@ -48,18 +58,18 @@ func writeMCPLine(w io.Writer, line []byte, flusher http.Flusher) {
 	flusher.Flush()
 }
 
-func (s *Server) ensureMCPPluginRunning(plugin string, r *http.Request) error {
+func (s *Server) ensureMCPPluginRunning(plugin string, _ *http.Request) error {
 	br := getMCPBridge()
 	if br.Running(plugin) {
 		return nil
 	}
 
-	cmd := r.URL.Query().Get("command")
-	if cmd == "" {
+	spec, ok := localPlugins[plugin]
+	if !ok {
 		return http.ErrNotSupported
 	}
 
-	return br.Start(plugin, cmd, r.URL.Query()["arg"])
+	return br.Start(plugin, spec.command, spec.args)
 }
 
 // GET /api/mcp/{plugin}/sse — SSE stream from plugin.

@@ -35,12 +35,12 @@ func (a *APIKeys) Format(machineID, keyID string) string {
 }
 
 // Generate generates a new random API key and keyID.
-func (a *APIKeys) Generate(machineID string) (key, keyID string) {
+func (a *APIKeys) Generate(machineID string) (key, keyID string, err error) {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 	b := make([]byte, 6)
 	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		copy(b, []byte("rnd123"))
+		return "", "", err
 	}
 
 	id := make([]byte, 6)
@@ -52,7 +52,7 @@ func (a *APIKeys) Generate(machineID string) (key, keyID string) {
 	c := a.crc(machineID, keyID)
 	key = fmt.Sprintf("sk-%s-%s-%s", machineID, keyID, c)
 
-	return key, keyID
+	return key, keyID, nil
 }
 
 // Parse parses and validates an API key string.

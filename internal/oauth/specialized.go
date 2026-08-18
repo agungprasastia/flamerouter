@@ -33,12 +33,29 @@ func ExchangeGithubDeviceTokenOnce(ctx context.Context, deviceCode string, wantC
 	extra := map[string]any{}
 
 	if wantCopilot {
-		ct, exp, err := fetchCopilotToken(ctx, tok.AccessToken)
-		if err == nil && ct != "" {
+		ct, exp, ctErr := fetchCopilotToken(ctx, tok.AccessToken)
+		if ctErr == nil && ct != "" {
 			extra["copilotToken"] = ct
 			extra["copilotTokenExpiresAt"] = exp
-			// Prefer copilot token as access for github executor
-			tok.AccessToken = ct
+		}
+	}
+
+	uinfo, err := fetchGitHubUserInfo(ctx, tok.AccessToken)
+	if err == nil && uinfo != nil {
+		if id, ok := uinfo["id"]; ok {
+			extra["githubUserId"] = id
+		}
+
+		if login, ok := uinfo["login"].(string); ok && login != "" {
+			extra["githubLogin"] = login
+		}
+
+		if name, ok := uinfo["name"].(string); ok && name != "" {
+			extra["githubName"] = name
+		}
+
+		if email, ok := uinfo["email"].(string); ok && email != "" {
+			extra["githubEmail"] = email
 		}
 	}
 
@@ -64,16 +81,86 @@ func ExchangeGithubDeviceToken(ctx context.Context, deviceCode string, wantCopil
 	extra := map[string]any{}
 
 	if wantCopilot {
-		ct, exp, err := fetchCopilotToken(ctx, tok.AccessToken)
-		if err == nil && ct != "" {
+		ct, exp, ctErr := fetchCopilotToken(ctx, tok.AccessToken)
+		if ctErr == nil && ct != "" {
 			extra["copilotToken"] = ct
 			extra["copilotTokenExpiresAt"] = exp
-			// Prefer copilot token as access for github executor
-			tok.AccessToken = ct
+		}
+	}
+
+	uinfo, err := fetchGitHubUserInfo(ctx, tok.AccessToken)
+	if err == nil && uinfo != nil {
+		if id, ok := uinfo["id"]; ok {
+			extra["githubUserId"] = id
+		}
+
+		if login, ok := uinfo["login"].(string); ok && login != "" {
+			extra["githubLogin"] = login
+		}
+
+		if name, ok := uinfo["name"].(string); ok && name != "" {
+			extra["githubName"] = name
+		}
+
+		if email, ok := uinfo["email"].(string); ok && email != "" {
+			extra["githubEmail"] = email
 		}
 	}
 
 	return tok, extra, nil
+}
+
+// FetchGitHubUserInfo queries GitHub's /user endpoint for the authenticated user's profile.
+func FetchGitHubUserInfo(ctx context.Context, githubToken string) (map[string]any, error) {
+	return fetchGitHubUserInfo(ctx, githubToken)
+}
+
+func fetchGitHubUserInfo(ctx context.Context, githubToken string) (map[string]any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+githubToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "GitHubCopilotChat/0.25.1")
+	req.Header.Set("x-github-api-version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("empty github user info response")
+	}
+
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github user info: %s", string(body))
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// FetchCopilotToken exchanges a GitHub access token for a Copilot chat token.
+func FetchCopilotToken(ctx context.Context, githubToken string) (string, int64, error) {
+	return fetchCopilotToken(ctx, githubToken)
 }
 
 func fetchCopilotToken(ctx context.Context, githubToken string) (string, int64, error) {
@@ -87,6 +174,7 @@ func fetchCopilotToken(ctx context.Context, githubToken string) (string, int64, 
 	req.Header.Set("Editor-Version", "vscode/1.98.2")
 	req.Header.Set("Editor-Plugin-Version", "copilot-chat/0.25.1")
 	req.Header.Set("User-Agent", "GitHubCopilotChat/0.25.1")
+	req.Header.Set("x-github-api-version", "2022-11-28")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
