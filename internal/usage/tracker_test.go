@@ -29,6 +29,8 @@ func TestTracker_PersistsUsage(t *testing.T) {
 		ConnectionID:     "c1",
 		PromptTokens:     10,
 		CompletionTokens: 5,
+		CachedTokens:     2,
+		Cost:             0.0001,
 		StatusCode:       200,
 		RequestBody:      "",
 		Client:           "",

@@ -15,7 +15,7 @@ import (
 )
 
 // Fetch handles web fetch requests.
-func Fetch(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, _ executor.Executor, fb *fallback.Fallback) error {
+func Fetch(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, _ executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
@@ -33,14 +33,14 @@ func Fetch(ctx context.Context, w http.ResponseWriter, body []byte, st *store.St
 		return directFetch(ctx, w, rawURL, m)
 	}
 
-	return fetchViaProvider(ctx, w, rawURL, modelStr, m, st, fb)
+	return fetchViaProvider(ctx, w, rawURL, modelStr, m, body, st, fb, usageSink)
 }
 
 func shouldDirectFetch(modelStr string) bool {
 	return modelStr == "" || strings.HasPrefix(modelStr, "local/") || strings.HasPrefix(modelStr, "fetch/")
 }
 
-func fetchViaProvider(ctx context.Context, w http.ResponseWriter, rawURL, modelStr string, m map[string]any, st *store.Store, fb *fallback.Fallback) error {
+func fetchViaProvider(ctx context.Context, w http.ResponseWriter, rawURL, modelStr string, m map[string]any, reqBody []byte, st *store.Store, fb *fallback.Fallback, usageSink UsageSink) error {
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
 	if errMsg != "" || conn == nil {
 		return directFetch(ctx, w, rawURL, m)
@@ -64,7 +64,7 @@ func fetchViaProvider(ctx context.Context, w http.ResponseWriter, rawURL, modelS
 		fb.ClearError(conn.ID)
 	}
 
-	return writeResult(w, res)
+	return writeResultRecordUsage(w, res, st, providerID, modelName, conn.ID, reqBody, usageSink)
 }
 
 func directFetch(ctx context.Context, w http.ResponseWriter, rawURL string, _ map[string]any) error {

@@ -203,6 +203,28 @@ func writeResult(w http.ResponseWriter, res *executor.Result) error {
 	return nil
 }
 
+func writeResultRecordUsage(w http.ResponseWriter, res *executor.Result, st *store.Store, providerID, modelName, connID string, reqBody []byte, usageSink UsageSink) error {
+	defer res.Body.Close() //nolint:errcheck // best-effort body close
+
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+
+	recordUsageSink(st, respBody, providerID, modelName, connID, res.StatusCode, reqBody, usageSink)
+
+	ct := res.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "application/json"
+	}
+
+	w.Header().Set("Content-Type", ct)
+	w.WriteHeader(res.StatusCode)
+	_, _ = w.Write(respBody) //nolint:errcheck // handler write
+
+	return nil
+}
+
 func ensureModelField(m map[string]any, modelName string) {
 	m["model"] = modelName
 }

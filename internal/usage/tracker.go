@@ -16,9 +16,11 @@ type Record struct {
 	Provider         string
 	ErrorText        string
 	ResponsePreview  string
+	Cost             float64
 	StatusCode       int
 	CompletionTokens int
 	PromptTokens     int
+	CachedTokens     int
 	DurationMs       int64
 }
 
@@ -53,6 +55,13 @@ func (t *Tracker) Track(r Record) {
 
 func (t *Tracker) loop() {
 	for r := range t.ch {
+		cost := r.Cost
+		if cost == 0 && (r.PromptTokens > 0 || r.CompletionTokens > 0) {
+			cost = CalculateCost(r.Provider, r.Model, r.PromptTokens, r.CachedTokens, r.CompletionTokens)
+		}
+
+		r.Cost = cost
+
 		if err := t.st.InsertRequestDetail(store.RequestDetail{
 			ID:               "",
 			Timestamp:        "",
@@ -63,6 +72,8 @@ func (t *Tracker) loop() {
 			DurationMs:       int(r.DurationMs),
 			PromptTokens:     r.PromptTokens,
 			CompletionTokens: r.CompletionTokens,
+			CachedTokens:     r.CachedTokens,
+			Cost:             cost,
 			RequestBody:      r.RequestBody,
 			ResponsePreview:  r.ResponsePreview,
 			ErrorText:        r.ErrorText,
@@ -74,7 +85,7 @@ func (t *Tracker) loop() {
 		}
 
 		date := time.Now().UTC().Format("2006-01-02")
-		if err := t.st.InsertUsageDaily(date, r.Provider, r.Model, 1, r.PromptTokens, r.CompletionTokens); err != nil {
+		if err := t.st.InsertUsageDaily(date, r.Provider, r.Model, 1, r.PromptTokens, r.CompletionTokens, r.CachedTokens, cost); err != nil {
 			_ = err
 		}
 

@@ -14,9 +14,11 @@ type RequestDetail struct {
 	Client           string
 	ID               string
 	ErrorText        string
+	Cost             float64
 	PromptTokens     int
 	DurationMs       int
 	CompletionTokens int
+	CachedTokens     int
 	StatusCode       int
 }
 
@@ -29,11 +31,11 @@ func (s *Store) InsertRequestDetail(d RequestDetail) error {
 	_, err := s.db.Exec(
 		`INSERT INTO request_details(
 			id, timestamp, provider, model, connection_id, status_code, duration_ms,
-			prompt_tokens, completion_tokens, request_body, response_preview, error_text,
+			prompt_tokens, completion_tokens, cached_tokens, cost, request_body, response_preview, error_text,
 			client, source_format, target_format
-		) VALUES(?, COALESCE(NULLIF(?,''), datetime('now')),?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES(?, COALESCE(NULLIF(?,''), datetime('now')),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.ID, d.Timestamp, d.Provider, d.Model, d.ConnectionID,
-		d.StatusCode, d.DurationMs, d.PromptTokens, d.CompletionTokens,
+		d.StatusCode, d.DurationMs, d.PromptTokens, d.CompletionTokens, d.CachedTokens, d.Cost,
 		d.RequestBody, d.ResponsePreview, d.ErrorText,
 		d.Client, d.SourceFormat, d.TargetFormat,
 	)
@@ -50,7 +52,7 @@ func (s *Store) QueryRequestDetails(limit int) ([]RequestDetail, error) {
 	rows, err := s.db.Query(
 		`SELECT id, COALESCE(timestamp,''), provider, model, COALESCE(connection_id,''),
 		        COALESCE(status_code,0), COALESCE(duration_ms,0),
-		        COALESCE(prompt_tokens,0), COALESCE(completion_tokens,0),
+		        COALESCE(prompt_tokens,0), COALESCE(completion_tokens,0), COALESCE(cached_tokens,0), COALESCE(cost,0.0),
 		        COALESCE(request_body,''), COALESCE(response_preview,''), COALESCE(error_text,''),
 		        COALESCE(client,''), COALESCE(source_format,''), COALESCE(target_format,'')
 		 FROM request_details ORDER BY timestamp DESC LIMIT ?`,
@@ -72,7 +74,7 @@ func (s *Store) QueryRequestDetails(limit int) ([]RequestDetail, error) {
 		var d RequestDetail
 		if err := rows.Scan(
 			&d.ID, &d.Timestamp, &d.Provider, &d.Model, &d.ConnectionID,
-			&d.StatusCode, &d.DurationMs, &d.PromptTokens, &d.CompletionTokens,
+			&d.StatusCode, &d.DurationMs, &d.PromptTokens, &d.CompletionTokens, &d.CachedTokens, &d.Cost,
 			&d.RequestBody, &d.ResponsePreview, &d.ErrorText,
 			&d.Client, &d.SourceFormat, &d.TargetFormat,
 		); err != nil {

@@ -254,6 +254,8 @@ func testRequestDetails(t *testing.T, st *store.Store) {
 		DurationMs:       0,
 		PromptTokens:     10,
 		CompletionTokens: 5,
+		CachedTokens:     2,
+		Cost:             0.0001,
 		RequestBody:      "",
 		ResponsePreview:  "",
 		ErrorText:        "",
@@ -273,11 +275,11 @@ func testRequestDetails(t *testing.T, st *store.Store) {
 func testUsageStats(t *testing.T, st *store.Store) {
 	t.Helper()
 
-	if err := st.InsertUsageDaily("2026-07-20", "openai", "gpt-4o", 1, 10, 5); err != nil {
+	if err := st.InsertUsageDaily("2026-07-20", "openai", "gpt-4o", 1, 10, 5, 2, 0.0001); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := st.InsertUsageDaily("2026-07-20", "openai", "gpt-4o", 2, 20, 10); err != nil {
+	if err := st.InsertUsageDaily("2026-07-20", "openai", "gpt-4o", 2, 20, 10, 4, 0.0002); err != nil {
 		t.Fatal(err)
 	}
 

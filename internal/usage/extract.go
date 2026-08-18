@@ -6,14 +6,17 @@ import (
 	"strings"
 )
 
-// ExtractedUsage carries normalized prompt and completion tokens.
+// ExtractedUsage carries token counts parsed from a provider SSE chunk.
 type ExtractedUsage struct {
 	PromptTokens     int
 	CompletionTokens int
+	CachedTokens     int
 	HasUsage         bool
 }
 
-// EstimateInputTokens estimates prompt tokens based on request body character length (~4 chars/token).
+var noUsage = ExtractedUsage{PromptTokens: 0, CompletionTokens: 0, CachedTokens: 0, HasUsage: false}
+
+// EstimateInputTokens guesses prompt tokens from request body size (~4 chars/token).
 func EstimateInputTokens(body []byte) int {
 	if len(body) == 0 {
 		return 0
@@ -22,7 +25,7 @@ func EstimateInputTokens(body []byte) int {
 	return int(math.Ceil(float64(len(body)) / 4.0))
 }
 
-// EstimateOutputTokens estimates completion tokens based on content length (~4 chars/token, min 1).
+// EstimateOutputTokens guesses completion tokens from content length (~4 chars/token, min 1).
 func EstimateOutputTokens(contentLength int) int {
 	if contentLength <= 0 {
 		return 0
@@ -36,53 +39,95 @@ func EstimateOutputTokens(contentLength int) int {
 	return tokens
 }
 
-// ExtractUsageFromChunk inspects an SSE chunk object for token usage data (OpenAI, Claude, Gemini, Responses format).
-func ExtractUsageFromChunk(chunk map[string]any) (ExtractedUsage, bool) {
-	if chunk == nil {
-		return ExtractedUsage{PromptTokens: 0, CompletionTokens: 0, HasUsage: false}, false
+func extractOpenAIUsage(chunk map[string]any) (ExtractedUsage, bool) {
+	u, ok := chunk["usage"].(map[string]any)
+	if !ok || u == nil {
+		return noUsage, false
 	}
 
-	// 1. OpenAI / standard chunk.usage
-	if u, ok := chunk["usage"].(map[string]any); ok && u != nil {
-		prompt := getIntVal(u, "prompt_tokens")
-		completion := getIntVal(u, "completion_tokens")
+	prompt := getIntVal(u, "prompt_tokens")
+	completion := getIntVal(u, "completion_tokens")
 
-		if prompt > 0 || completion > 0 {
-			return ExtractedUsage{PromptTokens: prompt, CompletionTokens: completion, HasUsage: true}, true
+	cached := getIntVal(u, "cached_tokens")
+	if cached == 0 {
+		if details, okD := u["prompt_tokens_details"].(map[string]any); okD {
+			cached = getIntVal(details, "cached_tokens")
 		}
 	}
 
-	// 2. Claude format (message_start / message_delta)
-	if msg, ok := chunk["message"].(map[string]any); ok && msg != nil {
-		if u, ok := msg["usage"].(map[string]any); ok && u != nil {
-			prompt := getIntVal(u, "input_tokens")
-			completion := getIntVal(u, "output_tokens")
-
-			if prompt > 0 || completion > 0 {
-				return ExtractedUsage{PromptTokens: prompt, CompletionTokens: completion, HasUsage: true}, true
-			}
-		}
+	if cached == 0 {
+		cached = getIntVal(u, "prompt_cache_hit_tokens")
 	}
 
-	// 3. OpenAI Responses API (response.completed / response.done)
-	if resp, ok := chunk["response"].(map[string]any); ok && resp != nil {
-		if u, ok := resp["usage"].(map[string]any); ok && u != nil {
-			prompt := getIntVal(u, "input_tokens")
-			if prompt == 0 {
-				prompt = getIntVal(u, "prompt_tokens")
-			}
-
-			completion := getIntVal(u, "output_tokens")
-			if completion == 0 {
-				completion = getIntVal(u, "completion_tokens")
-			}
-
-			if prompt > 0 || completion > 0 {
-				return ExtractedUsage{PromptTokens: prompt, CompletionTokens: completion, HasUsage: true}, true
-			}
-		}
+	if cached == 0 {
+		cached = getIntVal(u, "cache_read_input_tokens")
 	}
 
+	if prompt > 0 || completion > 0 {
+		return ExtractedUsage{PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, HasUsage: true}, true
+	}
+
+	return noUsage, false
+}
+
+func extractClaudeUsage(chunk map[string]any) (ExtractedUsage, bool) {
+	msg, ok := chunk["message"].(map[string]any)
+	if !ok || msg == nil {
+		return noUsage, false
+	}
+
+	u, ok := msg["usage"].(map[string]any)
+	if !ok || u == nil {
+		return noUsage, false
+	}
+
+	prompt := getIntVal(u, "input_tokens")
+	completion := getIntVal(u, "output_tokens")
+	cached := getIntVal(u, "cache_read_input_tokens")
+	cacheCreation := getIntVal(u, "cache_creation_input_tokens")
+	totalPrompt := prompt + cached + cacheCreation
+
+	if totalPrompt > 0 || completion > 0 {
+		return ExtractedUsage{PromptTokens: totalPrompt, CompletionTokens: completion, CachedTokens: cached, HasUsage: true}, true
+	}
+
+	return noUsage, false
+}
+
+func extractResponsesUsage(chunk map[string]any) (ExtractedUsage, bool) {
+	resp, ok := chunk["response"].(map[string]any)
+	if !ok || resp == nil {
+		return noUsage, false
+	}
+
+	u, ok := resp["usage"].(map[string]any)
+	if !ok || u == nil {
+		return noUsage, false
+	}
+
+	prompt := getIntVal(u, "input_tokens")
+	if prompt == 0 {
+		prompt = getIntVal(u, "prompt_tokens")
+	}
+
+	completion := getIntVal(u, "output_tokens")
+	if completion == 0 {
+		completion = getIntVal(u, "completion_tokens")
+	}
+
+	cached := 0
+	if details, okD := u["input_tokens_details"].(map[string]any); okD {
+		cached = getIntVal(details, "cached_tokens")
+	}
+
+	if prompt > 0 || completion > 0 {
+		return ExtractedUsage{PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, HasUsage: true}, true
+	}
+
+	return noUsage, false
+}
+
+func extractGeminiUsage(chunk map[string]any) (ExtractedUsage, bool) {
 	usageMeta, ok := chunk["usageMetadata"].(map[string]any)
 	if !ok {
 		if r, ok := chunk["response"].(map[string]any); ok && r != nil {
@@ -99,13 +144,39 @@ func ExtractUsageFromChunk(chunk map[string]any) (ExtractedUsage, bool) {
 	if usageMeta != nil {
 		prompt := getIntVal(usageMeta, "promptTokenCount")
 		completion := getIntVal(usageMeta, "candidatesTokenCount")
+		cached := getIntVal(usageMeta, "cachedContentTokenCount")
 
 		if prompt > 0 || completion > 0 {
-			return ExtractedUsage{PromptTokens: prompt, CompletionTokens: completion, HasUsage: true}, true
+			return ExtractedUsage{PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, HasUsage: true}, true
 		}
 	}
 
-	return ExtractedUsage{PromptTokens: 0, CompletionTokens: 0, HasUsage: false}, false
+	return noUsage, false
+}
+
+// ExtractUsageFromChunk inspects an SSE chunk object for token usage data (OpenAI, Claude, Gemini, Responses format).
+func ExtractUsageFromChunk(chunk map[string]any) (ExtractedUsage, bool) {
+	if chunk == nil {
+		return ExtractedUsage{PromptTokens: 0, CompletionTokens: 0, CachedTokens: 0, HasUsage: false}, false
+	}
+
+	if u, ok := extractOpenAIUsage(chunk); ok {
+		return u, true
+	}
+
+	if u, ok := extractClaudeUsage(chunk); ok {
+		return u, true
+	}
+
+	if u, ok := extractResponsesUsage(chunk); ok {
+		return u, true
+	}
+
+	if u, ok := extractGeminiUsage(chunk); ok {
+		return u, true
+	}
+
+	return ExtractedUsage{PromptTokens: 0, CompletionTokens: 0, CachedTokens: 0, HasUsage: false}, false
 }
 
 // ExtractContentLengthFromChunk calculates the character length of content delta in a chunk.

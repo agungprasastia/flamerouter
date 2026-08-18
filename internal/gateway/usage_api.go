@@ -37,18 +37,27 @@ type usageItem struct {
 	Cost             float64 `json:"cost"`
 }
 
-func aggregateDailyUsage(dailyRows []store.UsageDaily) (int, int, int, map[string]map[string]any, map[string]*usageItem) {
+func aggregateDailyUsage(dailyRows []store.UsageDaily) (int, int, int, int, float64, map[string]map[string]any, map[string]*usageItem) {
 	byProvider := make(map[string]map[string]any)
 	byModel := make(map[string]*usageItem)
 
 	totalRequests := 0
 	totalPrompt := 0
 	totalCompletion := 0
+	totalCached := 0
+	totalCost := 0.0
 
 	for _, row := range dailyRows {
+		cost := row.Cost
+		if cost == 0 && (row.PromptTokens > 0 || row.CompletionTokens > 0) {
+			cost = usage.CalculateCost(row.Provider, row.Model, row.PromptTokens, row.CachedTokens, row.CompletionTokens)
+		}
+
 		totalRequests += row.Requests
 		totalPrompt += row.PromptTokens
 		totalCompletion += row.CompletionTokens
+		totalCached += row.CachedTokens
+		totalCost += cost
 
 		pData, ok := byProvider[row.Provider]
 		if !ok {
@@ -62,9 +71,13 @@ func aggregateDailyUsage(dailyRows []store.UsageDaily) (int, int, int, map[strin
 		pReq, _ := pData["requests"].(int)          //nolint:errcheck // safe type assertion
 		pPrompt, _ := pData["promptTokens"].(int)   //nolint:errcheck // safe type assertion
 		pComp, _ := pData["completionTokens"].(int) //nolint:errcheck // safe type assertion
+		pCached, _ := pData["cachedTokens"].(int)   //nolint:errcheck // safe type assertion
+		pCost, _ := pData["cost"].(float64)         //nolint:errcheck // safe type assertion
 		pData["requests"] = pReq + row.Requests
 		pData["promptTokens"] = pPrompt + row.PromptTokens
 		pData["completionTokens"] = pComp + row.CompletionTokens
+		pData["cachedTokens"] = pCached + row.CachedTokens
+		pData["cost"] = pCost + cost
 
 		modelKey := row.Model
 		if row.Provider != "" {
@@ -91,13 +104,15 @@ func aggregateDailyUsage(dailyRows []store.UsageDaily) (int, int, int, map[strin
 		mItem.Requests += row.Requests
 		mItem.PromptTokens += row.PromptTokens
 		mItem.CompletionTokens += row.CompletionTokens
+		mItem.CachedTokens += row.CachedTokens
+		mItem.Cost += cost
 
 		if row.Date > mItem.LastUsed {
 			mItem.LastUsed = row.Date
 		}
 	}
 
-	return totalRequests, totalPrompt, totalCompletion, byProvider, byModel
+	return totalRequests, totalPrompt, totalCompletion, totalCached, totalCost, byProvider, byModel
 }
 
 func resolveAccountName(connID string, connMap map[string]string) string {
@@ -178,12 +193,19 @@ func (s *Server) buildRecentRequests(reqDetails []store.RequestDetail) []usage.R
 				status = "error"
 			}
 
+			cost := d.Cost
+			if cost == 0 && (d.PromptTokens > 0 || d.CompletionTokens > 0) {
+				cost = usage.CalculateCost(d.Provider, d.Model, d.PromptTokens, d.CachedTokens, d.CompletionTokens)
+			}
+
 			recent = append(recent, usage.RecentRequestItem{
 				Timestamp:        d.Timestamp,
 				Model:            d.Model,
 				Provider:         d.Provider,
 				PromptTokens:     d.PromptTokens,
 				CompletionTokens: d.CompletionTokens,
+				CachedTokens:     d.CachedTokens,
+				Cost:             cost,
 				DurationMs:       int64(d.DurationMs),
 				Status:           status,
 			})
@@ -233,7 +255,7 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 		reqDetails = nil
 	}
 
-	totalReqs, totalPrompt, totalCompletion, byProvider, byModel := aggregateDailyUsage(dailyRows)
+	totalReqs, totalPrompt, totalCompletion, totalCached, totalCost, byProvider, byModel := aggregateDailyUsage(dailyRows)
 	byAccount := enrichUsageDetails(reqDetails, connMap, byModel)
 	recent := s.buildRecentRequests(reqDetails)
 
@@ -244,8 +266,8 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 		"totalRequests":         totalReqs,
 		"totalPromptTokens":     totalPrompt,
 		"totalCompletionTokens": totalCompletion,
-		"totalCachedTokens":     0,
-		"totalCost":             0.0,
+		"totalCachedTokens":     totalCached,
+		"totalCost":             totalCost,
 		"byProvider":            byProvider,
 		"byModel":               byModel,
 		"byAccount":             byAccount,
@@ -487,10 +509,15 @@ func (s *Server) handleUsageChart(w http.ResponseWriter, r *http.Request) {
 			lbl = t.Format("Jan 2")
 		}
 
+		cost := row.Cost
+		if cost == 0 && (row.PromptTokens > 0 || row.CompletionTokens > 0) {
+			cost = usage.CalculateCost(row.Provider, row.Model, row.PromptTokens, row.CachedTokens, row.CompletionTokens)
+		}
+
 		points = append(points, chartPoint{
 			Label:  lbl,
 			Tokens: row.PromptTokens + row.CompletionTokens,
-			Cost:   0.0,
+			Cost:   cost,
 		})
 	}
 

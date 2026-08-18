@@ -87,7 +87,7 @@ var (
 
 // UsageSink is an optional async usage interface (gateway wires usage.Tracker).
 type UsageSink interface {
-	OnUsage(provider, model, connectionID string, prompt, completion, statusCode int)
+	OnUsage(provider, model, connectionID string, prompt, completion, cached, statusCode int)
 }
 
 // ChatOptions specifies optional chat flags (token savers, source override).
@@ -336,6 +336,7 @@ func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.
 	finalUsage := usage.ExtractedUsage{
 		PromptTokens:     0,
 		CompletionTokens: 0,
+		CachedTokens:     0,
 		HasUsage:         false,
 	}
 	contentLen := 0
@@ -365,6 +366,10 @@ func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.
 				finalUsage.CompletionTokens = u.CompletionTokens
 			}
 
+			if u.CachedTokens > finalUsage.CachedTokens {
+				finalUsage.CachedTokens = u.CachedTokens
+			}
+
 			finalUsage.HasUsage = true
 		}
 
@@ -388,6 +393,10 @@ func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.
 
 		if state.Usage.CompletionTokens > finalUsage.CompletionTokens {
 			finalUsage.CompletionTokens = state.Usage.CompletionTokens
+		}
+
+		if state.Usage.CacheReadTokens > finalUsage.CachedTokens {
+			finalUsage.CachedTokens = state.Usage.CacheReadTokens
 		}
 
 		finalUsage.HasUsage = true
@@ -428,7 +437,7 @@ func writeTranslatedNonStream(w http.ResponseWriter, respBody []byte, sourceForm
 	_, _ = w.Write(respBody) //nolint:errcheck // handler write
 }
 
-func recordUsageSinkDirect(st *store.Store, providerID, modelName, connID string, prompt, completion, statusCode int, usageSink UsageSink) {
+func recordUsageSinkDirect(st *store.Store, providerID, modelName, connID string, prompt, completion, cached, statusCode int, usageSink UsageSink) {
 	if prompt == 0 && completion == 0 {
 		return
 	}
@@ -438,7 +447,7 @@ func recordUsageSinkDirect(st *store.Store, providerID, modelName, connID string
 	}
 
 	if usageSink != nil {
-		usageSink.OnUsage(providerID, modelName, connID, prompt, completion, statusCode)
+		usageSink.OnUsage(providerID, modelName, connID, prompt, completion, cached, statusCode)
 	}
 }
 
@@ -446,14 +455,15 @@ func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, co
 	var rm map[string]any
 	if json.Unmarshal(respBody, &rm) == nil {
 		if u, ok := usage.ExtractUsageFromChunk(rm); ok {
-			recordUsageSinkDirect(st, providerID, modelName, connID, u.PromptTokens, u.CompletionTokens, statusCode, usageSink)
+			recordUsageSinkDirect(st, providerID, modelName, connID, u.PromptTokens, u.CompletionTokens, u.CachedTokens, statusCode, usageSink)
 			return
 		}
 
 		if usageData, ok := rm["usage"].(map[string]any); ok {
 			prompt, _ := usageData["prompt_tokens"].(float64)         //nolint:errcheck // optional type assertion
 			completion, _ := usageData["completion_tokens"].(float64) //nolint:errcheck // optional type assertion
-			recordUsageSinkDirect(st, providerID, modelName, connID, int(prompt), int(completion), statusCode, usageSink)
+			cached, _ := usageData["cached_tokens"].(float64)         //nolint:errcheck // optional type assertion
+			recordUsageSinkDirect(st, providerID, modelName, connID, int(prompt), int(completion), int(cached), statusCode, usageSink)
 
 			return
 		}
@@ -462,7 +472,7 @@ func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, co
 	contentLen := len(respBody)
 	prompt := usage.EstimateInputTokens(reqBody)
 	completion := usage.EstimateOutputTokens(contentLen)
-	recordUsageSinkDirect(st, providerID, modelName, connID, prompt, completion, statusCode, usageSink)
+	recordUsageSinkDirect(st, providerID, modelName, connID, prompt, completion, 0, statusCode, usageSink)
 }
 
 func resolveChatExecutor(exec executor.Executor, providerID string) executor.Executor {
@@ -597,6 +607,7 @@ func pipeRawStreamWithUsage(w http.ResponseWriter, flusher http.Flusher, body io
 	finalUsage := usage.ExtractedUsage{
 		PromptTokens:     0,
 		CompletionTokens: 0,
+		CachedTokens:     0,
 		HasUsage:         false,
 	}
 	contentLen := 0
@@ -619,6 +630,10 @@ func pipeRawStreamWithUsage(w http.ResponseWriter, flusher http.Flusher, body io
 
 					if u.CompletionTokens > finalUsage.CompletionTokens {
 						finalUsage.CompletionTokens = u.CompletionTokens
+					}
+
+					if u.CachedTokens > finalUsage.CachedTokens {
+						finalUsage.CachedTokens = u.CachedTokens
 					}
 
 					finalUsage.HasUsage = true
@@ -657,7 +672,7 @@ func completeChatResponse(_ context.Context, w http.ResponseWriter, res *executo
 		}
 
 		fb.ClearError(connID)
-		recordUsageSinkDirect(st, providerID, modelName, connID, extracted.PromptTokens, extracted.CompletionTokens, res.StatusCode, usageSink)
+		recordUsageSinkDirect(st, providerID, modelName, connID, extracted.PromptTokens, extracted.CompletionTokens, extracted.CachedTokens, res.StatusCode, usageSink)
 
 		return
 	}
@@ -776,7 +791,7 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 			extracted = pipeRawStreamWithUsage(w, flusher, res.Body, body)
 		}
 
-		recordUsageSinkDirect(st, providerID, modelName, conn.ID, extracted.PromptTokens, extracted.CompletionTokens, res.StatusCode, usageSink)
+		recordUsageSinkDirect(st, providerID, modelName, conn.ID, extracted.PromptTokens, extracted.CompletionTokens, extracted.CachedTokens, res.StatusCode, usageSink)
 
 		return nil
 	}

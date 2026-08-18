@@ -595,7 +595,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 // usageBridge adapts usage.Tracker to handlers.UsageSink.
 type usageBridge struct{ t *usage.Tracker }
 
-func (u usageBridge) OnUsage(provider, model, connectionID string, prompt, completion, statusCode int) {
+func (u usageBridge) OnUsage(provider, model, connectionID string, prompt, completion, cached, statusCode int) {
 	if u.t == nil {
 		return
 	}
@@ -606,6 +606,8 @@ func (u usageBridge) OnUsage(provider, model, connectionID string, prompt, compl
 		ConnectionID:     connectionID,
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
+		CachedTokens:     cached,
+		Cost:             0,
 		StatusCode:       statusCode,
 		RequestBody:      "",
 		Client:           "",
@@ -685,7 +687,7 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = handlers.Embeddings(r.Context(), w, body, s.st, s.exec, s.fb) //nolint:errcheck // handler writes error response
+	_ = handlers.Embeddings(r.Context(), w, body, s.st, s.exec, s.fb, usageBridge{s.tracker}) //nolint:errcheck // handler writes error response
 }
 
 //nolint:dupl // intentional per-route handler isolation
@@ -825,7 +827,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = handlers.Search(r.Context(), w, body, s.st, s.exec, s.fb) //nolint:errcheck // handler writes error response
+	_ = handlers.Search(r.Context(), w, body, s.st, s.exec, s.fb, usageBridge{s.tracker}) //nolint:errcheck // handler writes error response
 }
 
 //nolint:dupl // intentional per-route handler isolation
@@ -846,7 +848,7 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = handlers.Fetch(r.Context(), w, body, s.st, s.exec, s.fb) //nolint:errcheck // handler writes error response
+	_ = handlers.Fetch(r.Context(), w, body, s.st, s.exec, s.fb, usageBridge{s.tracker}) //nolint:errcheck // handler writes error response
 }
 
 func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {

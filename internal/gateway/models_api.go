@@ -160,7 +160,7 @@ func buildProbeBody(kind, model string) []byte {
 func (s *Server) executeModelProbe(ctx context.Context, kind string, probeBody []byte, rec http.ResponseWriter) error {
 	switch kind {
 	case "embedding":
-		return handlers.Embeddings(ctx, rec, probeBody, s.st, s.exec, s.fb)
+		return handlers.Embeddings(ctx, rec, probeBody, s.st, s.exec, s.fb, nil)
 	case "image":
 		return handlers.ImageGeneration(ctx, rec, probeBody, s.st, s.exec, s.fb)
 	default:

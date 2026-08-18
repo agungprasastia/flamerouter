@@ -9,13 +9,15 @@ import (
 
 // RecentRequestItem matches the frontend RecentRequests table item shape.
 type RecentRequestItem struct {
-	Timestamp        string `json:"timestamp"`
-	Model            string `json:"model"`
-	Provider         string `json:"provider"`
-	Status           string `json:"status"`
-	PromptTokens     int    `json:"promptTokens"`
-	CompletionTokens int    `json:"completionTokens"`
-	DurationMs       int64  `json:"durationMs,omitempty"`
+	Timestamp        string  `json:"timestamp"`
+	Model            string  `json:"model"`
+	Provider         string  `json:"provider"`
+	Status           string  `json:"status"`
+	PromptTokens     int     `json:"promptTokens"`
+	CompletionTokens int     `json:"completionTokens"`
+	CachedTokens     int     `json:"cachedTokens"`
+	Cost             float64 `json:"cost,omitempty"`
+	DurationMs       int64   `json:"durationMs,omitempty"`
 }
 
 // ActiveRequestItem matches the frontend active requests schema.
@@ -77,6 +79,8 @@ func (h *StreamHub) PushRecent(r Record) {
 		Provider:         r.Provider,
 		PromptTokens:     r.PromptTokens,
 		CompletionTokens: r.CompletionTokens,
+		CachedTokens:     r.CachedTokens,
+		Cost:             r.Cost,
 		DurationMs:       r.DurationMs,
 		Status:           status,
 	}

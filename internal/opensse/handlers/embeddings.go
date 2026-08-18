@@ -10,7 +10,7 @@ import (
 )
 
 // Embeddings handles OpenAI embeddings requests.
-func Embeddings(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, _ executor.Executor, fb *fallback.Fallback) error {
+func Embeddings(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, _ executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
@@ -62,5 +62,5 @@ func Embeddings(ctx context.Context, w http.ResponseWriter, body []byte, st *sto
 		fb.ClearError(conn.ID)
 	}
 
-	return writeResult(w, res)
+	return writeResultRecordUsage(w, res, st, providerID, modelName, conn.ID, body, usageSink)
 }

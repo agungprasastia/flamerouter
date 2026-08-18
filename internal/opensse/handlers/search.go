@@ -15,7 +15,7 @@ import (
 )
 
 // Search handles search requests.
-func Search(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, _ executor.Executor, fb *fallback.Fallback) error {
+func Search(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, _ executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
@@ -38,10 +38,10 @@ func Search(ctx context.Context, w http.ResponseWriter, body []byte, st *store.S
 		modelStr = "searxng/search"
 	}
 
-	return executeSearch(ctx, w, st, fb, modelStr, query, m)
+	return executeSearch(ctx, w, st, fb, modelStr, query, m, body, usageSink)
 }
 
-func executeSearch(ctx context.Context, w http.ResponseWriter, st *store.Store, fb *fallback.Fallback, modelStr, query string, m map[string]any) error {
+func executeSearch(ctx context.Context, w http.ResponseWriter, st *store.Store, fb *fallback.Fallback, modelStr, query string, m map[string]any, reqBody []byte, usageSink UsageSink) error {
 	providerID, modelName, conn, errMsg := resolveProviderConn(st, fb, modelStr)
 
 	// Built-in searxng path when no connection or provider is searxng
@@ -68,7 +68,7 @@ func executeSearch(ctx context.Context, w http.ResponseWriter, st *store.Store, 
 		fb.ClearError(conn.ID)
 	}
 
-	return writeResult(w, res)
+	return writeResultRecordUsage(w, res, st, providerID, modelName, conn.ID, reqBody, usageSink)
 }
 
 func searxngSearch(ctx context.Context, w http.ResponseWriter, query string, opts map[string]any) error {
