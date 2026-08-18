@@ -29,7 +29,7 @@ if (!jwtSecret) {
 // Clean up any stale process before starting
 if (process.platform === "win32") {
   try {
-    execSync("taskkill /F /IM gateway.exe /IM flamerouter.exe /IM main.exe /IM air.exe", { stdio: "ignore" });
+    execSync("taskkill /F /IM flamerouter.exe /IM air.exe", { stdio: "ignore" });
   } catch (_) {}
 }
 
@@ -65,7 +65,18 @@ if (useAir) {
   console.log("\x1b[35m%s\x1b[0m", "[FlameRouter] Air hot-reload enabled for Go backend.");
 }
 
+let nextProc = null;
+
 function cleanup() {
+  if (nextProc && !nextProc.killed) {
+    try {
+      if (process.platform === "win32") {
+        spawn("taskkill", ["/pid", nextProc.pid.toString(), "/f", "/t"], { stdio: "ignore" });
+      } else {
+        nextProc.kill("SIGINT");
+      }
+    } catch (_) {}
+  }
   if (goProc && !goProc.killed) {
     console.log("\x1b[33m%s\x1b[0m", "\n[FlameRouter] Stopping Go Gateway backend...");
     try {
@@ -123,7 +134,7 @@ async function startFrontend() {
   await waitForBackend();
   console.log("\x1b[32m%s\x1b[0m", `[FlameRouter] Backend is ready! Starting Next.js UI on http://localhost:${frontendPort}...`);
 
-  const nextProc = spawn("npx", ["next", "dev", "--webpack", "--port", frontendPort], {
+  nextProc = spawn("npx", ["next", "dev", "--webpack", "--port", frontendPort], {
     stdio: "inherit",
     env: { ...sharedEnv, PORT: frontendPort, BACKEND_URL: `http://127.0.0.1:${backendPort}` },
     shell: true,

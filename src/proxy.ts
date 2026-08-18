@@ -6,5 +6,7 @@ export default async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon\\.ico).*)"],
+  matcher: [
+    "/((?!api|v1|v1beta|codex|_next/static|_next/image|favicon\\.ico|favicon\\.svg).*)",
+  ],
 };

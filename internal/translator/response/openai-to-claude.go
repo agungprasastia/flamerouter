@@ -266,8 +266,8 @@ func processSingleClaudeToolCall(tc map[string]any, state *concerns.ResponseStat
 
 	if fn, fnOk := tc["function"].(map[string]any); fnOk {
 		if args, argsOk := fn["arguments"].(string); argsOk && args != "" {
-			if _, exists := state.ToolCalls[idx]; exists {
-				state.ToolArgBuffers[idx] += args
+			if toolInfo, exists := state.ToolCalls[idx]; exists {
+				state.ToolArgBuffers[toolInfo.BlockIndex] += args
 			}
 		}
 	}

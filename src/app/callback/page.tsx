@@ -37,9 +37,9 @@ function CallbackContent() {
     const expectedOrigins = [
       window.location.origin, // Same origin (for most providers)
       "http://localhost:20129",
-      "http://localhost:20128",
+      "http://localhost:20130",
       "http://127.0.0.1:20129",
-      "http://127.0.0.1:20128",
+      "http://127.0.0.1:20130",
       "http://localhost:1455", // Codex specific port
     ];
 

@@ -5,13 +5,14 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"time"
 )
 
 func newID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		return ""
+		return fmt.Sprintf("%x", time.Now().UnixNano())
 	}
 
 	return hex.EncodeToString(b)

@@ -22,12 +22,16 @@ type readResult struct {
 	n   int
 }
 
-func startReaderRoutine(src io.Reader, resCh chan<- readResult) {
+func startReaderRoutine(ctx context.Context, src io.Reader, resCh chan<- readResult) {
 	for {
 		buf := make([]byte, 32*1024)
 
 		n, err := src.Read(buf)
-		resCh <- readResult{err: err, buf: buf, n: n}
+		select {
+		case <-ctx.Done():
+			return
+		case resCh <- readResult{err: err, buf: buf, n: n}:
+		}
 
 		if err != nil {
 			return
@@ -95,7 +99,7 @@ func PipeWithHeartbeat(ctx context.Context, dst http.ResponseWriter, src io.Read
 
 	resCh := make(chan readResult, 1)
 
-	go startReaderRoutine(src, resCh)
+	go startReaderRoutine(ctx, src, resCh)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

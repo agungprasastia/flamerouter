@@ -72,12 +72,22 @@ func handleKiroBlock(isThinking bool, text string, state *concerns.ResponseState
 }
 
 func handleKiroToolCallItem(toolCall map[string]any, idx int, id string, state *concerns.ResponseState) []map[string]any {
+	var results []map[string]any
+
 	if state.ThinkingBlockStarted {
 		state.ThinkingBlockStarted = false
+		results = append(results, map[string]any{
+			"type":  "content_block_stop",
+			"index": state.ThinkingBlockIndex,
+		})
 	}
 
 	if state.TextBlockStarted {
 		state.TextBlockStarted = false
+		results = append(results, map[string]any{
+			"type":  "content_block_stop",
+			"index": state.TextBlockIndex,
+		})
 	}
 
 	blockIndex := state.NextBlockIndex
@@ -96,19 +106,18 @@ func handleKiroToolCallItem(toolCall map[string]any, idx int, id string, state *
 		}
 	}
 
-	return []map[string]any{
-		{"type": "content_block_stop", "index": state.TextBlockIndex},
-		{
-			"type":  "content_block_start",
-			"index": blockIndex,
-			"content_block": map[string]any{
-				"type":  "tool_use",
-				"id":    id,
-				"name":  name,
-				"input": map[string]any{},
-			},
+	results = append(results, map[string]any{
+		"type":  "content_block_start",
+		"index": blockIndex,
+		"content_block": map[string]any{
+			"type":  "tool_use",
+			"id":    id,
+			"name":  name,
+			"input": map[string]any{},
 		},
-	}
+	})
+
+	return results
 }
 
 func handleKiroToolCallArgs(toolCall map[string]any, idx int, state *concerns.ResponseState) []map[string]any {

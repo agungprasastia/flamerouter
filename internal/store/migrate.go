@@ -64,6 +64,11 @@ func applyMigration(db *sql.DB, name string) error {
 		return err
 	}
 
+	defer func() {
+		//nolint:errcheck // safe no-op if committed
+		_ = tx.Rollback()
+	}()
+
 	if err := executeMigrationStatements(tx, name, string(body)); err != nil {
 		return err
 	}

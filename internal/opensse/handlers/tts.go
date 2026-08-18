@@ -55,8 +55,13 @@ func TTS(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Stor
 		return err
 	}
 
-	defer res.Body.Close()              //nolint:errcheck // best-effort body close
-	respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
+	defer res.Body.Close() //nolint:errcheck // best-effort body close
+
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, "failed to read audio response: "+err.Error())
+		return err
+	}
 
 	if res.StatusCode >= 400 {
 		w.Header().Set("Content-Type", "application/json")
