@@ -129,7 +129,7 @@ func ChatWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st
 	streamReq, _ := m["stream"].(bool) //nolint:errcheck // optional type assertion
 	ts := resolveTokenSaverOptions(opts)
 
-	if handled, err := tryHandleComboOrSynth(ctx, w, body, modelStr, m, st, exec, fb, streamReq, sourceFormat, ts); handled {
+	if handled, err := tryHandleComboOrSynth(ctx, w, body, modelStr, m, st, exec, fb, streamReq, sourceFormat, ts, opts.Usage); handled {
 		return err
 	}
 
@@ -162,10 +162,10 @@ func resolveTokenSaverOptions(opts ChatOptions) rtk.TokenSaverOptions {
 	return ts
 }
 
-func tryHandleComboOrSynth(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, m map[string]any, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions) (bool, error) {
+func tryHandleComboOrSynth(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, m map[string]any, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions, usageSink UsageSink) (bool, error) {
 	cDef, _ := st.GetComboByName(modelStr) //nolint:errcheck // optional combo
 	if cDef != nil && len(cDef.Models) > 0 {
-		return true, handleCombo(ctx, w, body, cDef, st, exec, fb, streamReq, sourceFormat, ts)
+		return true, handleCombo(ctx, w, body, cDef, st, exec, fb, streamReq, sourceFormat, ts, usageSink)
 	}
 
 	capConfig := combo.LoadCapacityAdapterConfig(st)
@@ -179,7 +179,7 @@ func tryHandleComboOrSynth(ctx context.Context, w http.ResponseWriter, body []by
 			Models: soloAugmented,
 		}
 
-		return true, handleCombo(ctx, w, body, synthCombo, st, exec, fb, streamReq, sourceFormat, ts)
+		return true, handleCombo(ctx, w, body, synthCombo, st, exec, fb, streamReq, sourceFormat, ts, usageSink)
 	}
 
 	return false, nil
@@ -204,7 +204,7 @@ func resolveChatModel(modelStr string, st *store.Store) (string, string, error) 
 	return providerID, mref.Model, nil
 }
 
-func handleCombo(ctx context.Context, w http.ResponseWriter, body []byte, c *store.Combo, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions) error {
+func handleCombo(ctx context.Context, w http.ResponseWriter, body []byte, c *store.Combo, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions, usageSink UsageSink) error {
 	// LoadStrategySettings already applies comboStrategies[name].fallbackStrategy + judgeModel.
 	// Resolve(nil) is intentional: per-combo map not needed when strategy name is pre-resolved.
 	strategyName, sticky, judge := combo.LoadStrategySettings(st, c.Name)
@@ -220,14 +220,14 @@ func handleCombo(ctx context.Context, w http.ResponseWriter, body []byte, c *sto
 		TargetFormat:   "",
 		TokenSaverJSON: "",
 		SingleModel: func(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, stream bool) error {
-			return runComboModel(ctx, w, body, modelStr, st, exec, fb, stream, sourceFormat, ts)
+			return runComboModel(ctx, w, body, modelStr, st, exec, fb, stream, sourceFormat, ts, usageSink)
 		},
 	}
 
 	return start.Execute(ctx, w, body, c.Models, st, exec, fb, opts)
 }
 
-func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions) error {
+func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, modelStr string, st *store.Store, exec executor.Executor, fb *fallback.Fallback, streamReq bool, sourceFormat string, ts rtk.TokenSaverOptions, usageSink UsageSink) error {
 	mref := model.ParseModel(modelStr)
 	aliases, _ := st.ListAliases() //nolint:errcheck // optional alias list
 
@@ -245,7 +245,7 @@ func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, mode
 
 	if streamReq {
 		if flusher, ok := w.(http.Flusher); ok {
-			err := streamModel(ctx, w, flusher, body, providerID, mref.Model, st, exec, fb, sourceFormat, ts)
+			err := streamModel(ctx, w, flusher, body, providerID, mref.Model, st, exec, fb, sourceFormat, ts, usageSink)
 			if err == nil {
 				_, _ = w.Write([]byte("data: [DONE]\n\n")) //nolint:errcheck // stream write
 
@@ -256,7 +256,7 @@ func runComboModel(ctx context.Context, w http.ResponseWriter, body []byte, mode
 		}
 	}
 
-	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, "", 0, nil)
+	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, "", 0, usageSink)
 }
 
 func stripContinuityFields(m map[string]any) {
@@ -713,7 +713,7 @@ func prepareStreamModelPayload(body []byte, providerID, modelName, sourceFormat,
 	return payload
 }
 
-func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, body []byte, providerID, modelName string, st *store.Store, exec executor.Executor, fb *fallback.Fallback, sourceFormat string, ts rtk.TokenSaverOptions) error {
+func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, body []byte, providerID, modelName string, st *store.Store, exec executor.Executor, fb *fallback.Fallback, sourceFormat string, ts rtk.TokenSaverOptions, usageSink UsageSink) error {
 	excludeIDs := make(map[string]bool)
 	targetFormat := getTargetFormat(providerID)
 
@@ -762,11 +762,14 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 
 		fb.ClearError(conn.ID)
 
+		var extracted usage.ExtractedUsage
 		if translator.NeedsTranslation(sourceFormat, targetFormat) {
-			writeTranslatedStream(w, nil, res.Body, sourceFormat, targetFormat, body)
+			extracted = writeTranslatedStream(w, nil, res.Body, sourceFormat, targetFormat, body)
 		} else {
-			pipeRawStreamWithUsage(w, flusher, res.Body, body)
+			extracted = pipeRawStreamWithUsage(w, flusher, res.Body, body)
 		}
+
+		recordUsageSinkDirect(st, providerID, modelName, conn.ID, extracted.PromptTokens, extracted.CompletionTokens, res.StatusCode, usageSink)
 
 		return nil
 	}

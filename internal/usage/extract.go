@@ -83,12 +83,15 @@ func ExtractUsageFromChunk(chunk map[string]any) (ExtractedUsage, bool) {
 		}
 	}
 
-	// 4. Gemini usageMetadata (or inside response.usageMetadata)
 	usageMeta, ok := chunk["usageMetadata"].(map[string]any)
 	if !ok {
 		if r, ok := chunk["response"].(map[string]any); ok && r != nil {
 			if um, okMap := r["usageMetadata"].(map[string]any); okMap {
 				usageMeta = um
+			} else if nestedResp, okNested := r["response"].(map[string]any); okNested && nestedResp != nil {
+				if umNested, okNestedMap := nestedResp["usageMetadata"].(map[string]any); okNestedMap {
+					usageMeta = umNested
+				}
 			}
 		}
 	}

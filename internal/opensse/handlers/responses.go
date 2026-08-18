@@ -146,7 +146,7 @@ func handleResponsesChat(ctx context.Context, w http.ResponseWriter, body []byte
 	combo, _ := st.GetComboByName(modelStr) //nolint:errcheck // optional combo
 
 	if combo != nil && len(combo.Models) > 0 {
-		return handleCombo(ctx, w, body, combo, st, exec, fb, streamReq, sourceFormat, ts)
+		return handleCombo(ctx, w, body, combo, st, exec, fb, streamReq, sourceFormat, ts, usageSink)
 	}
 
 	aliases, _ := st.ListAliases() //nolint:errcheck // optional alias list
