@@ -168,7 +168,7 @@ var ProviderConfigs = map[string]*OAuthConfig{
 		DeviceURL:   "https://auth.x.ai/oauth2/device/code",
 		RefreshURL:  "https://auth.x.ai/oauth2/token",
 		RedirectURL: "http://localhost:20128/api/oauth/grok-cli/callback",
-		Scopes:      []string{"openid", "offline_access", "grok-cli:access", "api:access", "conversations:read", "conversations:write"},
+		Scopes:      []string{"openid", "profile", "email", "offline_access", "grok-cli:access", "api:access", "conversations:read", "conversations:write"},
 		AuthStyle:   "device",
 		TokenExpiry: time.Hour,
 	},

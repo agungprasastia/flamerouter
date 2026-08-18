@@ -81,8 +81,8 @@ type deviceTokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 	TokenType    string `json:"token_type"`
 	Scope        string `json:"scope"`
-	ExpiresIn    int    `json:"expires_in"`
 	IDToken      string `json:"id_token"`
+	ExpiresIn    int    `json:"expires_in"`
 }
 
 type deviceErrorResponse struct {

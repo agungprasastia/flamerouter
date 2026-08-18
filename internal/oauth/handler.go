@@ -131,7 +131,7 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request, provide
 
 func (h *Handler) saveRawJWT(st *store.Store, provider, code string) (map[string]any, error) {
 	psd := map[string]any{"authMethod": "access_token"}
-	email := ""
+	email, name := ExtractIdentityFromJWT(code, provider)
 
 	if info := DecodeJWTClaims(code); info != nil {
 		if v, ok := info["account_id"].(string); ok && v != "" {
@@ -142,12 +142,29 @@ func (h *Handler) saveRawJWT(st *store.Store, provider, code string) (map[string
 			psd["chatgptPlanType"] = v
 		}
 
-		if v, ok := info["email"].(string); ok {
-			email = v
+		if auth, ok := info["https://api.openai.com/auth"].(map[string]any); ok {
+			if v, ok := auth["chatgpt_account_id"].(string); ok && v != "" {
+				psd["chatgptAccountId"] = v
+			}
+
+			if v, ok := auth["chatgpt_plan_type"].(string); ok && v != "" {
+				psd["chatgptPlanType"] = v
+			}
+		}
+
+		if exp, ok := info["exp"].(float64); ok && exp > 0 {
+			psd["jwtExp"] = int64(exp)
 		}
 	}
 
-	name := email
+	if email != "" {
+		psd["email"] = email
+
+		if name == "" || name == provider {
+			name = email
+		}
+	}
+
 	if name == "" {
 		name = provider
 	}
@@ -182,30 +199,139 @@ func resolveConfig(provider string, meta map[string]any) (*OAuthConfig, error) {
 	return config, nil
 }
 
-// ExtractIdentityFromIDToken extracts email and display name from an ID token (JWT).
-func ExtractIdentityFromIDToken(idToken, provider string) (string, string) {
-	email := ""
-	name := provider
-
-	if idToken == "" {
-		return email, name
+// ExtractIdentityFromJWT parses any JWT string (id_token, access_token) and extracts email and display name.
+func ExtractIdentityFromJWT(tok, defaultName string) (string, string) {
+	if tok == "" {
+		return "", defaultName
 	}
 
-	claims := DecodeJWTClaims(idToken)
+	claims := DecodeJWTClaims(tok)
 	if claims == nil {
-		return email, name
+		return "", defaultName
 	}
 
+	email := ""
+	name := defaultName
+
+	// 1. Direct email claim
 	if em, ok := claims["email"].(string); ok && em != "" {
 		email = em
-		name = em
 	}
 
-	if nm, ok := claims["name"].(string); ok && nm != "" && name == provider {
+	// 2. Profile object (e.g. OpenAI JWT profile: "https://api.openai.com/profile" -> {"email": "..."})
+	if email == "" {
+		if prof, ok := claims["https://api.openai.com/profile"].(map[string]any); ok {
+			if em, ok := prof["email"].(string); ok && em != "" {
+				email = em
+			}
+		}
+	}
+
+	// 3. Preferred username / unique_name / upn
+	if email == "" {
+		for _, key := range []string{"preferred_username", "unique_name", "upn"} {
+			if val, ok := claims[key].(string); ok && val != "" {
+				if strings.Contains(val, "@") {
+					email = val
+					break
+				}
+			}
+		}
+	}
+
+	// 4. Sub if formatted like email
+	if email == "" {
+		if sub, ok := claims["sub"].(string); ok && strings.Contains(sub, "@") {
+			email = sub
+		}
+	}
+
+	// Extract display name
+	if nm, ok := claims["name"].(string); ok && nm != "" {
 		name = nm
+	} else if pref, ok := claims["preferred_username"].(string); ok && pref != "" {
+		name = pref
+	} else if email != "" {
+		name = email
 	}
 
 	return email, name
+}
+
+// ExtractIdentityFromIDToken extracts email and display name from an ID token (JWT).
+func ExtractIdentityFromIDToken(idToken, provider string) (string, string) {
+	return ExtractIdentityFromJWT(idToken, provider)
+}
+
+// FetchProviderUserProfile attempts to fetch user identity (email/name) for providers that require an API call.
+func FetchProviderUserProfile(ctx context.Context, provider, accessToken string) (string, string) {
+	if accessToken == "" {
+		return "", ""
+	}
+
+	client := &http.Client{
+		Timeout:       5 * time.Second,
+		Transport:     nil,
+		CheckRedirect: nil,
+		Jar:           nil,
+	}
+
+	switch provider {
+	case "grok-cli":
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/user", nil)
+		if err != nil {
+			return "", ""
+		}
+
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "grok-shell/0.2.99")
+		req.Header.Set("x-xai-token-auth", "xai-grok-cli")
+		req.Header.Set("x-grok-client-identifier", "grok-shell")
+		req.Header.Set("x-grok-client-version", "0.2.99")
+		req.Header.Set("x-grok-client-mode", "headless")
+
+		resp, err := client.Do(req)
+		if err != nil || resp == nil || resp.Body == nil {
+			return "", ""
+		}
+
+		defer func() {
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				_ = closeErr
+			}
+		}()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			var res map[string]any
+			if json.NewDecoder(resp.Body).Decode(&res) == nil {
+				if user, ok := res["user"].(map[string]any); ok {
+					em, _ := user["email"].(string) //nolint:errcheck
+					nm, _ := user["name"].(string)  //nolint:errcheck
+
+					if nm == "" {
+						nm, _ = user["display_name"].(string) //nolint:errcheck
+					}
+
+					if nm == "" {
+						nm, _ = user["username"].(string) //nolint:errcheck
+					}
+
+					return em, nm
+				}
+
+				em, _ := res["email"].(string) //nolint:errcheck
+				nm, _ := res["name"].(string)  //nolint:errcheck
+
+				return em, nm
+			}
+		}
+	case "antigravity":
+		em := fetchAntigravityUserInfo(ctx, accessToken)
+		return em, ""
+	}
+
+	return "", ""
 }
 
 func fetchAntigravityUserInfo(ctx context.Context, accessToken string) string {
@@ -353,11 +479,48 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 	}
 
 	email, name := ExtractIdentityFromIDToken(token.IDToken, provider)
+	if email == "" && token.AccessToken != "" {
+		jwtEmail, jwtName := ExtractIdentityFromJWT(token.AccessToken, provider)
+		if jwtEmail != "" {
+			email = jwtEmail
+		}
+
+		if jwtName != "" && (name == "" || name == provider) {
+			name = jwtName
+		}
+	}
+
+	if email == "" {
+		fetchedEmail, fetchedName := FetchProviderUserProfile(ctx, provider, token.AccessToken)
+		if fetchedEmail != "" {
+			email = fetchedEmail
+		}
+
+		if fetchedName != "" && (name == "" || name == provider) {
+			name = fetchedName
+		}
+	}
+
+	if name == "" || name == provider {
+		if email != "" {
+			name = email
+		} else {
+			name = provider + " Connection"
+		}
+	}
 
 	var psd map[string]any
 
 	if provider == "antigravity" {
 		email, name, psd = h.setupAntigravity(ctx, token, email, name)
+	}
+
+	if psd == nil {
+		psd = make(map[string]any)
+	}
+
+	if email != "" {
+		psd["email"] = email
 	}
 
 	id, err := st.CreateOAuthConnection(provider, "oauth", name, token.AccessToken, token.RefreshToken, expiresAt, psd)

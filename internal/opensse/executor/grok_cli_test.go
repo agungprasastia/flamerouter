@@ -47,6 +47,7 @@ func TestGrokCliCleanModelName(t *testing.T) {
 		if m != tc.expectedModel {
 			t.Errorf("input %q: expected model %q, got %q", tc.input, tc.expectedModel, m)
 		}
+
 		if eff != tc.expectedEffort {
 			t.Errorf("input %q: expected effort %q, got %q", tc.input, tc.expectedEffort, eff)
 		}
@@ -54,7 +55,15 @@ func TestGrokCliCleanModelName(t *testing.T) {
 }
 
 func TestGrokCliTransform(t *testing.T) {
-	exec := &GrokCliExecutor{}
+	exec := &GrokCliExecutor{
+		Base: Base{
+			Provider: "grok-cli",
+			Client:   nil,
+			Headers:  nil,
+			BaseURL:  "",
+			BaseURLs: nil,
+		},
+	}
 	body := map[string]any{
 		"model": "gcli/grok-4.5",
 		"messages": []any{
@@ -67,6 +76,26 @@ func TestGrokCliTransform(t *testing.T) {
 	if transformed["model"] != "grok-4.5" {
 		t.Fatalf("expected model grok-4.5, got %v", transformed["model"])
 	}
+}
+
+func TestGrokCliTransformReasoning(t *testing.T) {
+	exec := &GrokCliExecutor{
+		Base: Base{
+			Provider: "grok-cli",
+			Client:   nil,
+			Headers:  nil,
+			BaseURL:  "",
+			BaseURLs: nil,
+		},
+	}
+	body := map[string]any{
+		"model": "gcli/grok-4.5-high",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "hi"},
+		},
+	}
+
+	transformed := exec.transform("gcli/grok-4.5-high", body)
 
 	reasoning, ok := transformed["reasoning"].(map[string]any)
 	if !ok {

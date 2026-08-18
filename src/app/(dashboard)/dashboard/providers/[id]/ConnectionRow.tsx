@@ -167,25 +167,35 @@ export default function ConnectionRow({
     : isCookieConnection
       ? "Cookie"
       : "API Key";
-  const displayName =
-    connection.name?.trim() ||
-    connection.email?.trim() ||
-    connection.displayName?.trim() ||
-    (isOAuthConnection
+  const rawName = connection.name?.trim() || "";
+  const rawEmail = connection.email?.trim() || "";
+  const rawDisplay = connection.displayName?.trim() || "";
+
+  const isGenericName = !rawName || rawName === "OAuth Account" || rawName.endsWith(" Connection");
+
+  let displayName = rawName;
+  let secondaryDisplayName: string | null = null;
+
+  if (rawEmail) {
+    displayName = rawEmail;
+    if (rawName && !isGenericName && rawName !== rawEmail) {
+      secondaryDisplayName = rawName;
+    } else if (rawDisplay && rawDisplay !== rawEmail) {
+      secondaryDisplayName = rawDisplay;
+    }
+  } else if (rawDisplay && isGenericName) {
+    displayName = rawDisplay;
+  } else if (!displayName) {
+    displayName = isOAuthConnection
       ? "OAuth Account"
       : isCookieConnection
         ? "Cookie Account"
-        : "API Key");
-  const secondaryDisplayName =
-    connection.name?.trim() &&
-    connection.email?.trim() &&
-    connection.name.trim() !== connection.email.trim()
-      ? connection.email.trim()
-      : connection.name?.trim() &&
-          connection.displayName?.trim() &&
-          connection.name.trim() !== connection.displayName.trim()
-        ? connection.displayName.trim()
-        : null;
+        : "API Key";
+  }
+
+  if (!secondaryDisplayName && rawName && displayName !== rawName && !isGenericName) {
+    secondaryDisplayName = rawName;
+  }
 
   // Use useState + useEffect for impure Date.now() to avoid calling during render
   const [isCooldown, setIsCooldown] = useState(false);

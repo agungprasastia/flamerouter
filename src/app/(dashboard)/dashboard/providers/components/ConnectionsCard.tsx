@@ -199,12 +199,14 @@ function ConnectionRow({
   const getStatusVariant = () =>
     getConnectionStatusVariant(connection.isActive, effectiveStatus);
 
+  const rawName = connection.name?.trim() || "";
+  const rawEmail = connection.email?.trim() || "";
+  const rawDisplay = connection.displayName?.trim() || "";
+  const isGenericName = !rawName || rawName === "OAuth Account" || rawName.endsWith(" Connection");
+
   const displayName = isOAuth
-    ? connection.name ||
-      connection.email ||
-      connection.displayName ||
-      "OAuth Account"
-    : connection.name;
+    ? (rawEmail || (isGenericName && rawDisplay ? rawDisplay : rawName) || rawDisplay || "OAuth Account")
+    : (rawName || rawEmail || rawDisplay || "API Key");
 
   const handleSelectProxy = async (poolId: string) => {
     setUpdatingProxy(true);

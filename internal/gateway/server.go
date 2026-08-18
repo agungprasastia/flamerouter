@@ -1140,20 +1140,36 @@ func (s *Server) handleOAuthGenericPoll(w http.ResponseWriter, r *http.Request, 
 
 	email := ""
 	name := ""
+
 	if tok.IDToken != "" {
 		email, name = oauth.ExtractIdentityFromIDToken(tok.IDToken, provider)
 	}
+
 	if email == "" && tok.AccessToken != "" {
-		if claims := oauth.DecodeJWTClaims(tok.AccessToken); claims != nil {
+		claims := oauth.DecodeJWTClaims(tok.AccessToken)
+		if claims != nil {
 			if em, ok := claims["email"].(string); ok && em != "" {
 				email = em
+
 				if name == "" || name == provider {
 					name = em
 				}
 			}
-			if nm, ok := claims["name"].(string); ok && nm != "" && (name == "" || name == provider) {
+
+			if nm, hasNm := claims["name"].(string); hasNm && nm != "" && (name == "" || name == provider) {
 				name = nm
 			}
+		}
+	}
+
+	if email == "" {
+		fetchedEmail, fetchedName := oauth.FetchProviderUserProfile(r.Context(), provider, tok.AccessToken)
+		if fetchedEmail != "" {
+			email = fetchedEmail
+		}
+
+		if fetchedName != "" && (name == "" || name == provider) {
+			name = fetchedName
 		}
 	}
 

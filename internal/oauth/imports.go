@@ -174,13 +174,40 @@ func (h *Handler) importCodexToken(w http.ResponseWriter, r *http.Request, st *s
 	}
 
 	token := strings.TrimSpace(req.AccessToken)
+	email, defaultName := ExtractIdentityFromJWT(token, "codex")
 
 	name := req.Name
 	if name == "" {
-		name = "ChatGPT Access Token"
+		switch {
+		case email != "":
+			name = email
+		case defaultName != "" && defaultName != "codex":
+			name = defaultName
+		default:
+			name = "ChatGPT Access Token"
+		}
 	}
 
 	psd := map[string]any{"authMethod": "access_token"}
+	if email != "" {
+		psd["email"] = email
+	}
+
+	if info := DecodeJWTClaims(token); info != nil {
+		if auth, ok := info["https://api.openai.com/auth"].(map[string]any); ok {
+			if v, ok := auth["chatgpt_account_id"].(string); ok && v != "" {
+				psd["chatgptAccountId"] = v
+			}
+
+			if v, ok := auth["chatgpt_plan_type"].(string); ok && v != "" {
+				psd["chatgptPlanType"] = v
+			}
+		}
+
+		if exp, ok := info["exp"].(float64); ok && exp > 0 {
+			psd["jwtExp"] = int64(exp)
+		}
+	}
 
 	id, err := st.CreateOAuthConnection("codex", "access_token", name, token, "", "", psd)
 	if err != nil {
@@ -250,7 +277,35 @@ func importSingleCodexAccount(st *store.Store, acc map[string]any, i int) (map[s
 		return map[string]any{"index": i, "success": false, "error": "accessToken required"}, false
 	}
 
+	email, defaultName := ExtractIdentityFromJWT(tok, "codex")
+	if name == "" || name == "Codex Bulk" {
+		if email != "" {
+			name = email
+		} else if defaultName != "" && defaultName != "codex" {
+			name = defaultName
+		}
+	}
+
 	psd := map[string]any{"authMethod": "bulk_import"}
+	if email != "" {
+		psd["email"] = email
+	}
+
+	if info := DecodeJWTClaims(tok); info != nil {
+		if auth, ok := info["https://api.openai.com/auth"].(map[string]any); ok {
+			if v, ok := auth["chatgpt_account_id"].(string); ok && v != "" {
+				psd["chatgptAccountId"] = v
+			}
+
+			if v, ok := auth["chatgpt_plan_type"].(string); ok && v != "" {
+				psd["chatgptPlanType"] = v
+			}
+		}
+
+		if exp, ok := info["exp"].(float64); ok && exp > 0 {
+			psd["jwtExp"] = int64(exp)
+		}
+	}
 
 	id, err := st.CreateOAuthConnection("codex", "oauth", name, tok, rt, "", psd)
 	if err != nil {

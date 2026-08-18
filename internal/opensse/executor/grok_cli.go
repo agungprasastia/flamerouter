@@ -416,6 +416,7 @@ func cleanGrokModelName(m string) string {
 	if idx := strings.LastIndex(m, "/"); idx != -1 {
 		m = m[idx+1:]
 	}
+
 	return m
 }
 

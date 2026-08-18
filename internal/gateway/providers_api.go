@@ -3,6 +3,7 @@ package gateway
 import (
 	"database/sql"
 	"encoding/json"
+	"flamerouter/internal/oauth"
 	"flamerouter/internal/provider"
 	"flamerouter/internal/store"
 	"net/http"
@@ -30,9 +31,20 @@ func resolveConnectionEmail(c store.Connection) string {
 			return em
 		}
 	}
+
 	if strings.Contains(c.Name, "@") {
 		return c.Name
 	}
+
+	// Dynamic fallback: extract from access_token / refresh_token / api_key if JWT
+	for _, tok := range []string{c.AccessToken, c.RefreshToken, c.APIKey} {
+		if tok != "" {
+			if email, _ := oauth.ExtractIdentityFromJWT(tok, ""); email != "" {
+				return email
+			}
+		}
+	}
+
 	return ""
 }
 
@@ -108,10 +120,17 @@ func (s *Server) handleGetProvider(w http.ResponseWriter, r *http.Request) {
 
 	if conn, err := s.st.GetConnection(id); err == nil && conn != nil {
 		writeJSONOK(w, map[string]any{"connection": connDTO{
-			ID: conn.ID, Provider: conn.Provider, AuthType: conn.AuthType, Name: conn.Name,
-			Email: resolveConnectionEmail(*conn),
-			Priority: conn.Priority, IsActive: conn.IsActive, BaseURL: conn.BaseURL,
-			TestStatus: conn.TestStatus, LastError: conn.LastError, ExpiresAt: conn.ExpiresAt,
+			ID:           conn.ID,
+			Provider:     conn.Provider,
+			AuthType:     conn.AuthType,
+			Name:         conn.Name,
+			Email:        resolveConnectionEmail(*conn),
+			Priority:     conn.Priority,
+			IsActive:     conn.IsActive,
+			BaseURL:      conn.BaseURL,
+			TestStatus:   conn.TestStatus,
+			LastError:    conn.LastError,
+			ExpiresAt:    conn.ExpiresAt,
 			SpecificData: conn.ProviderSpecificData,
 		}})
 
@@ -132,10 +151,17 @@ func (s *Server) handleGetProvider(w http.ResponseWriter, r *http.Request) {
 	list := make([]connDTO, 0, len(conns))
 	for _, c := range conns {
 		list = append(list, connDTO{
-			ID: c.ID, Provider: c.Provider, AuthType: c.AuthType, Name: c.Name,
-			Email: resolveConnectionEmail(c),
-			Priority: c.Priority, IsActive: c.IsActive, BaseURL: c.BaseURL,
-			TestStatus: c.TestStatus, LastError: c.LastError, ExpiresAt: c.ExpiresAt,
+			ID:           c.ID,
+			Provider:     c.Provider,
+			AuthType:     c.AuthType,
+			Name:         c.Name,
+			Email:        resolveConnectionEmail(c),
+			Priority:     c.Priority,
+			IsActive:     c.IsActive,
+			BaseURL:      c.BaseURL,
+			TestStatus:   c.TestStatus,
+			LastError:    c.LastError,
+			ExpiresAt:    c.ExpiresAt,
 			SpecificData: c.ProviderSpecificData,
 		})
 	}
