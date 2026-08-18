@@ -47,6 +47,31 @@ func (s *Store) ListCombos() ([]Combo, error) {
 	return out, rows.Err()
 }
 
+// GetComboByID retrieves a combo by id or returns nil, nil if not found.
+//
+//nolint:nilnil // returning nil combo on ErrNoRows is by design
+func (s *Store) GetComboByID(id string) (*Combo, error) {
+	var c Combo
+
+	var modelsJSON string
+
+	err := s.db.QueryRow(`SELECT id, name, models FROM combos WHERE id=?`, id).
+		Scan(&c.ID, &c.Name, &modelsJSON)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+
+		return nil, err
+	}
+
+	if err := json.Unmarshal([]byte(modelsJSON), &c.Models); err != nil {
+		c.Models = nil
+	}
+
+	return &c, nil
+}
+
 // GetComboByName retrieves a combo by name or returns nil, nil if not found.
 //
 //nolint:nilnil // returning nil combo on ErrNoRows is by design

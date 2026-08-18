@@ -151,12 +151,45 @@ func (sh *SessionHandler) Status(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if authenticated {
-		writeJSONResponse(w, []byte(`{"authenticated":true}`))
-		return
+	reqLoginVal, err := sh.st.GetSetting("requireLogin")
+	if err != nil {
+		reqLoginVal = ""
 	}
 
-	writeJSONResponse(w, []byte(`{"authenticated":false}`))
+	requireLogin := reqLoginVal == "" || reqLoginVal == "true" || reqLoginVal == "1"
+
+	passHash, _ := sh.st.GetSetting(settingPassHash) //nolint:errcheck // best effort
+	passVal, _ := sh.st.GetSetting("password")       //nolint:errcheck // best effort
+	hasPassword := passHash != "" || passVal != ""
+
+	authMode, _ := sh.st.GetSetting("authMode") //nolint:errcheck // best effort
+	if authMode == "" {
+		authMode = "password"
+	}
+
+	oidcIssuer, _ := sh.st.GetSetting("oidcIssuerUrl")    //nolint:errcheck // best effort
+	oidcClient, _ := sh.st.GetSetting("oidcClientId")     //nolint:errcheck // best effort
+	oidcSecret, _ := sh.st.GetSetting("oidcClientSecret") //nolint:errcheck // best effort
+	oidcConfigured := oidcIssuer != "" && oidcClient != "" && oidcSecret != ""
+
+	oidcLabel, _ := sh.st.GetSetting("oidcLoginLabel") //nolint:errcheck // best effort
+	if oidcLabel == "" {
+		oidcLabel = "Sign in with OIDC"
+	}
+
+	res := map[string]any{
+		"authenticated":  authenticated,
+		"requireLogin":   requireLogin,
+		"hasPassword":    hasPassword,
+		"authMode":       authMode,
+		"oidcConfigured": oidcConfigured,
+		"oidcLoginLabel": oidcLabel,
+		"displayName":    "Admin",
+		"loginMethod":    "Password",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res) //nolint:errcheck // best effort write
 }
 
 // ResetPassword handles POST /api/auth/reset-password (local only).

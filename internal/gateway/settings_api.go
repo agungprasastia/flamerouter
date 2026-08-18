@@ -33,7 +33,40 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 			continue
 		}
 
-		out[k] = v
+		// Parse boolean settings strings into JSON booleans
+		switch k {
+		case "requireLogin", "requireApiKey", "tunnelDashboardAccess", "rtkEnabled":
+			out[k] = v == "" || v == "true" || v == "1"
+		case "outboundProxyEnabled", "cloudEnabled", "tunnelEnabled", "tailscaleEnabled",
+			"enableObservability", "headroomEnabled", "headroomCompressUserMessages",
+			"cavemanEnabled", "ponytailEnabled", "pxpipeEnabled", "pxpipeAutoInstall":
+			out[k] = v == "true" || v == "1"
+		case "pxpipeMinChars", "pxpipeTimeoutMs", "stickyRoundRobinLimit", "comboStickyRoundRobinLimit",
+			"observabilityMaxRecords", "observabilityBatchSize", "observabilityFlushIntervalMs", "observabilityMaxJsonSize":
+			var num int64
+			if _, scanErr := fmt.Sscanf(v, "%d", &num); scanErr == nil {
+				out[k] = num
+			} else {
+				out[k] = v
+			}
+		case "capacityAdapter", "comboStrategies", "providerStrategies", "quotaVisibility", "dnsToolEnabled":
+			var obj any
+			if err := json.Unmarshal([]byte(v), &obj); err == nil && obj != nil {
+				out[k] = obj
+			} else {
+				out[k] = map[string]any{}
+			}
+		default:
+			out[k] = v
+		}
+	}
+
+	if _, ok := out["requireLogin"]; !ok {
+		out["requireLogin"] = true
+	}
+
+	if _, ok := out["requireApiKey"]; !ok {
+		out["requireApiKey"] = true
 	}
 
 	delete(out, "password")
@@ -68,6 +101,12 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		switch t := v.(type) {
 		case string:
 			str = t
+		case bool:
+			if t {
+				str = "true"
+			} else {
+				str = "false"
+			}
 		case nil:
 			str = ""
 		default:

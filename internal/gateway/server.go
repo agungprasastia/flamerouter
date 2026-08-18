@@ -96,6 +96,7 @@ func (s *Server) routesSettings() {
 	s.mux.HandleFunc("PUT /api/keys/{id}", s.handleUpdateKey)
 	s.mux.HandleFunc("DELETE /api/keys/{id}", s.handleDeleteKey)
 	s.mux.HandleFunc("/api/combos", s.handleCombos)
+	s.mux.HandleFunc("GET /api/combos/{id}", s.handleGetCombo)
 	s.mux.HandleFunc("PUT /api/combos/{id}", s.handleUpdateCombo)
 	s.mux.HandleFunc("DELETE /api/combos/{id}", s.handleDeleteCombo)
 	s.mux.HandleFunc("/api/aliases", s.handleAliases)
@@ -229,6 +230,7 @@ func (s *Server) routesTunnelsAndUsage() {
 	s.mux.HandleFunc("POST /api/pxpipe/restart", s.handlePxpipeRestart)
 	s.mux.HandleFunc("GET /api/pxpipe/status", s.handlePxpipeStatus)
 	s.mux.HandleFunc("GET /api/pxpipe/health", s.handlePxpipeHealth)
+	s.mux.HandleFunc("POST /api/pxpipe/health", s.handlePxpipeHealth)
 	s.mux.HandleFunc("GET /api/pxpipe/stats", s.handlePxpipeStats)
 	s.mux.HandleFunc("GET /api/pxpipe/logs", s.handlePxpipeLogs)
 
@@ -411,8 +413,12 @@ func (s *Server) handleCombos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if combos == nil {
+			combos = []store.Combo{}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(combos) //nolint:errcheck // best effort encode
+		_ = json.NewEncoder(w).Encode(map[string]any{"combos": combos}) //nolint:errcheck // best effort encode
 	case http.MethodPost:
 		var req struct {
 			Name   string   `json:"name"`

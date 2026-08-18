@@ -55,6 +55,23 @@ func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]any{"message": "Key deleted successfully"})
 }
 
+func (s *Server) handleGetCombo(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	combo, err := s.st.GetComboByID(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+
+	if combo == nil {
+		writeErr(w, http.StatusNotFound, "Combo not found")
+		return
+	}
+
+	writeJSONOK(w, combo)
+}
+
 func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 

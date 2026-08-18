@@ -84,14 +84,55 @@ func (s *Server) handleHeadroomRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSONOK(w, map[string]any{"success": true, "status": headroomProc.Status(), "url": headroomProc.URL()})
 }
 
+func isLocalhostURL(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+
+	h := u.Hostname()
+
+	return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0"
+}
+
 func (s *Server) handleHeadroomStatus(w http.ResponseWriter, _ *http.Request) {
 	targetURL := s.headroomBaseURL()
 	det := headroomProc.Detect()
+	extras := headroomProc.ExtrasStatus()
+
+	py, _ := det["python"].(string)    //nolint:errcheck // type assertion best-effort
+	bin, _ := det["headroom"].(string) //nolint:errcheck // type assertion best-effort
+	installed := bin != ""
+	running := headroomProc.Health()
+	localURL := isLocalhostURL(targetURL)
+
+	var pyPtr *string
+	if py != "" {
+		pyPtr = &py
+	}
+
+	extrasMap, _ := extras["extras"].(map[string]bool) //nolint:errcheck // type assertion best-effort
+	if extrasMap == nil {
+		extrasMap = map[string]bool{"code": false, "ml": false}
+	}
+
 	writeJSONOK(w, map[string]any{
-		"status":  headroomProc.Status(),
-		"url":     targetURL,
-		"healthy": headroomProc.Health(),
-		"detect":  det,
+		"installed":  installed,
+		"running":    running,
+		"python":     pyPtr,
+		"localUrl":   localURL,
+		"canStart":   installed && localURL,
+		"managedPid": nil,
+		"version":    nil,
+		"extras":     extrasMap,
+		"status":     headroomProc.Status(),
+		"url":        targetURL,
+		"healthy":    running,
+		"detect":     det,
 	})
 }
 
