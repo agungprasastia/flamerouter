@@ -6,6 +6,7 @@ import (
 	"flamerouter/internal/netutil"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -245,7 +246,9 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 
 	code, status, elapsed, err := doProxyProbe(r.Context(), proxyURL, testURL, timeout)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		log.Printf("[proxy-test] probe failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "proxy test failed"})
+
 		return
 	}
 

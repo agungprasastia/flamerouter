@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"flamerouter/internal/infra/mitm"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -98,14 +99,18 @@ func (s *Server) handleMITMStart(w http.ResponseWriter, r *http.Request) {
 
 	srv, err := s.getOrCreateMITM()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		log.Printf("[mitm] init failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to initialize mitm proxy"})
+
 		return
 	}
 
 	srv.RegisterDefaultTools(s.mitmRouterBase(), mitmAPIKey)
 
 	if err := srv.Start(addr); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": srv.Status()})
+		log.Printf("[mitm] start failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to start mitm proxy", "status": srv.Status()})
+
 		return
 	}
 

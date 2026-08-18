@@ -296,22 +296,39 @@ func (s *Server) routes() {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
-		s.writeCORS(w)
+		s.writeCORS(w, r)
 		return
 	}
 
 	s.mux.ServeHTTP(w, r)
 }
 
-func (s *Server) writeCORS(w http.ResponseWriter) {
+func (s *Server) writeCORS(w http.ResponseWriter, r *http.Request) {
+	if !s.corsWildcardPath(r.URL.Path) {
+		w.WriteHeader(http.StatusNoContent)
+
+		return
+	}
+
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleCORS(w http.ResponseWriter, _ *http.Request) {
-	s.writeCORS(w)
+// corsWildcardPath reports whether a path is part of the public OpenAI-compatible
+// surface (/v1*, /v1beta, /codex, /api/health) that must answer wildcard CORS.
+// Management /api/* stays same-origin (dashboard), so no wildcard origin.
+func (s *Server) corsWildcardPath(path string) bool {
+	if path == "/api/health" {
+		return true
+	}
+
+	return strings.HasPrefix(path, "/v1") || strings.HasPrefix(path, "/v1beta") || strings.HasPrefix(path, "/codex")
+}
+
+func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) {
+	s.writeCORS(w, r)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -550,7 +567,7 @@ func (s *Server) handleCompactResponses(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleGeminiV1Beta(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
-		s.writeCORS(w)
+		s.writeCORS(w, r)
 		return
 	}
 

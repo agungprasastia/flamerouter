@@ -3,6 +3,7 @@ package gateway
 import (
 	"database/sql"
 	"encoding/json"
+	"flamerouter/internal/config"
 	"net/http"
 	"time"
 )
@@ -154,7 +155,7 @@ func (s *Server) handleLocale(w http.ResponseWriter, r *http.Request) {
 			Expires:     time.Time{},
 			RawExpires:  "",
 			MaxAge:      60 * 60 * 24 * 365,
-			Secure:      false,
+			Secure:      config.AuthCookieSecure() || r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 			HttpOnly:    false,
 			SameSite:    http.SameSiteLaxMode,
 			Raw:         "",

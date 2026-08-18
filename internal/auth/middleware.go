@@ -20,8 +20,11 @@ func DashboardGuard(jwt *JWTManager, st *store.Store, next http.Handler) http.Ha
 			return
 		}
 
-		// If requireLogin is explicitly disabled ("false"), allow access
-		if st != nil {
+		// If requireLogin is explicitly disabled ("false"), allow access.
+		// DB export/import stays protected: the archive contains all API keys,
+		// OAuth secrets and settings, so it must never be reachable without a
+		// session even when dashboard auth is turned off (parity 9router DB route).
+		if path != "/api/settings/database" && st != nil {
 			if val, err := st.GetSetting("requireLogin"); err == nil && val == "false" {
 				next.ServeHTTP(w, r)
 				return

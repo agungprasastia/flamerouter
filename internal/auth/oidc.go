@@ -14,6 +14,7 @@ import (
 	"flamerouter/internal/store"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -305,7 +306,9 @@ func (o *OIDCHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 	disc, err := o.fetchDiscovery(cfg.issuerURL)
 	if err != nil {
-		redirectLogin(w, r, err.Error())
+		log.Printf("[oidc] discovery failed: %v", err)
+		redirectLogin(w, r, "oidc_discovery_failed")
+
 		return
 	}
 
@@ -391,7 +394,8 @@ func (o *OIDCHandler) resolveCallbackConfig(w http.ResponseWriter, r *http.Reque
 	disc, err := o.fetchDiscovery(cfg.issuerURL)
 	if err != nil {
 		clearAllOIDCCookies(w)
-		redirectLogin(w, r, err.Error())
+		log.Printf("[oidc] discovery failed: %v", err)
+		redirectLogin(w, r, "oidc_discovery_failed")
 
 		return nil, nil, false
 	}
@@ -408,7 +412,8 @@ func (o *OIDCHandler) resolveIDTokenPayload(w http.ResponseWriter, r *http.Reque
 	tokenData, err := o.exchangeCode(disc.TokenEndpoint, cfg, code, redirectURI, verifier)
 	if err != nil {
 		clearAllOIDCCookies(w)
-		redirectLogin(w, r, err.Error())
+		log.Printf("[oidc] token exchange failed: %v", err)
+		redirectLogin(w, r, "oidc_token_exchange_failed")
 
 		return nil, false
 	}
@@ -429,7 +434,8 @@ func (o *OIDCHandler) resolveIDTokenPayload(w http.ResponseWriter, r *http.Reque
 	payload, err := o.verifyIDToken(idToken, issuer, cfg.clientID, disc.JWKSURI, storedNonce)
 	if err != nil {
 		clearAllOIDCCookies(w)
-		redirectLogin(w, r, err.Error())
+		log.Printf("[oidc] id_token verification failed: %v", err)
+		redirectLogin(w, r, "oidc_token_verification_failed")
 
 		return nil, false
 	}
@@ -628,7 +634,9 @@ func (o *OIDCHandler) Test(w http.ResponseWriter, r *http.Request) {
 
 	disc, err := o.fetchDiscovery(issuer)
 	if err != nil {
-		writeOIDCJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		log.Printf("[oidc] test discovery failed: %v", err)
+		writeOIDCJSON(w, http.StatusInternalServerError, map[string]any{"error": "OIDC discovery failed"})
+
 		return
 	}
 

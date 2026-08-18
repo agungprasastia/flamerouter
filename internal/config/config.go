@@ -76,6 +76,34 @@ func resolveJWTSecret(dataDir string) (string, error) {
 	return jwtSecret, nil
 }
 
+func resolveSecret(dataDir, envName, fileName string) (string, error) {
+	if v := strings.TrimSpace(os.Getenv(envName)); v != "" {
+		return v, nil
+	}
+
+	cleanPath := filepath.Clean(filepath.Join(dataDir, fileName))
+	if data, err := os.ReadFile(cleanPath); err == nil && len(strings.TrimSpace(string(data))) > 0 { // #nosec G304
+		return strings.TrimSpace(string(data)), nil
+	}
+
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+
+	secret := hex.EncodeToString(b)
+
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return "", err
+	}
+
+	if err := os.WriteFile(cleanPath, []byte(secret), 0o600); err != nil {
+		return "", err
+	}
+
+	return secret, nil
+}
+
 // Load reads application configuration from environment variables and disk.
 func Load() (*Config, error) {
 	port := 20130
@@ -99,12 +127,17 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	apiKeySecret, err := resolveSecret(dataDir, "API_KEY_SECRET", "api-key-secret")
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Port:                      port,
 		DataDir:                   dataDir,
 		JWTSecret:                 jwtSecret,
 		InitialPassword:           envOr("INITIAL_PASSWORD", "123456"),
-		APIKeySecret:              envOr("API_KEY_SECRET", "endpoint-proxy-api-key-secret"),
+		APIKeySecret:              apiKeySecret,
 		MachineIDSalt:             envOr("MACHINE_ID_SALT", "endpoint-proxy-salt"),
 		RequireAPIKey:             strings.EqualFold(os.Getenv("REQUIRE_API_KEY"), "true"),
 		BaseURL:                   envOr("BASE_URL", fmt.Sprintf("http://localhost:%d", port)),

@@ -8,6 +8,7 @@ import (
 	"flamerouter/internal/store"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 )
@@ -87,12 +88,27 @@ func (sh *SessionHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	RecordSuccess(ip)
 
+	// Default password still in use on a remote client → force a password
+	// change before the dashboard is exposed remotely (keeps local UX intact).
+	// Parity: 9router src/app/api/auth/login/route.js.
+	if !sh.hasStoredPassword() && os.Getenv("INITIAL_PASSWORD") == "" && !isLoopback(r) {
+		// Do NOT issue a session token: a fresh install's default password is
+		// public knowledge ("123456"), so handing out a valid JWT would let any
+		// remote attacker authenticate and (e.g.) PATCH /api/settings to disable
+		// authentication entirely (CVE-2026-56679 class). Require the password
+		// to be changed first.
+		http.Error(w, `{"error":"Default password must be changed before remote access. Change it from the local machine (or set INITIAL_PASSWORD).","mustChangePassword":true}`, http.StatusForbidden)
+
+		return
+	}
+
 	token, err := sh.jwt.Generate(map[string]any{"sub": "admin"}, sessionExpiry)
 	if err != nil {
 		http.Error(w, `{"error":"token"}`, http.StatusInternalServerError)
 		return
 	}
 
+	secure := config.AuthCookieSecure() || r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name:        cookieName,
 		Value:       token,
@@ -101,7 +117,7 @@ func (sh *SessionHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Expires:     time.Time{},
 		RawExpires:  "",
 		MaxAge:      int(sessionExpiry.Seconds()),
-		Secure:      config.AuthCookieSecure(),
+		Secure:      secure,
 		HttpOnly:    true,
 		SameSite:    http.SameSiteLaxMode,
 		Partitioned: false,
@@ -247,6 +263,12 @@ func (sh *SessionHandler) checkPassword(password string) bool {
 	initHash := sha256.Sum256([]byte(sh.initialPassword))
 
 	return subtle.ConstantTimeCompare(passHash[:], initHash[:]) == 1
+}
+
+func (sh *SessionHandler) hasStoredPassword() bool {
+	hash, err := sh.st.GetSetting(settingPassHash)
+
+	return err == nil && hash != ""
 }
 
 func isLoopback(r *http.Request) bool {
