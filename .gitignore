@@ -27,6 +27,7 @@ coverage.html
 docs/
 .idea/
 .vscode/
+.opencode/
 *.swp
 *.swo
 *~

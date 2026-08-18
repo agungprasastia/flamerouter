@@ -16,6 +16,11 @@ import (
 // VercelAIChat handles POST /v1/api/chat — Vercel AI / Ollama-shaped response.
 // Parity: run Chat then transform non-stream JSON to Ollama format.
 func VercelAIChat(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
+	return VercelAIChatWithOptions(ctx, w, body, st, exec, fb, nil)
+}
+
+// VercelAIChatWithOptions handles POST /v1/api/chat with an optional UsageSink.
+func VercelAIChatWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	modelName := "llama3.2"
 
 	var m map[string]any
@@ -32,7 +37,7 @@ func VercelAIChat(ctx context.Context, w http.ResponseWriter, body []byte, st *s
 		buf:    bytes.Buffer{},
 	}
 	err := ChatWithOptions(ctx, cw, body, st, exec, fb, ChatOptions{
-		Usage:           nil,
+		Usage:           usageSink,
 		ClientHeaders:   nil,
 		SourceFormat:    "",
 		AccountStrategy: "",

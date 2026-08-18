@@ -523,7 +523,7 @@ func (s *Server) handleVercelAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = handlers.VercelAIChat(r.Context(), w, body, s.st, s.exec, s.fb) //nolint:errcheck // handler writes error response
+	_ = handlers.VercelAIChatWithOptions(r.Context(), w, body, s.st, s.exec, s.fb, usageBridge{s.tracker}) //nolint:errcheck // handler writes error response
 }
 
 func (s *Server) handleCompactResponses(w http.ResponseWriter, r *http.Request) {
@@ -538,7 +538,7 @@ func (s *Server) handleCompactResponses(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_ = handlers.CompactResponses(r.Context(), w, body, s.st, s.exec, s.fb) //nolint:errcheck // handler writes error response
+	_ = handlers.CompactResponsesWithOptions(r.Context(), w, body, s.st, s.exec, s.fb, usageBridge{s.tracker}) //nolint:errcheck // handler writes error response
 }
 
 func (s *Server) handleGeminiV1Beta(w http.ResponseWriter, r *http.Request) {
@@ -552,7 +552,7 @@ func (s *Server) handleGeminiV1Beta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = handlers.GeminiV1Beta(r.Context(), w, r, s.st, s.exec, s.fb) //nolint:errcheck // handler writes error response
+	_ = handlers.GeminiV1BetaWithOptions(r.Context(), w, r, s.st, s.exec, s.fb, usageBridge{s.tracker}) //nolint:errcheck // handler writes error response
 }
 
 func (s *Server) handleCodexRewrite(w http.ResponseWriter, r *http.Request) {
@@ -664,7 +664,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = handlers.Responses(r.Context(), w, body, s.st, s.exec, s.fb) //nolint:errcheck // handler writes error response
+	_ = handlers.ResponsesWithOptions(r.Context(), w, body, s.st, s.exec, s.fb, usageBridge{s.tracker}) //nolint:errcheck // handler writes error response
 }
 
 //nolint:dupl // intentional per-route handler isolation

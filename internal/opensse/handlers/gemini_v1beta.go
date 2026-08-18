@@ -19,6 +19,11 @@ const geminiNativeBase = "https://generativelanguage.googleapis.com/v1beta/model
 
 // GeminiV1Beta handles /v1beta/* (list models + generateContent passthrough/convert).
 func GeminiV1Beta(ctx context.Context, w http.ResponseWriter, r *http.Request, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
+	return GeminiV1BetaWithOptions(ctx, w, r, st, exec, fb, nil)
+}
+
+// GeminiV1BetaWithOptions handles /v1beta/* with an optional UsageSink.
+func GeminiV1BetaWithOptions(ctx context.Context, w http.ResponseWriter, r *http.Request, st *store.Store, exec executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	path := strings.TrimPrefix(r.URL.Path, "/v1beta/")
 	path = strings.TrimPrefix(path, "/")
 
@@ -36,10 +41,10 @@ func GeminiV1Beta(ctx context.Context, w http.ResponseWriter, r *http.Request, s
 		return nil
 	}
 
-	return handleGeminiPost(ctx, w, r, path, st, exec, fb)
+	return handleGeminiPost(ctx, w, r, path, st, exec, fb, usageSink)
 }
 
-func handleGeminiPost(ctx context.Context, w http.ResponseWriter, r *http.Request, path string, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
+func handleGeminiPost(ctx context.Context, w http.ResponseWriter, r *http.Request, path string, st *store.Store, exec executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	rest := strings.TrimPrefix(path, "models/")
 	stream := strings.Contains(rest, ":streamGenerateContent")
 	modelPart := parseGeminiModelPart(rest)
@@ -72,7 +77,7 @@ func handleGeminiPost(ctx context.Context, w http.ResponseWriter, r *http.Reques
 	payload, _ := json.Marshal(converted) //nolint:errcheck // safe internal map marshal
 
 	return ChatWithOptions(ctx, w, payload, st, exec, fb, ChatOptions{
-		Usage:           nil,
+		Usage:           usageSink,
 		ClientHeaders:   nil,
 		SourceFormat:    "openai",
 		AccountStrategy: "",

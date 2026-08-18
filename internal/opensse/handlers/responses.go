@@ -14,6 +14,11 @@ import (
 
 // Responses handles POST /v1/responses requests.
 func Responses(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
+	return ResponsesWithOptions(ctx, w, body, st, exec, fb, nil)
+}
+
+// ResponsesWithOptions handles POST /v1/responses requests with an optional UsageSink.
+func ResponsesWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -25,12 +30,17 @@ func Responses(ctx context.Context, w http.ResponseWriter, body []byte, st *stor
 
 	sourceFormat := translator.FormatOpenAIResponses
 
-	return handleResponsesChat(ctx, w, payload, st, exec, fb, sourceFormat)
+	return handleResponsesChat(ctx, w, payload, st, exec, fb, sourceFormat, usageSink)
 }
 
 // CompactResponses handles POST /v1/responses/compact.
 // Parity: same pipeline as Responses with body._compact=true.
 func CompactResponses(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback) error {
+	return CompactResponsesWithOptions(ctx, w, body, st, exec, fb, nil)
+}
+
+// CompactResponsesWithOptions handles POST /v1/responses/compact with an optional UsageSink.
+func CompactResponsesWithOptions(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback, usageSink UsageSink) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -40,7 +50,7 @@ func CompactResponses(ctx context.Context, w http.ResponseWriter, body []byte, s
 	m["_compact"] = true
 	payload, _ := json.Marshal(m) //nolint:errcheck // safe internal map marshal
 
-	return Responses(ctx, w, payload, st, exec, fb)
+	return ResponsesWithOptions(ctx, w, payload, st, exec, fb, usageSink)
 }
 
 func convertResponsesToChat(body map[string]any) map[string]any {
@@ -122,7 +132,7 @@ func applyResponsesOptionalFields(result, body map[string]any) {
 	}
 }
 
-func handleResponsesChat(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback, sourceFormat string) error {
+func handleResponsesChat(ctx context.Context, w http.ResponseWriter, body []byte, st *store.Store, exec executor.Executor, fb *fallback.Fallback, sourceFormat string, usageSink UsageSink) error {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -155,5 +165,5 @@ func handleResponsesChat(ctx context.Context, w http.ResponseWriter, body []byte
 
 	providerID := model.ResolveProviderAlias(mref.Provider, provider.Aliases())
 
-	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, "", 0, nil)
+	return handleWithFallback(ctx, w, body, providerID, mref.Model, st, exec, fb, streamReq, sourceFormat, ts, "", 0, usageSink)
 }

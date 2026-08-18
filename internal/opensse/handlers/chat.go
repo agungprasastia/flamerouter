@@ -18,6 +18,7 @@ import (
 	"flamerouter/internal/tokenrefresh"
 	"flamerouter/internal/translator"
 	"flamerouter/internal/translator/concerns"
+	"flamerouter/internal/usage"
 	"fmt"
 	"io"
 	"net/http"
@@ -329,9 +330,15 @@ func prepareChatPayload(body []byte, providerID, modelName string, streamReq boo
 	return body
 }
 
-func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.Reader, sourceFormat, targetFormat string) {
+func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.Reader, sourceFormat, targetFormat string, reqBody []byte) usage.ExtractedUsage {
 	state := concerns.NewResponseState()
 	scanner := bufio.NewScanner(body)
+	finalUsage := usage.ExtractedUsage{
+		PromptTokens:     0,
+		CompletionTokens: 0,
+		HasUsage:         false,
+	}
+	contentLen := 0
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -349,6 +356,20 @@ func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.
 			continue
 		}
 
+		if u, ok := usage.ExtractUsageFromChunk(chunk); ok {
+			if u.PromptTokens > finalUsage.PromptTokens {
+				finalUsage.PromptTokens = u.PromptTokens
+			}
+
+			if u.CompletionTokens > finalUsage.CompletionTokens {
+				finalUsage.CompletionTokens = u.CompletionTokens
+			}
+
+			finalUsage.HasUsage = true
+		}
+
+		contentLen += usage.ExtractContentLengthFromChunk(chunk)
+
 		translated := translator.DefaultRegistry.TranslateResponse(targetFormat, sourceFormat, chunk, state)
 		for _, t := range translated {
 			j, _ := json.Marshal(t)                               //nolint:errcheck // best-effort marshal
@@ -360,11 +381,31 @@ func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.
 		}
 	}
 
+	if state.Usage != nil {
+		if state.Usage.PromptTokens > finalUsage.PromptTokens {
+			finalUsage.PromptTokens = state.Usage.PromptTokens
+		}
+
+		if state.Usage.CompletionTokens > finalUsage.CompletionTokens {
+			finalUsage.CompletionTokens = state.Usage.CompletionTokens
+		}
+
+		finalUsage.HasUsage = true
+	}
+
+	if !finalUsage.HasUsage || (finalUsage.PromptTokens == 0 && finalUsage.CompletionTokens == 0) {
+		finalUsage.PromptTokens = usage.EstimateInputTokens(reqBody)
+		finalUsage.CompletionTokens = usage.EstimateOutputTokens(contentLen)
+		finalUsage.HasUsage = true
+	}
+
 	_, _ = w.Write([]byte("data: [DONE]\n\n")) //nolint:errcheck // stream write
 
 	if flusher != nil {
 		flusher.Flush()
 	}
+
+	return finalUsage
 }
 
 func writeTranslatedNonStream(w http.ResponseWriter, respBody []byte, sourceFormat, targetFormat string) {
@@ -387,6 +428,20 @@ func writeTranslatedNonStream(w http.ResponseWriter, respBody []byte, sourceForm
 	_, _ = w.Write(respBody) //nolint:errcheck // handler write
 }
 
+func recordUsageSinkDirect(st *store.Store, providerID, modelName, connID string, prompt, completion, statusCode int, usageSink UsageSink) {
+	if prompt == 0 && completion == 0 {
+		return
+	}
+
+	if st != nil {
+		_ = st.InsertUsage(providerID, modelName, prompt, completion, connID) //nolint:errcheck // best-effort usage insert
+	}
+
+	if usageSink != nil {
+		usageSink.OnUsage(providerID, modelName, connID, prompt, completion, statusCode)
+	}
+}
+
 func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, connID string, statusCode int, usageSink UsageSink) {
 	var rm map[string]any
 	if json.Unmarshal(respBody, &rm) != nil {
@@ -398,13 +453,9 @@ func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, co
 		return
 	}
 
-	prompt, _ := usage["prompt_tokens"].(float64)                                   //nolint:errcheck // optional type assertion
-	completion, _ := usage["completion_tokens"].(float64)                           //nolint:errcheck // optional type assertion
-	_ = st.InsertUsage(providerID, modelName, int(prompt), int(completion), connID) //nolint:errcheck // best-effort usage insert
-
-	if usageSink != nil {
-		usageSink.OnUsage(providerID, modelName, connID, int(prompt), int(completion), statusCode)
-	}
+	prompt, _ := usage["prompt_tokens"].(float64)         //nolint:errcheck // optional type assertion
+	completion, _ := usage["completion_tokens"].(float64) //nolint:errcheck // optional type assertion
+	recordUsageSinkDirect(st, providerID, modelName, connID, int(prompt), int(completion), statusCode, usageSink)
 }
 
 func resolveChatExecutor(exec executor.Executor, providerID string) executor.Executor {
@@ -509,7 +560,7 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 			return fmt.Errorf("%w: status %d", errUpstreamFailed, res.StatusCode)
 		}
 
-		completeChatResponse(ctx, w, res, conn.ID, providerID, modelName, st, fb, streamReq, sourceFormat, targetFormat, usageSink)
+		completeChatResponse(ctx, w, res, conn.ID, providerID, modelName, st, fb, streamReq, sourceFormat, targetFormat, body, usageSink)
 
 		return nil
 	}
@@ -534,18 +585,72 @@ func handleFallbackExhausted(w http.ResponseWriter, providerID string, excludeID
 	return lastErr
 }
 
-func completeChatResponse(ctx context.Context, w http.ResponseWriter, res *executor.Result, connID, providerID, modelName string, st *store.Store, fb *fallback.Fallback, streamReq bool, sourceFormat, targetFormat string, usageSink UsageSink) {
+func pipeRawStreamWithUsage(w http.ResponseWriter, flusher http.Flusher, body io.Reader, reqBody []byte) usage.ExtractedUsage {
+	scanner := bufio.NewScanner(body)
+	finalUsage := usage.ExtractedUsage{
+		PromptTokens:     0,
+		CompletionTokens: 0,
+		HasUsage:         false,
+	}
+	contentLen := 0
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		if payloadBytes, ok := usage.ParseSSELinePayload(line); ok {
+			var chunk map[string]any
+			if json.Unmarshal(payloadBytes, &chunk) == nil {
+				if u, ok := usage.ExtractUsageFromChunk(chunk); ok {
+					if u.PromptTokens > finalUsage.PromptTokens {
+						finalUsage.PromptTokens = u.PromptTokens
+					}
+
+					if u.CompletionTokens > finalUsage.CompletionTokens {
+						finalUsage.CompletionTokens = u.CompletionTokens
+					}
+
+					finalUsage.HasUsage = true
+				}
+
+				contentLen += usage.ExtractContentLengthFromChunk(chunk)
+			}
+		}
+
+		_, _ = w.Write([]byte(line + "\n\n")) //nolint:errcheck // stream write
+
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	if !finalUsage.HasUsage || (finalUsage.PromptTokens == 0 && finalUsage.CompletionTokens == 0) {
+		finalUsage.PromptTokens = usage.EstimateInputTokens(reqBody)
+		finalUsage.CompletionTokens = usage.EstimateOutputTokens(contentLen)
+		finalUsage.HasUsage = true
+	}
+
+	return finalUsage
+}
+
+func completeChatResponse(_ context.Context, w http.ResponseWriter, res *executor.Result, connID, providerID, modelName string, st *store.Store, fb *fallback.Fallback, streamReq bool, sourceFormat, targetFormat string, reqBody []byte, usageSink UsageSink) {
 	if streamReq {
 		stream.WriteSSEHeaders(w)
 		flusher, _ := w.(http.Flusher) //nolint:errcheck // optional flusher assertion
 
+		var extracted usage.ExtractedUsage
 		if translator.NeedsTranslation(sourceFormat, targetFormat) {
-			writeTranslatedStream(w, flusher, res.Body, sourceFormat, targetFormat)
+			extracted = writeTranslatedStream(w, flusher, res.Body, sourceFormat, targetFormat, reqBody)
 		} else {
-			_ = stream.PipeWithHeartbeat(ctx, w, res.Body, 15*time.Second) //nolint:errcheck // stream pipe
+			extracted = pipeRawStreamWithUsage(w, flusher, res.Body, reqBody)
 		}
 
 		fb.ClearError(connID)
+		recordUsageSinkDirect(st, providerID, modelName, connID, extracted.PromptTokens, extracted.CompletionTokens, res.StatusCode, usageSink)
 
 		return
 	}
@@ -608,31 +713,6 @@ func prepareStreamModelPayload(body []byte, providerID, modelName, sourceFormat,
 	return payload
 }
 
-func pipeRawStream(w http.ResponseWriter, flusher http.Flusher, body io.Reader) {
-	buf := make([]byte, 32*1024)
-
-	for {
-		n, readErr := body.Read(buf)
-		if n > 0 {
-			lines := strings.Split(string(buf[:n]), "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-
-				_, _ = w.Write([]byte(line + "\n\n")) //nolint:errcheck // stream write
-
-				flusher.Flush()
-			}
-		}
-
-		if readErr != nil {
-			break
-		}
-	}
-}
-
 func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, body []byte, providerID, modelName string, st *store.Store, exec executor.Executor, fb *fallback.Fallback, sourceFormat string, ts rtk.TokenSaverOptions) error {
 	excludeIDs := make(map[string]bool)
 	targetFormat := getTargetFormat(providerID)
@@ -683,9 +763,9 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 		fb.ClearError(conn.ID)
 
 		if translator.NeedsTranslation(sourceFormat, targetFormat) {
-			writeTranslatedStream(w, nil, res.Body, sourceFormat, targetFormat)
+			writeTranslatedStream(w, nil, res.Body, sourceFormat, targetFormat, body)
 		} else {
-			pipeRawStream(w, flusher, res.Body)
+			pipeRawStreamWithUsage(w, flusher, res.Body, body)
 		}
 
 		return nil

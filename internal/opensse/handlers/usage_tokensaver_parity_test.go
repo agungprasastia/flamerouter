@@ -131,3 +131,61 @@ func TestTokenSaverHeaderOptOut(t *testing.T) {
 		t.Fatalf("calls = %d, want 1", len(calls))
 	}
 }
+
+func TestUsageSinkRecordedOnStreamSuccess(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
+		t.Fatalf("CreateConnection: %v", err)
+	}
+
+	fake := testutil.NewFakeExecutor(testutil.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       nil,
+		StreamBody: []byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":8}}\n\ndata: [DONE]\n\n"),
+	})
+	fb := fallback.New(st)
+	sink := &testUsageSink{
+		provider:   "",
+		model:      "",
+		prompt:     0,
+		completion: 0,
+		statusCode: 0,
+		called:     false,
+	}
+
+	reqBody := []byte(`{"model":"openai/gpt-4o","stream":true,"messages":[{"role":"user","content":"test stream usage"}]}`)
+	rec := httptest.NewRecorder()
+
+	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
+		Usage:           sink,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
+	if err != nil {
+		t.Fatalf("ChatWithOptions: %v", err)
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	if !sink.called {
+		t.Fatal("expected UsageSink.OnUsage to be called for streaming response")
+	}
+
+	if sink.provider != "openai" || sink.model != "gpt-4o" {
+		t.Fatalf("sink provider/model = %s/%s", sink.provider, sink.model)
+	}
+
+	if sink.prompt != 12 || sink.completion != 8 {
+		t.Fatalf("sink prompt/completion = %d/%d", sink.prompt, sink.completion)
+	}
+
+	if sink.statusCode != http.StatusOK {
+		t.Fatalf("sink status code = %d", sink.statusCode)
+	}
+}
