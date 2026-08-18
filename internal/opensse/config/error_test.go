@@ -48,6 +48,20 @@ func TestCheckFallbackError_Transient(t *testing.T) {
 	}
 }
 
+func TestCheckFallbackError_ClientErrorNonFallback(t *testing.T) {
+	// 400 Bad Request without quota/auth text should not fallback or cooldown
+	fb, cd, _ := config.CheckFallbackError(400, "invalid model parameter", 0)
+	if fb || cd != 0 {
+		t.Fatalf("expected no fallback for 400 client error, got fb=%v cd=%d", fb, cd)
+	}
+
+	// 404 Model Not Found without quota/auth text should not fallback or cooldown
+	fb, cd, _ = config.CheckFallbackError(404, "model not found", 0)
+	if fb || cd != 0 {
+		t.Fatalf("expected no fallback for 404 client error, got fb=%v cd=%d", fb, cd)
+	}
+}
+
 func TestGetUnavailableUntil(t *testing.T) {
 	until := config.GetUnavailableUntil(5000)
 

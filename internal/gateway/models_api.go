@@ -177,6 +177,56 @@ func (s *Server) executeModelProbe(ctx context.Context, kind string, probeBody [
 	}
 }
 
+func extractProbeErrorMessage(bodyBytes []byte, statusCode int, fallbackErr error) string {
+	raw := strings.TrimSpace(string(bodyBytes))
+	if len(raw) > 0 {
+		var parsed map[string]any
+		if err := json.Unmarshal(bodyBytes, &parsed); err == nil && parsed != nil {
+			// 1. Check parsed["error"] as object or string
+			if errObj, ok := parsed["error"].(map[string]any); ok {
+				if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
+					return formatProbeDetail(statusCode, strings.TrimSpace(msg))
+				}
+			} else if errMsg, ok := parsed["error"].(string); ok && strings.TrimSpace(errMsg) != "" {
+				return formatProbeDetail(statusCode, strings.TrimSpace(errMsg))
+			}
+
+			// 2. Check top-level message/msg/detail
+			for _, key := range []string{"message", "msg", "detail"} {
+				if val, ok := parsed[key].(string); ok && strings.TrimSpace(val) != "" {
+					return formatProbeDetail(statusCode, strings.TrimSpace(val))
+				}
+			}
+		}
+
+		// Non-JSON or unparsed text
+		cleanRaw := raw
+		if len(cleanRaw) > 240 {
+			cleanRaw = cleanRaw[:240] + "..."
+		}
+
+		return formatProbeDetail(statusCode, cleanRaw)
+	}
+
+	if fallbackErr != nil {
+		return fallbackErr.Error()
+	}
+
+	if statusCode >= 400 {
+		return fmt.Sprintf("HTTP %d", statusCode)
+	}
+
+	return "unknown error"
+}
+
+func formatProbeDetail(statusCode int, detail string) string {
+	if statusCode >= 400 && !strings.HasPrefix(strings.ToLower(detail), "http") {
+		return fmt.Sprintf("HTTP %d: %s", statusCode, detail)
+	}
+
+	return detail
+}
+
 func (s *Server) runProbeAndFormatResult(ctx context.Context, kind, model string, probeBody []byte) map[string]any {
 	start := time.Now()
 	rec := httptest.NewRecorder()
@@ -189,24 +239,8 @@ func (s *Server) runProbeAndFormatResult(ctx context.Context, kind, model string
 		statusCode = http.StatusOK
 	}
 
-	if err != nil {
-		return map[string]any{
-			"ok":        false,
-			"model":     model,
-			"kind":      kind,
-			"error":     err.Error(),
-			"latencyMs": latencyMs,
-			"status":    statusCode,
-		}
-	}
-
-	if statusCode >= 400 {
-		raw := strings.TrimSpace(rec.Body.String())
-		errMsg := fmt.Sprintf("HTTP %d", statusCode)
-
-		if raw != "" {
-			errMsg = fmt.Sprintf("HTTP %d: %s", statusCode, raw)
-		}
+	if err != nil || statusCode >= 400 {
+		errMsg := extractProbeErrorMessage(rec.Body.Bytes(), statusCode, err)
 
 		return map[string]any{
 			"ok":        false,

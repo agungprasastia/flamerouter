@@ -1138,10 +1138,42 @@ func (s *Server) handleOAuthGenericPoll(w http.ResponseWriter, r *http.Request, 
 		expiresAt = tok.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 
+	email := ""
+	name := ""
+	if tok.IDToken != "" {
+		email, name = oauth.ExtractIdentityFromIDToken(tok.IDToken, provider)
+	}
+	if email == "" && tok.AccessToken != "" {
+		if claims := oauth.DecodeJWTClaims(tok.AccessToken); claims != nil {
+			if em, ok := claims["email"].(string); ok && em != "" {
+				email = em
+				if name == "" || name == provider {
+					name = em
+				}
+			}
+			if nm, ok := claims["name"].(string); ok && nm != "" && (name == "" || name == provider) {
+				name = nm
+			}
+		}
+	}
+
+	if name == "" || name == provider {
+		if email != "" {
+			name = email
+		} else {
+			name = provider + " Connection"
+		}
+	}
+
+	psd := map[string]any{}
+	if email != "" {
+		psd["email"] = email
+	}
+
 	var connID string
 
 	if s.st != nil {
-		cid, createErr := s.st.CreateOAuthConnection(provider, "oauth", provider+" Connection", tok.AccessToken, tok.RefreshToken, expiresAt, nil)
+		cid, createErr := s.st.CreateOAuthConnection(provider, "oauth", name, tok.AccessToken, tok.RefreshToken, expiresAt, psd)
 		if createErr != nil {
 			log.Printf("[oauth] failed to save connection: %v", createErr)
 		} else {
@@ -1153,10 +1185,14 @@ func (s *Server) handleOAuthGenericPoll(w http.ResponseWriter, r *http.Request, 
 		"access_token":  tok.AccessToken,
 		"refresh_token": tok.RefreshToken,
 		"expires_at":    tok.ExpiresAt,
+		"email":         email,
+		"name":          name,
 		"success":       true,
 		"connection": map[string]any{
 			"id":       connID,
 			"provider": provider,
+			"email":    email,
+			"name":     name,
 		},
 	})
 }

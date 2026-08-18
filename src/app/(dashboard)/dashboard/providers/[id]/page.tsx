@@ -1208,6 +1208,7 @@ setOneByOneSummary({
           <div className="flex-1 min-w-0">
             <ConnectionRow
               connection={conn}
+              index={index}
               proxyPools={proxyPools}
               isOAuth={isOAuth}
               isFirst={index === 0}

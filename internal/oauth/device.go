@@ -82,6 +82,7 @@ type deviceTokenResponse struct {
 	TokenType    string `json:"token_type"`
 	Scope        string `json:"scope"`
 	ExpiresIn    int    `json:"expires_in"`
+	IDToken      string `json:"id_token"`
 }
 
 type deviceErrorResponse struct {
@@ -182,7 +183,7 @@ func PollDeviceTokenOnce(ctx context.Context, config *OAuthConfig, deviceCode st
 			TokenType:    tokenResp.TokenType,
 			ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
 			Scope:        tokenResp.Scope,
-			IDToken:      "",
+			IDToken:      tokenResp.IDToken,
 		}, false, nil
 	}
 
@@ -235,7 +236,7 @@ func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string
 				TokenType:    tokenResp.TokenType,
 				ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
 				Scope:        tokenResp.Scope,
-				IDToken:      "",
+				IDToken:      tokenResp.IDToken,
 			}, nil
 		}
 

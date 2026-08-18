@@ -42,6 +42,7 @@ type OneByOneStatus = {
 
 type ConnectionRowProps = {
   connection: ConnectionRowConnection;
+  index?: number;
   proxyPools?: ProxyPoolItem[];
   isOAuth: boolean;
   isFirst: boolean;
@@ -58,6 +59,7 @@ type ConnectionRowProps = {
 
 export default function ConnectionRow({
   connection,
+  index,
   proxyPools,
   isOAuth,
   isFirst,
@@ -305,7 +307,7 @@ export default function ConnectionRow({
               </span>
             )}
             <span className="text-xs text-text-muted">
-              #{connection.priority}
+              #{connection.priority && connection.priority > 0 ? connection.priority : (index !== undefined ? index + 1 : 1)}
             </span>
             {connection.globalPriority && (
               <span className="text-xs text-text-muted">

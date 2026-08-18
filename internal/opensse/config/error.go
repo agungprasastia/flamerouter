@@ -222,6 +222,12 @@ func CheckFallbackError(status int, errorText string, backoffLevel int) (shouldF
 		}
 	}
 
+	// 4xx client errors (e.g. 400 Bad Request, 404 Not Found, 422 Unprocessable)
+	// that did not match specific auth/quota rules above should not lock out the account.
+	if status >= 400 && status < 500 {
+		return false, 0, backoffLevel
+	}
+
 	return true, TransientCooldownMs, backoffLevel
 }
 

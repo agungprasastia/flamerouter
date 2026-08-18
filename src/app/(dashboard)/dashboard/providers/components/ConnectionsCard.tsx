@@ -76,6 +76,7 @@ interface ProxyPoolItem {
 
 interface ConnectionRowProps {
   connection: ConnectionItem;
+  index?: number;
   proxyPools?: ProxyPoolItem[];
   isOAuth?: boolean;
   isFirst: boolean;
@@ -90,6 +91,7 @@ interface ConnectionRowProps {
 
 function ConnectionRow({
   connection,
+  index,
   proxyPools,
   isOAuth,
   isFirst,
@@ -267,7 +269,7 @@ function ConnectionRow({
               </span>
             )}
             <span className="text-xs text-text-muted">
-              #{connection.priority}
+              #{connection.priority && connection.priority > 0 ? connection.priority : (index !== undefined ? index + 1 : 1)}
             </span>
           </div>
           {hasAnyProxy && (
@@ -832,6 +834,7 @@ export default function ConnectionsCard({ providerId, isOAuth }: ConnectionsCard
                 <ConnectionRow
                   key={conn.id}
                   connection={conn}
+                  index={idx}
                   proxyPools={proxyPools}
                   isOAuth={isOAuth}
                   isFirst={idx === 0}

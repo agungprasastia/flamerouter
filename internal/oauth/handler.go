@@ -133,7 +133,7 @@ func (h *Handler) saveRawJWT(st *store.Store, provider, code string) (map[string
 	psd := map[string]any{"authMethod": "access_token"}
 	email := ""
 
-	if info := decodeJWTClaims(code); info != nil {
+	if info := DecodeJWTClaims(code); info != nil {
 		if v, ok := info["account_id"].(string); ok && v != "" {
 			psd["chatgptAccountId"] = v
 		}
@@ -182,7 +182,8 @@ func resolveConfig(provider string, meta map[string]any) (*OAuthConfig, error) {
 	return config, nil
 }
 
-func extractIdentityFromIDToken(idToken, provider string) (string, string) {
+// ExtractIdentityFromIDToken extracts email and display name from an ID token (JWT).
+func ExtractIdentityFromIDToken(idToken, provider string) (string, string) {
 	email := ""
 	name := provider
 
@@ -190,7 +191,7 @@ func extractIdentityFromIDToken(idToken, provider string) (string, string) {
 		return email, name
 	}
 
-	claims := decodeJWTClaims(idToken)
+	claims := DecodeJWTClaims(idToken)
 	if claims == nil {
 		return email, name
 	}
@@ -351,7 +352,7 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 		expiresAt = token.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 
-	email, name := extractIdentityFromIDToken(token.IDToken, provider)
+	email, name := ExtractIdentityFromIDToken(token.IDToken, provider)
 
 	var psd map[string]any
 
@@ -367,7 +368,8 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 	return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
 }
 
-func decodeJWTClaims(tok string) map[string]any {
+// DecodeJWTClaims parses unverified claims from a JWT token string.
+func DecodeJWTClaims(tok string) map[string]any {
 	parts := strings.Split(tok, ".")
 	if len(parts) < 2 {
 		return nil

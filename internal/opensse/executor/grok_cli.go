@@ -411,7 +411,16 @@ func includeEncryptedReasoning(body map[string]any, reasoning map[string]any) {
 	body["include"] = append(include, "reasoning.encrypted_content")
 }
 
+func cleanGrokModelName(m string) string {
+	m = strings.TrimSpace(m)
+	if idx := strings.LastIndex(m, "/"); idx != -1 {
+		m = m[idx+1:]
+	}
+	return m
+}
+
 func resolveGrokModelEffort(model string, body map[string]any) (string, string) {
+	model = cleanGrokModelName(model)
 	modelEffort := resolveEffortFromModel(model)
 	resolved := model
 
@@ -420,6 +429,7 @@ func resolveGrokModelEffort(model string, body map[string]any) (string, string) 
 	}
 
 	if bm, ok := body["model"].(string); ok && bm != "" {
+		bm = cleanGrokModelName(bm)
 		me := resolveEffortFromModel(bm)
 		resolved = bm
 

@@ -15,12 +15,25 @@ type connDTO struct {
 	Provider     string         `json:"provider"`
 	AuthType     string         `json:"authType"`
 	Name         string         `json:"name"`
+	Email        string         `json:"email,omitempty"`
 	BaseURL      string         `json:"baseUrl,omitempty"`
 	TestStatus   string         `json:"testStatus,omitempty"`
 	LastError    string         `json:"lastError,omitempty"`
 	ExpiresAt    string         `json:"expiresAt,omitempty"`
 	Priority     int            `json:"priority"`
 	IsActive     bool           `json:"isActive"`
+}
+
+func resolveConnectionEmail(c store.Connection) string {
+	if c.ProviderSpecificData != nil {
+		if em, ok := c.ProviderSpecificData["email"].(string); ok && em != "" {
+			return em
+		}
+	}
+	if strings.Contains(c.Name, "@") {
+		return c.Name
+	}
+	return ""
 }
 
 func resolveConnectionName(c store.Connection, nodeNameMap map[string]string) string {
@@ -70,6 +83,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		list = append(list, map[string]any{
 			"id": c.ID, "provider": c.Provider, "authType": c.AuthType,
 			"name":                 resolveConnectionName(c, nodeNameMap),
+			"email":                resolveConnectionEmail(c),
 			"priority":             c.Priority,
 			"isActive":             c.IsActive,
 			"baseUrl":              c.BaseURL,
@@ -95,6 +109,7 @@ func (s *Server) handleGetProvider(w http.ResponseWriter, r *http.Request) {
 	if conn, err := s.st.GetConnection(id); err == nil && conn != nil {
 		writeJSONOK(w, map[string]any{"connection": connDTO{
 			ID: conn.ID, Provider: conn.Provider, AuthType: conn.AuthType, Name: conn.Name,
+			Email: resolveConnectionEmail(*conn),
 			Priority: conn.Priority, IsActive: conn.IsActive, BaseURL: conn.BaseURL,
 			TestStatus: conn.TestStatus, LastError: conn.LastError, ExpiresAt: conn.ExpiresAt,
 			SpecificData: conn.ProviderSpecificData,
@@ -118,6 +133,7 @@ func (s *Server) handleGetProvider(w http.ResponseWriter, r *http.Request) {
 	for _, c := range conns {
 		list = append(list, connDTO{
 			ID: c.ID, Provider: c.Provider, AuthType: c.AuthType, Name: c.Name,
+			Email: resolveConnectionEmail(c),
 			Priority: c.Priority, IsActive: c.IsActive, BaseURL: c.BaseURL,
 			TestStatus: c.TestStatus, LastError: c.LastError, ExpiresAt: c.ExpiresAt,
 			SpecificData: c.ProviderSpecificData,
