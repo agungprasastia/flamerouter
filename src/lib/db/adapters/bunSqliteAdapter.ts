@@ -3,6 +3,11 @@
 import { PRAGMA_SQL } from "../schema";
 import type { DatabaseAdapter } from "../driver";
 
+declare global {
+  // eslint-disable-next-line no-var
+  var _bunSqliteShutdownRegistered: boolean | undefined;
+}
+
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
 interface BunStatement {
@@ -54,16 +59,19 @@ export async function createBunSqliteAdapter(filePath: string): Promise<Database
       db.close();
     } catch {}
   }
-  const onShutdown = () => gracefulClose();
-  process.once("beforeExit", onShutdown);
-  process.once("SIGINT", () => {
-    onShutdown();
-    process.exit(0);
-  });
-  process.once("SIGTERM", () => {
-    onShutdown();
-    process.exit(0);
-  });
+  if (!global._bunSqliteShutdownRegistered) {
+    global._bunSqliteShutdownRegistered = true;
+    const onShutdown = () => gracefulClose();
+    process.once("beforeExit", onShutdown);
+    process.once("SIGINT", () => {
+      onShutdown();
+      process.exit(0);
+    });
+    process.once("SIGTERM", () => {
+      onShutdown();
+      process.exit(0);
+    });
+  }
 
   return {
     driver: "bun:sqlite",

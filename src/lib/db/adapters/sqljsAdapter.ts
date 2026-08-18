@@ -3,6 +3,11 @@ import initSqlJs, { type SqlJsStatic, type SqlJsDatabase, type BindParams } from
 import { PRAGMA_SQL } from "../schema";
 import type { DatabaseAdapter } from "../driver";
 
+declare global {
+  // eslint-disable-next-line no-var
+  var _sqljsShutdownRegistered: boolean | undefined;
+}
+
 let SQL: SqlJsStatic | null = null;
 
 async function loadSql(): Promise<SqlJsStatic> {
@@ -116,16 +121,18 @@ export async function createSqlJsAdapter(filePath: string): Promise<DatabaseAdap
     db.close();
   }
 
-  // Flush on shutdown
-  const flush = () => {
-    if (dirty)
-      try {
-        persist();
-      } catch {}
-  };
-  process.on("beforeExit", flush);
-  process.on("SIGINT", flush);
-  process.on("SIGTERM", flush);
+  if (!global._sqljsShutdownRegistered) {
+    global._sqljsShutdownRegistered = true;
+    const flush = () => {
+      if (dirty)
+        try {
+          persist();
+        } catch {}
+    };
+    process.on("beforeExit", flush);
+    process.on("SIGINT", flush);
+    process.on("SIGTERM", flush);
+  }
 
   return { driver: "sql.js", run, get, all, exec, transaction, close, persist, raw: db };
 }

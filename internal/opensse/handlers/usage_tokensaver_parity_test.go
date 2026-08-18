@@ -189,3 +189,57 @@ func TestUsageSinkRecordedOnStreamSuccess(t *testing.T) {
 		t.Fatalf("sink status code = %d", sink.statusCode)
 	}
 }
+
+func TestUsageSinkRecordedOnNonStreamWithoutUsageObject(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
+		t.Fatalf("CreateConnection: %v", err)
+	}
+
+	fake := testutil.NewFakeExecutor(testutil.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       []byte(`{"choices":[{"message":{"role":"assistant","content":"Hello response"}}]}`),
+		StreamBody: nil,
+	})
+	fb := fallback.New(st)
+	sink := &testUsageSink{
+		provider:   "",
+		model:      "",
+		prompt:     0,
+		completion: 0,
+		statusCode: 0,
+		called:     false,
+	}
+
+	reqBody := []byte(`{"model":"openai/gpt-4o","stream":false,"messages":[{"role":"user","content":"hi test"}]}`)
+	rec := httptest.NewRecorder()
+
+	err := ChatWithOptions(context.Background(), rec, reqBody, st, fake, fb, ChatOptions{
+		Usage:           sink,
+		ClientHeaders:   nil,
+		SourceFormat:    "",
+		AccountStrategy: "",
+		TokenSaver:      rtk.EmptyTokenSaver(),
+		StickyLimit:     0,
+	})
+	if err != nil {
+		t.Fatalf("ChatWithOptions: %v", err)
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	if !sink.called {
+		t.Fatal("expected UsageSink.OnUsage to be called for non-stream response")
+	}
+
+	if sink.provider != "openai" || sink.model != "gpt-4o" {
+		t.Fatalf("sink provider/model = %s/%s", sink.provider, sink.model)
+	}
+
+	if sink.prompt <= 0 || sink.completion <= 0 {
+		t.Fatalf("expected estimated tokens > 0, got prompt=%d, completion=%d", sink.prompt, sink.completion)
+	}
+}

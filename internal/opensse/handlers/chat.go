@@ -442,20 +442,27 @@ func recordUsageSinkDirect(st *store.Store, providerID, modelName, connID string
 	}
 }
 
-func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, connID string, statusCode int, usageSink UsageSink) {
+func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, connID string, statusCode int, reqBody []byte, usageSink UsageSink) {
 	var rm map[string]any
-	if json.Unmarshal(respBody, &rm) != nil {
-		return
+	if json.Unmarshal(respBody, &rm) == nil {
+		if u, ok := usage.ExtractUsageFromChunk(rm); ok {
+			recordUsageSinkDirect(st, providerID, modelName, connID, u.PromptTokens, u.CompletionTokens, statusCode, usageSink)
+			return
+		}
+
+		if usageData, ok := rm["usage"].(map[string]any); ok {
+			prompt, _ := usageData["prompt_tokens"].(float64)         //nolint:errcheck // optional type assertion
+			completion, _ := usageData["completion_tokens"].(float64) //nolint:errcheck // optional type assertion
+			recordUsageSinkDirect(st, providerID, modelName, connID, int(prompt), int(completion), statusCode, usageSink)
+
+			return
+		}
 	}
 
-	usage, ok := rm["usage"].(map[string]any)
-	if !ok {
-		return
-	}
-
-	prompt, _ := usage["prompt_tokens"].(float64)         //nolint:errcheck // optional type assertion
-	completion, _ := usage["completion_tokens"].(float64) //nolint:errcheck // optional type assertion
-	recordUsageSinkDirect(st, providerID, modelName, connID, int(prompt), int(completion), statusCode, usageSink)
+	contentLen := len(respBody)
+	prompt := usage.EstimateInputTokens(reqBody)
+	completion := usage.EstimateOutputTokens(contentLen)
+	recordUsageSinkDirect(st, providerID, modelName, connID, prompt, completion, statusCode, usageSink)
 }
 
 func resolveChatExecutor(exec executor.Executor, providerID string) executor.Executor {
@@ -662,7 +669,7 @@ func completeChatResponse(_ context.Context, w http.ResponseWriter, res *executo
 	fb.ClearError(connID)
 
 	writeTranslatedNonStream(w, respBody, sourceFormat, targetFormat)
-	recordUsageSink(st, respBody, providerID, modelName, connID, res.StatusCode, usageSink)
+	recordUsageSink(st, respBody, providerID, modelName, connID, res.StatusCode, reqBody, usageSink)
 }
 
 func prepareStreamModelPayload(body []byte, providerID, modelName, sourceFormat, targetFormat string, conn *store.Connection, ts rtk.TokenSaverOptions) []byte {

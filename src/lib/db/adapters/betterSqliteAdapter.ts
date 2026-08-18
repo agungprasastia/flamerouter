@@ -1,6 +1,11 @@
 import { PRAGMA_SQL } from "../schema";
 import type { DatabaseAdapter } from "../driver";
 
+declare global {
+  // eslint-disable-next-line no-var
+  var _betterSqliteShutdownRegistered: boolean | undefined;
+}
+
 // Periodic checkpoint to keep WAL file small (avoid huge -wal/-shm growth)
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
@@ -62,16 +67,19 @@ export function createBetterSqliteAdapter(filePath: string): DatabaseAdapter & {
     } catch {}
   }
 
-  const onShutdown = () => gracefulClose();
-  process.once("beforeExit", onShutdown);
-  process.once("SIGINT", () => {
-    onShutdown();
-    process.exit(0);
-  });
-  process.once("SIGTERM", () => {
-    onShutdown();
-    process.exit(0);
-  });
+  if (!global._betterSqliteShutdownRegistered) {
+    global._betterSqliteShutdownRegistered = true;
+    const onShutdown = () => gracefulClose();
+    process.once("beforeExit", onShutdown);
+    process.once("SIGINT", () => {
+      onShutdown();
+      process.exit(0);
+    });
+    process.once("SIGTERM", () => {
+      onShutdown();
+      process.exit(0);
+    });
+  }
 
   return {
     driver: "better-sqlite3",

@@ -58,7 +58,7 @@ import { killAllBridges } from "@/lib/mcp/stdioSseBridge";
   }
 })();
 
-process.setMaxListeners(20);
+process.setMaxListeners(50);
 
 // Defer heavy startup work so the first HTTP request (login → dashboard) isn't
 // starved by DB cleanup, cloudflared download, lsof/DNS probes and OAuth pings.
