@@ -36,8 +36,16 @@ func resolveConnectionEmail(c store.Connection) string {
 		return c.Name
 	}
 
-	// Dynamic fallback: extract from access_token / refresh_token / api_key if JWT
-	for _, tok := range []string{c.AccessToken, c.RefreshToken, c.APIKey} {
+	// Dynamic fallback: extract from access_token / refresh_token / api_key / idToken if JWT
+	tokens := []string{c.AccessToken, c.RefreshToken, c.APIKey}
+
+	if c.ProviderSpecificData != nil {
+		if idt, ok := c.ProviderSpecificData["idToken"].(string); ok && idt != "" {
+			tokens = append(tokens, idt)
+		}
+	}
+
+	for _, tok := range tokens {
 		if tok != "" {
 			if email, _ := oauth.ExtractIdentityFromJWT(tok, ""); email != "" {
 				return email

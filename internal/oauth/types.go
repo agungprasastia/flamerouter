@@ -117,7 +117,7 @@ var ProviderConfigs = map[string]*OAuthConfig{
 		AuthURL:     "https://auth.openai.com/oauth/authorize",
 		TokenURL:    "https://auth.openai.com/oauth/token",
 		RedirectURL: "http://localhost:20128/api/oauth/codex/callback",
-		Scopes:      []string{"openid", "offline_access"},
+		Scopes:      []string{"openid", "profile", "email", "offline_access"},
 		AuthStyle:   "pkce",
 		TokenExpiry: time.Hour,
 	},

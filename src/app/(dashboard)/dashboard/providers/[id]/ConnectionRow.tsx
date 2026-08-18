@@ -171,7 +171,12 @@ export default function ConnectionRow({
   const rawEmail = connection.email?.trim() || "";
   const rawDisplay = connection.displayName?.trim() || "";
 
-  const isGenericName = !rawName || rawName === "OAuth Account" || rawName.endsWith(" Connection");
+  const isGenericName =
+    !rawName ||
+    rawName === "OAuth Account" ||
+    rawName === "codex" ||
+    rawName === connection.provider ||
+    rawName.endsWith(" Connection");
 
   let displayName = rawName;
   let secondaryDisplayName: string | null = null;
@@ -183,8 +188,10 @@ export default function ConnectionRow({
     } else if (rawDisplay && rawDisplay !== rawEmail) {
       secondaryDisplayName = rawDisplay;
     }
-  } else if (rawDisplay && isGenericName) {
+  } else if (rawDisplay && (isGenericName || !rawName)) {
     displayName = rawDisplay;
+  } else if (isGenericName && isOAuthConnection) {
+    displayName = "OAuth Account";
   } else if (!displayName) {
     displayName = isOAuthConnection
       ? "OAuth Account"

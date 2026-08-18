@@ -199,6 +199,26 @@ func resolveConfig(provider string, meta map[string]any) (*OAuthConfig, error) {
 	return config, nil
 }
 
+func extractOpenAIEmail(claims map[string]any) string {
+	if prof, ok := claims["https://api.openai.com/profile"].(map[string]any); ok {
+		if em, ok := prof["email"].(string); ok && em != "" {
+			return em
+		}
+	}
+
+	if auth, ok := claims["https://api.openai.com/auth"].(map[string]any); ok {
+		if em, ok := auth["email"].(string); ok && em != "" {
+			return em
+		}
+
+		if pref, ok := auth["preferred_username"].(string); ok && strings.Contains(pref, "@") {
+			return pref
+		}
+	}
+
+	return ""
+}
+
 // ExtractIdentityFromJWT parses any JWT string (id_token, access_token) and extracts email and display name.
 func ExtractIdentityFromJWT(tok, defaultName string) (string, string) {
 	if tok == "" {
@@ -218,23 +238,17 @@ func ExtractIdentityFromJWT(tok, defaultName string) (string, string) {
 		email = em
 	}
 
-	// 2. Profile object (e.g. OpenAI JWT profile: "https://api.openai.com/profile" -> {"email": "..."})
+	// 2. OpenAI JWT claims (https://api.openai.com/profile or https://api.openai.com/auth)
 	if email == "" {
-		if prof, ok := claims["https://api.openai.com/profile"].(map[string]any); ok {
-			if em, ok := prof["email"].(string); ok && em != "" {
-				email = em
-			}
-		}
+		email = extractOpenAIEmail(claims)
 	}
 
 	// 3. Preferred username / unique_name / upn
 	if email == "" {
 		for _, key := range []string{"preferred_username", "unique_name", "upn"} {
-			if val, ok := claims[key].(string); ok && val != "" {
-				if strings.Contains(val, "@") {
-					email = val
-					break
-				}
+			if val, ok := claims[key].(string); ok && strings.Contains(val, "@") {
+				email = val
+				break
 			}
 		}
 	}
@@ -251,6 +265,10 @@ func ExtractIdentityFromJWT(tok, defaultName string) (string, string) {
 		name = nm
 	} else if pref, ok := claims["preferred_username"].(string); ok && pref != "" {
 		name = pref
+	} else if auth, ok := claims["https://api.openai.com/auth"].(map[string]any); ok {
+		if pref, ok := auth["preferred_username"].(string); ok && pref != "" {
+			name = pref
+		}
 	} else if email != "" {
 		name = email
 	}
@@ -451,6 +469,32 @@ func validateExchangeParams(provider, code, redirectURI, codeVerifier string) er
 	return nil
 }
 
+func enrichCodexPSD(psd map[string]any, token *Token) {
+	for _, tok := range []string{token.IDToken, token.AccessToken} {
+		if tok == "" {
+			continue
+		}
+
+		claims := DecodeJWTClaims(tok)
+		if claims == nil {
+			continue
+		}
+
+		auth, ok := claims["https://api.openai.com/auth"].(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if v, ok := auth["chatgpt_account_id"].(string); ok && v != "" {
+			psd["chatgptAccountId"] = v
+		}
+
+		if v, ok := auth["chatgpt_plan_type"].(string); ok && v != "" {
+			psd["chatgptPlanType"] = v
+		}
+	}
+}
+
 // ExchangeAndSave exchanges auth code (or raw JWT access token) and stores connection.
 func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider, code, redirectURI, codeVerifier, state string, meta map[string]any) (map[string]any, error) {
 	_ = state
@@ -478,6 +522,39 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 		expiresAt = token.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 
+	email, name := resolveTokenIdentity(ctx, token, provider)
+
+	var psd map[string]any
+
+	if provider == "antigravity" {
+		email, name, psd = h.setupAntigravity(ctx, token, email, name)
+	}
+
+	if psd == nil {
+		psd = make(map[string]any)
+	}
+
+	if token.IDToken != "" {
+		psd["idToken"] = token.IDToken
+	}
+
+	if provider == "codex" {
+		enrichCodexPSD(psd, token)
+	}
+
+	if email != "" {
+		psd["email"] = email
+	}
+
+	id, err := st.CreateOAuthConnection(provider, "oauth", name, token.AccessToken, token.RefreshToken, expiresAt, psd)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
+}
+
+func resolveTokenIdentity(ctx context.Context, token *Token, provider string) (string, string) {
 	email, name := ExtractIdentityFromIDToken(token.IDToken, provider)
 	if email == "" && token.AccessToken != "" {
 		jwtEmail, jwtName := ExtractIdentityFromJWT(token.AccessToken, provider)
@@ -509,26 +586,7 @@ func (h *Handler) ExchangeAndSave(ctx context.Context, st *store.Store, provider
 		}
 	}
 
-	var psd map[string]any
-
-	if provider == "antigravity" {
-		email, name, psd = h.setupAntigravity(ctx, token, email, name)
-	}
-
-	if psd == nil {
-		psd = make(map[string]any)
-	}
-
-	if email != "" {
-		psd["email"] = email
-	}
-
-	id, err := st.CreateOAuthConnection(provider, "oauth", name, token.AccessToken, token.RefreshToken, expiresAt, psd)
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]any{"id": id, "provider": provider, "email": email, "displayName": name}, nil
+	return email, name
 }
 
 // DecodeJWTClaims parses unverified claims from a JWT token string.

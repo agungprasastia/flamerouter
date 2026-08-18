@@ -202,10 +202,15 @@ function ConnectionRow({
   const rawName = connection.name?.trim() || "";
   const rawEmail = connection.email?.trim() || "";
   const rawDisplay = connection.displayName?.trim() || "";
-  const isGenericName = !rawName || rawName === "OAuth Account" || rawName.endsWith(" Connection");
+  const isGenericName =
+    !rawName ||
+    rawName === "OAuth Account" ||
+    rawName === "codex" ||
+    rawName === connection.provider ||
+    rawName.endsWith(" Connection");
 
   const displayName = isOAuth
-    ? (rawEmail || (isGenericName && rawDisplay ? rawDisplay : rawName) || rawDisplay || "OAuth Account")
+    ? (rawEmail || (!isGenericName ? rawName : rawDisplay) || rawDisplay || "OAuth Account")
     : (rawName || rawEmail || rawDisplay || "API Key");
 
   const handleSelectProxy = async (poolId: string) => {
