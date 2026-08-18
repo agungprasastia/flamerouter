@@ -251,6 +251,47 @@ func TestWriteResultRecordUsageFromEmbeddingsResponse(t *testing.T) {
 	}
 }
 
+func TestWriteResultRecordExactUsageSkipsWithoutUsageObject(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {
+		t.Fatalf("CreateConnection: %v", err)
+	}
+
+	sink := &testUsageSink{
+		provider:   "",
+		model:      "",
+		prompt:     0,
+		completion: 0,
+		cached:     0,
+		statusCode: 0,
+		called:     false,
+	}
+	rec := httptest.NewRecorder()
+
+	res := &executor.Result{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(bytes.NewReader([]byte(`{
+			"object":"list",
+			"data":[{"object":"embedding","embedding":[0.1],"index":0}],
+			"model":"text-embedding-3-small"
+		}`))),
+	}
+
+	err := writeResultRecordExactUsage(rec, res, st, "openai", "text-embedding-3-small", "conn1", sink)
+	if err != nil {
+		t.Fatalf("writeResultRecordExactUsage: %v", err)
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	if sink.called {
+		t.Fatal("expected no UsageSink.OnUsage call without usage object")
+	}
+}
+
 func TestUsageSinkRecordedOnNonStreamWithoutUsageObject(t *testing.T) {
 	st := newTestStore(t)
 	if _, err := st.CreateConnection("openai", "api_key", "main", "sk-test", ""); err != nil {

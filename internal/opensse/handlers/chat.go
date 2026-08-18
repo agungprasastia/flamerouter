@@ -438,7 +438,7 @@ func writeTranslatedNonStream(w http.ResponseWriter, respBody []byte, sourceForm
 }
 
 func recordUsageSinkDirect(st *store.Store, providerID, modelName, connID string, prompt, completion, cached, statusCode int, usageSink UsageSink) {
-	if prompt == 0 && completion == 0 {
+	if statusCode >= 400 || usageSink == nil || (prompt == 0 && completion == 0) {
 		return
 	}
 
@@ -446,9 +446,7 @@ func recordUsageSinkDirect(st *store.Store, providerID, modelName, connID string
 		_ = st.InsertUsage(providerID, modelName, prompt, completion, connID) //nolint:errcheck // best-effort usage insert
 	}
 
-	if usageSink != nil {
-		usageSink.OnUsage(providerID, modelName, connID, prompt, completion, cached, statusCode)
-	}
+	usageSink.OnUsage(providerID, modelName, connID, prompt, completion, cached, statusCode)
 }
 
 func recordUsageSink(st *store.Store, respBody []byte, providerID, modelName, connID string, statusCode int, reqBody []byte, usageSink UsageSink) {

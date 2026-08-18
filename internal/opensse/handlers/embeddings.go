@@ -62,5 +62,5 @@ func Embeddings(ctx context.Context, w http.ResponseWriter, body []byte, st *sto
 		fb.ClearError(conn.ID)
 	}
 
-	return writeResultRecordUsage(w, res, st, providerID, modelName, conn.ID, body, usageSink)
+	return writeResultRecordExactUsage(w, res, st, providerID, modelName, conn.ID, usageSink)
 }

@@ -3,10 +3,12 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flamerouter/internal/opensse/executor"
 	"flamerouter/internal/opensse/fallback"
 	"flamerouter/internal/opensse/model"
 	"flamerouter/internal/store"
+	"flamerouter/internal/usage"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -212,6 +214,33 @@ func writeResultRecordUsage(w http.ResponseWriter, res *executor.Result, st *sto
 	}
 
 	recordUsageSink(st, respBody, providerID, modelName, connID, res.StatusCode, reqBody, usageSink)
+
+	ct := res.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "application/json"
+	}
+
+	w.Header().Set("Content-Type", ct)
+	w.WriteHeader(res.StatusCode)
+	_, _ = w.Write(respBody) //nolint:errcheck // handler write
+
+	return nil
+}
+
+func writeResultRecordExactUsage(w http.ResponseWriter, res *executor.Result, st *store.Store, providerID, modelName, connID string, usageSink UsageSink) error {
+	defer res.Body.Close() //nolint:errcheck // best-effort body close
+
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+
+	var rm map[string]any
+	if json.Unmarshal(respBody, &rm) == nil {
+		if u, ok := usage.ExtractUsageFromChunk(rm); ok {
+			recordUsageSinkDirect(st, providerID, modelName, connID, u.PromptTokens, u.CompletionTokens, u.CachedTokens, res.StatusCode, usageSink)
+		}
+	}
 
 	ct := res.Header.Get("Content-Type")
 	if ct == "" {
