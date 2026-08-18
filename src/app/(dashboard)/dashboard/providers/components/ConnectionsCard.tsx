@@ -200,7 +200,11 @@ function ConnectionRow({
     getConnectionStatusVariant(connection.isActive, effectiveStatus);
 
   const rawName = connection.name?.trim() || "";
-  const rawEmail = connection.email?.trim() || "";
+  const psdEmail =
+    typeof connection.providerSpecificData?.email === "string"
+      ? connection.providerSpecificData.email.trim()
+      : "";
+  const rawEmail = connection.email?.trim() || psdEmail;
   const rawDisplay = connection.displayName?.trim() || "";
   const isGenericName =
     !rawName ||
