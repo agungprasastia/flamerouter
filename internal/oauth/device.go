@@ -138,6 +138,53 @@ func handleDevicePollResponse(body []byte) (int, error) {
 	return 0, nil
 }
 
+// PollDeviceTokenOnce makes a single attempt to poll the token endpoint.
+// Returns (token, pending, err).
+func PollDeviceTokenOnce(ctx context.Context, config *OAuthConfig, deviceCode string) (*Token, bool, error) {
+	if config == nil {
+		return nil, false, fmt.Errorf("oauth config is nil")
+	}
+
+	data := url.Values{}
+	data.Set("client_id", config.ClientID)
+	data.Set("device_code", deviceCode)
+	data.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+
+	statusCode, body, err := doPollDeviceTokenRequest(ctx, config.TokenURL, data)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if statusCode == http.StatusOK {
+		var tokenResp deviceTokenResponse
+		if unmarshalErr := json.Unmarshal(body, &tokenResp); unmarshalErr != nil {
+			return nil, false, unmarshalErr
+		}
+
+		return &Token{
+			AccessToken:  tokenResp.AccessToken,
+			RefreshToken: tokenResp.RefreshToken,
+			TokenType:    tokenResp.TokenType,
+			ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+			Scope:        tokenResp.Scope,
+			IDToken:      "",
+		}, false, nil
+	}
+
+	var errResp deviceErrorResponse
+	if unmarshalErr := json.Unmarshal(body, &errResp); unmarshalErr == nil {
+		if errResp.Error == "authorization_pending" || errResp.Error == "slow_down" {
+			return nil, true, nil
+		}
+
+		if errResp.Error != "" {
+			return nil, false, fmt.Errorf("%s", errResp.Error)
+		}
+	}
+
+	return nil, false, fmt.Errorf("device poll unexpected status %d: %s", statusCode, string(body))
+}
+
 // PollDeviceToken polls the OAuth token endpoint until authorized or context canceled.
 func PollDeviceToken(ctx context.Context, config *OAuthConfig, deviceCode string, interval int) (*Token, error) {
 	if config == nil {

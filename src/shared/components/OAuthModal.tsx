@@ -253,12 +253,18 @@ export default function OAuthModal({
           if (data.error === "slow_down") {
             interval = Math.min(interval + 5, 30);
           }
+          // If pending or still waiting, loop continues without switching step to error
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : "Polling failed";
-          setError(msg);
-          setStep("error");
-          setPolling(false);
-          return;
+          // Only show error and abort if fatal error or aborted
+          if (msg.includes("expired_token") || msg.includes("access_denied")) {
+            setError(msg);
+            setStep("error");
+            setPolling(false);
+            return;
+          }
+          // Transient network glitch during polling - keep waiting
+          console.warn("[OAuthModal] Transient polling error:", msg);
         }
       }
 

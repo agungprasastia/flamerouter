@@ -292,8 +292,8 @@ export default function ProviderLimits() {
 
       const quotaEntry = {
         quotas: parsedQuotas,
-        plan: (quotaPayload?.plan as string) || (data.plan as string) || null,
-        message: (quotaPayload?.message as string) || (data.message as string) || null,
+        plan: (quotaPayload?.plan as string) || (data.plan as string) || undefined,
+        message: (quotaPayload?.message as string) || (data.message as string) || undefined,
         raw: data,
       };
 

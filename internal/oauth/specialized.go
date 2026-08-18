@@ -13,6 +13,38 @@ import (
 	"time"
 )
 
+// ExchangeGithubDeviceTokenOnce makes a single poll attempt and, if authorized, fetches Copilot token.
+// Returns (token, extra, pending, err).
+func ExchangeGithubDeviceTokenOnce(ctx context.Context, deviceCode string, wantCopilot bool) (*Token, map[string]any, bool, error) {
+	cfg, ok := ProviderConfigs["github"]
+	if !ok || cfg == nil {
+		return nil, nil, false, fmt.Errorf("github oauth config not found")
+	}
+
+	tok, pending, err := PollDeviceTokenOnce(ctx, cfg, deviceCode)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	if pending || tok == nil {
+		return nil, nil, pending, nil
+	}
+
+	extra := map[string]any{}
+
+	if wantCopilot {
+		ct, exp, err := fetchCopilotToken(ctx, tok.AccessToken)
+		if err == nil && ct != "" {
+			extra["copilotToken"] = ct
+			extra["copilotTokenExpiresAt"] = exp
+			// Prefer copilot token as access for github executor
+			tok.AccessToken = ct
+		}
+	}
+
+	return tok, extra, false, nil
+}
+
 // ExchangeGithubDeviceToken polls GitHub device flow then optionally fetches Copilot token.
 func ExchangeGithubDeviceToken(ctx context.Context, deviceCode string, wantCopilot bool) (*Token, map[string]any, error) {
 	cfg, ok := ProviderConfigs["github"]

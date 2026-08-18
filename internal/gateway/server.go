@@ -16,6 +16,7 @@ import (
 	"flamerouter/internal/usage"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1059,14 +1060,40 @@ func (s *Server) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	s.handleOAuthGenericPoll(w, r, provider, dc, req.Interval)
+	s.handleOAuthGenericPoll(w, r, provider, dc)
 }
 
 func (s *Server) handleOAuthGithubPoll(w http.ResponseWriter, r *http.Request, provider, dc string) {
-	tok, extra, err := oauth.ExchangeGithubDeviceToken(r.Context(), dc, provider == "copilot" || provider == "github")
+	tok, extra, pending, err := oauth.ExchangeGithubDeviceTokenOnce(r.Context(), dc, provider == "copilot" || provider == "github")
 	if err != nil {
-		writeJSONOK(w, map[string]any{"success": false, "error": err.Error(), "pending": true})
+		writeJSONOK(w, map[string]any{"success": false, "error": err.Error(), "pending": false})
 		return
+	}
+
+	if pending || tok == nil {
+		writeJSONOK(w, map[string]any{"success": false, "pending": true, "error": "authorization_pending"})
+		return
+	}
+
+	expiresAt := ""
+	if !tok.ExpiresAt.IsZero() {
+		expiresAt = tok.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+
+	psd := map[string]any{}
+	for k, v := range extra {
+		psd[k] = v
+	}
+
+	var connID string
+
+	if s.st != nil {
+		cid, createErr := s.st.CreateOAuthConnection(provider, "oauth", "GitHub Copilot", tok.AccessToken, tok.RefreshToken, expiresAt, psd)
+		if createErr != nil {
+			log.Printf("[oauth] failed to save connection: %v", createErr)
+		} else {
+			connID = cid
+		}
 	}
 
 	writeJSONOK(w, map[string]any{
@@ -1075,31 +1102,45 @@ func (s *Server) handleOAuthGithubPoll(w http.ResponseWriter, r *http.Request, p
 		"expires_at":    tok.ExpiresAt,
 		"extra":         extra,
 		"success":       true,
+		"connection": map[string]any{
+			"id":       connID,
+			"provider": provider,
+		},
 	})
 }
 
-func (s *Server) handleOAuthGenericPoll(w http.ResponseWriter, r *http.Request, provider, dc string, interval int) {
-	if interval <= 0 {
-		interval = 5
-	}
-
+func (s *Server) handleOAuthGenericPoll(w http.ResponseWriter, r *http.Request, provider, dc string) {
 	cfg, ok := oauth.ProviderConfigs[provider]
 	if !ok {
 		http.Error(w, `{"error":"unknown provider"}`, http.StatusBadRequest)
 		return
 	}
 
-	tok, err := oauth.PollDeviceToken(r.Context(), cfg, dc, interval)
-	if err != nil || tok == nil {
-		msg := "token poll failed"
-		if err != nil {
-			msg = err.Error()
-		}
-
-		pending := strings.Contains(msg, "authorization_pending") || strings.Contains(msg, "slow_down") || strings.Contains(msg, "pending")
-		writeJSONOK(w, map[string]any{"success": false, "error": msg, "pending": pending})
-
+	tok, pending, err := oauth.PollDeviceTokenOnce(r.Context(), cfg, dc)
+	if err != nil {
+		writeJSONOK(w, map[string]any{"success": false, "error": err.Error(), "pending": false})
 		return
+	}
+
+	if pending || tok == nil {
+		writeJSONOK(w, map[string]any{"success": false, "pending": true, "error": "authorization_pending"})
+		return
+	}
+
+	expiresAt := ""
+	if !tok.ExpiresAt.IsZero() {
+		expiresAt = tok.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+
+	var connID string
+
+	if s.st != nil {
+		cid, createErr := s.st.CreateOAuthConnection(provider, "oauth", provider+" Connection", tok.AccessToken, tok.RefreshToken, expiresAt, nil)
+		if createErr != nil {
+			log.Printf("[oauth] failed to save connection: %v", createErr)
+		} else {
+			connID = cid
+		}
 	}
 
 	writeJSONOK(w, map[string]any{
@@ -1107,6 +1148,10 @@ func (s *Server) handleOAuthGenericPoll(w http.ResponseWriter, r *http.Request, 
 		"refresh_token": tok.RefreshToken,
 		"expires_at":    tok.ExpiresAt,
 		"success":       true,
+		"connection": map[string]any{
+			"id":       connID,
+			"provider": provider,
+		},
 	})
 }
 
