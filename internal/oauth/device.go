@@ -156,9 +156,24 @@ func PollDeviceTokenOnce(ctx context.Context, config *OAuthConfig, deviceCode st
 	}
 
 	if statusCode == http.StatusOK {
+		var errResp deviceErrorResponse
+		if unmarshalErr := json.Unmarshal(body, &errResp); unmarshalErr == nil {
+			if errResp.Error == "authorization_pending" || errResp.Error == "slow_down" {
+				return nil, true, nil
+			}
+
+			if errResp.Error != "" {
+				return nil, false, fmt.Errorf("%s", errResp.Error)
+			}
+		}
+
 		var tokenResp deviceTokenResponse
 		if unmarshalErr := json.Unmarshal(body, &tokenResp); unmarshalErr != nil {
 			return nil, false, unmarshalErr
+		}
+
+		if tokenResp.AccessToken == "" {
+			return nil, false, fmt.Errorf("empty access token in response: %s", string(body))
 		}
 
 		return &Token{
