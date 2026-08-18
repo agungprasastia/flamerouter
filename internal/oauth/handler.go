@@ -12,18 +12,21 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Handler manages OAuth flow endpoints, token exchange, and persistence.
 type Handler struct {
 	states map[string]*OAuthState
+	mu     sync.RWMutex
 }
 
 // NewHandler constructs an OAuth Handler.
 func NewHandler() *Handler {
 	return &Handler{
 		states: make(map[string]*OAuthState),
+		mu:     sync.RWMutex{},
 	}
 }
 
@@ -52,12 +55,14 @@ func (h *Handler) StartAuth(w http.ResponseWriter, r *http.Request, provider str
 		redirectURI = rr
 	}
 
+	h.mu.Lock()
 	h.states[state] = &OAuthState{
 		CreatedAt:   time.Now(),
 		State:       state,
 		Provider:    provider,
 		RedirectURI: redirectURI,
 	}
+	h.mu.Unlock()
 
 	params := url.Values{}
 	params.Set("client_id", config.ClientID)
@@ -103,13 +108,19 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request, provide
 		return
 	}
 
+	h.mu.Lock()
 	oauthState, ok := h.states[state]
+
+	if ok && oauthState.Provider == provider {
+		delete(h.states, state)
+	}
+
+	h.mu.Unlock()
+
 	if !ok || oauthState.Provider != provider {
 		http.Error(w, `{"error":"invalid state"}`, http.StatusBadRequest)
 		return
 	}
-
-	delete(h.states, state)
 
 	token, err := h.exchangeCode(r.Context(), config, code, oauthState.RedirectURI, "")
 	if err != nil {

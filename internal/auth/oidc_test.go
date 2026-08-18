@@ -97,6 +97,7 @@ func TestOIDCTest_DiscoveryMock(t *testing.T) {
 
 	h := NewOIDCHandler(NewJWTManager("test-secret"), st)
 	h.client = srv.Client()
+	h.allowPrivate = true
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/test", nil)
 	req.Host = "localhost:20128"
 	rec := httptest.NewRecorder()

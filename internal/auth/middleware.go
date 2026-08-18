@@ -64,9 +64,10 @@ func isPublicPath(path, method string) bool {
 	}
 	// auth endpoints public (login/status/logout/oidc); reset-password still needs JWT or loopback in handler
 	switch path {
-	case "/api/auth/login", "/api/auth/logout", "/api/auth/status", "/api/auth/reset-password":
+	case "/api/auth/login", "/api/auth/logout", "/api/auth/status", "/api/auth/reset-password",
+		"/api/auth/oidc/start", "/api/auth/oidc/callback":
 		return true
 	}
 
-	return strings.HasPrefix(path, "/api/auth/oidc/")
+	return false
 }

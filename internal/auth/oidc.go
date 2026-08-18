@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"flamerouter/internal/config"
+	"flamerouter/internal/netutil"
 	"flamerouter/internal/store"
 	"fmt"
 	"io"
@@ -33,9 +34,10 @@ const (
 
 // OIDCHandler manages external identity provider login (discovery + PKCE + JWT session).
 type OIDCHandler struct {
-	jwt    *JWTManager
-	st     *store.Store
-	client *http.Client
+	jwt          *JWTManager
+	st           *store.Store
+	client       *http.Client
+	allowPrivate bool // for unit tests with httptest servers
 }
 
 // NewOIDCHandler creates a new OpenID Connect authentication handler.
@@ -49,6 +51,7 @@ func NewOIDCHandler(jwt *JWTManager, st *store.Store) *OIDCHandler {
 			Jar:           nil,
 			Timeout:       15 * time.Second,
 		},
+		allowPrivate: false,
 	}
 }
 
@@ -183,6 +186,12 @@ func publicOrigin(r *http.Request) string {
 }
 
 func (o *OIDCHandler) fetchDiscovery(issuer string) (*oidcDiscovery, error) {
+	if !o.allowPrivate {
+		if err := netutil.AssertPublicURL(issuer); err != nil {
+			return nil, fmt.Errorf("invalid issuer url: %w", err)
+		}
+	}
+
 	u := trimSlashes(issuer) + "/.well-known/openid-configuration"
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
@@ -902,7 +911,7 @@ func (o *OIDCHandler) verifyIDToken(idToken, issuer, audience, jwksURI, nonce st
 	}
 
 	if jwksURI == "" {
-		return claims, nil
+		return nil, fmt.Errorf("id_token signature verification failed: missing jwks_uri in discovery document")
 	}
 
 	key, fetchErr := o.fetchJWKSKey(jwksURI, kid, alg)

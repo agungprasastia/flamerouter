@@ -14,7 +14,7 @@ import (
 func HashPassword(password string) (hash, salt string) {
 	saltBytes := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, saltBytes); err != nil {
-		copy(saltBytes, []byte("randomsalt123456"))
+		panic("crypto/rand failed: system entropy unavailable")
 	}
 
 	salt = hex.EncodeToString(saltBytes)
