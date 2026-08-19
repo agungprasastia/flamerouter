@@ -34,30 +34,43 @@ export default function ConsoleLogClient() {
   };
 
   useEffect(() => {
+    fetch("/api/translator/console-logs")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && Array.isArray(data.logs) && data.logs.length > 0) {
+          setLogs(data.logs.slice(-CONSOLE_LOG_CONFIG.maxLines));
+        }
+      })
+      .catch(() => {});
+
     const es = new EventSource("/api/translator/console-logs/stream");
 
     es.onopen = () => setConnected(true);
 
     es.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "init") {
-        setLogs(msg.logs.slice(-CONSOLE_LOG_CONFIG.maxLines));
-      } else if (msg.type === "line") {
-        setLogs((prev) => {
-          const next = [...prev, msg.line];
-          return next.length > CONSOLE_LOG_CONFIG.maxLines
-            ? next.slice(-CONSOLE_LOG_CONFIG.maxLines)
-            : next;
-        });
-      } else if (msg.type === "lines") {
-        setLogs((prev) => {
-          const next = [...prev, ...msg.lines];
-          return next.length > CONSOLE_LOG_CONFIG.maxLines
-            ? next.slice(-CONSOLE_LOG_CONFIG.maxLines)
-            : next;
-        });
-      } else if (msg.type === "clear") {
-        setLogs([]);
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "init" && Array.isArray(msg.logs)) {
+          setLogs(msg.logs.slice(-CONSOLE_LOG_CONFIG.maxLines));
+        } else if (msg.type === "line" && msg.line) {
+          setLogs((prev) => {
+            const next = [...prev, msg.line];
+            return next.length > CONSOLE_LOG_CONFIG.maxLines
+              ? next.slice(-CONSOLE_LOG_CONFIG.maxLines)
+              : next;
+          });
+        } else if (msg.type === "lines" && Array.isArray(msg.lines)) {
+          setLogs((prev) => {
+            const next = [...prev, ...msg.lines];
+            return next.length > CONSOLE_LOG_CONFIG.maxLines
+              ? next.slice(-CONSOLE_LOG_CONFIG.maxLines)
+              : next;
+          });
+        } else if (msg.type === "clear") {
+          setLogs([]);
+        }
+      } catch (err) {
+        console.error("SSE parse error:", err);
       }
     };
 

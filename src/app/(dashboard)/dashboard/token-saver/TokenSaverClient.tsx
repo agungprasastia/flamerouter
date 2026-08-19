@@ -450,7 +450,15 @@ export default function TokenSaverClient() {
     try {
       const res = await fetch("/api/pxpipe/health", { method: "POST" });
       const data = (await res.json()) as HealthCheckResult;
-      setPxpipeHealth(data);
+      if (data && Array.isArray(data.checks)) {
+        setPxpipeHealth(data);
+      } else {
+        setPxpipeHealth({
+          healthy: false,
+          checks: [],
+          error: (data as unknown as { error?: string })?.error || "Invalid health check response",
+        });
+      }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       setPxpipeHealth({ healthy: false, checks: [], error: message });
@@ -991,7 +999,7 @@ export default function TokenSaverClient() {
               {pxpipeStatus.version ? ` · v${pxpipeStatus.version}` : ""}
             </span>
           </div>
-          {pxpipeHealth && pxpipeHealth.checks.length > 0 && (
+          {pxpipeHealth && Array.isArray(pxpipeHealth.checks) && pxpipeHealth.checks.length > 0 && (
             <div className="flex flex-col gap-1 rounded border border-border p-3">
               <p className="text-sm font-medium mb-1">Health check</p>
               {pxpipeHealth.checks.map((check) => (
