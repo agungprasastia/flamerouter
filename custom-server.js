@@ -126,6 +126,21 @@ http.createServer = (...args) => {
 };
 
 if (require.main === module) {
+  const openSseDir = path.join(__dirname, "open-sse");
+  const flamerouterPort = process.env.FLAMEROUTER_PORT || "20229";
+  
+  // Start rust engine alongside custom-server
+  try {
+    const { spawn } = require("child_process");
+    spawn("cargo", ["run", "--release"], {
+      cwd: openSseDir,
+      stdio: "inherit",
+      env: { ...process.env, PORT: flamerouterPort }
+    });
+  } catch (e) {
+    console.error("[FlameRouter] Failed to spawn open-sse engine:", e);
+  }
+
   const standalone = path.join(__dirname, "server.js");
   if (fs.existsSync(standalone)) {
     require(standalone);
