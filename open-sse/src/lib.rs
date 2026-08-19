@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 pub mod capacity;
 pub mod combo;
 pub mod config;

@@ -461,8 +461,7 @@ fn emit_tool_call(state: &mut Value, events: &mut Vec<Value>, tc: &Value) {
                 .and_then(|b| b.as_bool())
                 .unwrap_or(false);
 
-            if item_added_now && ref_call_id.is_some() && !is_custom_tool(state, name) {
-                let cid = ref_call_id.unwrap();
+            if item_added_now && let Some(cid) = ref_call_id && !is_custom_tool(state, name) {
                 emit(
                     events,
                     state,

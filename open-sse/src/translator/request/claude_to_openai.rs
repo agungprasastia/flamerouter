@@ -143,8 +143,8 @@ fn fix_missing_tool_responses_openai(messages: &mut Vec<Value>) {
             let next = &messages[j];
             let r = next.get("role").and_then(|r| r.as_str()).unwrap_or("");
             let tcid = next.get("tool_call_id").and_then(|t| t.as_str());
-            if r == ROLE::TOOL && tcid.is_some() {
-                responded.insert(tcid.unwrap().to_string());
+            if r == ROLE::TOOL && let Some(id) = tcid {
+                responded.insert(id.to_string());
                 insert_pos = j + 1;
                 j += 1;
             } else {

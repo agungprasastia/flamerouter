@@ -21,8 +21,7 @@ where
             let Ok(bytes) = chunk else { continue };
             buf.extend_from_slice(&bytes);
             // Drain complete lines
-            loop {
-                let Some(pos) = buf.iter().position(|&b| b == b'\n') else { break };
+            while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
                 let mut line: Vec<u8> = buf.drain(..=pos).collect();
                 // Strip \n and trailing \r
                 line.pop();
@@ -42,7 +41,6 @@ where
                     let rest = rest.strip_prefix(' ').unwrap_or(rest);
                     data_lines.push(rest.to_string());
                 }
-                // ignore event:/id:/retry: lines for now
             }
         }
         // flush tail
