@@ -138,7 +138,7 @@ pub fn url_for(
 /// Parse the optional dimensions field: number, numeric string, '' / non-numeric
 /// / <=0 → None (parity with the JS adapter's Number(dimensions) guard).
 pub fn parse_dimensions(dimensions: Option<&Value>) -> Option<f64> {
-    let Some(d) = dimensions else { return None };
+    let d = dimensions?;
     let n: f64 = match d {
         Value::Number(n) => n.as_f64()?,
         Value::String(s) => s.trim().parse().ok()?,

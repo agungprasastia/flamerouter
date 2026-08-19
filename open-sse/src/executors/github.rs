@@ -34,11 +34,9 @@ pub async fn execute(
 
     // Modern max_completion_tokens conversion if needed
     if (model.contains("gpt-5") || model.starts_with("o1") || model.starts_with("o3") || model.starts_with("o4"))
-        && body.get("max_tokens").is_some() {
-        if let Some(tokens) = body.get("max_tokens").cloned() {
-            body["max_completion_tokens"] = tokens;
-            body.as_object_mut().unwrap().remove("max_tokens");
-        }
+        && let Some(tokens) = body.get("max_tokens").cloned() {
+        body["max_completion_tokens"] = tokens;
+        body.as_object_mut().unwrap().remove("max_tokens");
     }
 
     if body.get("reasoning_effort").and_then(Value::as_str) == Some("none") {

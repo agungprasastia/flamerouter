@@ -223,11 +223,7 @@ fn filter_git_status(text: &str) -> Option<String> {
 fn filter_git_log(text: &str) -> Option<String> {
     let mut out = String::new();
     for line in text.lines() {
-        if line.starts_with("commit ") || line.starts_with("Author: ") || line.starts_with("Date: ")
-        {
-            out.push_str(line);
-            out.push('\n');
-        } else if !line.trim().is_empty() && !line.starts_with("    ") {
+        if line.starts_with("commit ") || line.starts_with("Author: ") || line.starts_with("Date: ") || (!line.trim().is_empty() && !line.starts_with("    ")) {
             out.push_str(line);
             out.push('\n');
         }
