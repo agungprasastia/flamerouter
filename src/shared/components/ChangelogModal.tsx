@@ -30,7 +30,11 @@ export default function ChangelogModal({ isOpen, onClose }: ChangelogModalProps)
       })
       .then(async (md) => {
         const parsed = await marked.parse(md);
-        setHtml(parsed);
+        const cleanHtml = parsed
+          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+          .replace(/on\w+="[^"]*"/gi, "")
+          .replace(/on\w+='[^']*'/gi, "");
+        setHtml(cleanHtml);
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Failed to load";

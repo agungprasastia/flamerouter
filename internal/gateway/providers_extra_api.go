@@ -296,6 +296,11 @@ func (s *Server) handleSuggestedModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := netutil.AssertPublicURL(u); err != nil {
+		writeErr(w, http.StatusBadRequest, "Invalid or disallowed url: "+err.Error())
+		return
+	}
+
 	filter := suggestedFilters[typ]
 	if filter == nil {
 		writeErr(w, http.StatusBadRequest, "Unknown filter type")

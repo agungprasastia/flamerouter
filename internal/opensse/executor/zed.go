@@ -492,6 +492,8 @@ func wrapZedNDJSONStream(r io.ReadCloser, provider, model string) io.ReadCloser 
 		defer func() { _ = pw.Close() }() // nolint:errcheck
 
 		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 64*1024), 2*1024*1024)
+
 		created := time.Now().Unix()
 		cid := fmt.Sprintf("chatcmpl-zed-%d", time.Now().UnixMilli())
 

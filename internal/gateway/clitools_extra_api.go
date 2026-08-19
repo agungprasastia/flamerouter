@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flamerouter/internal/netutil"
 	"io"
 	"net/http"
 	"runtime"
@@ -347,6 +348,11 @@ func (s *Server) handleCoworkMCPToolsPost(w http.ResponseWriter, r *http.Request
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.URL) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "url required"})
+		return
+	}
+
+	if err := netutil.AssertPublicURL(req.URL); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid or disallowed url: " + err.Error()})
 		return
 	}
 

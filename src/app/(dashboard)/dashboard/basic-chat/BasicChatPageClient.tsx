@@ -274,36 +274,11 @@ export default function BasicChatPageClient() {
   const [providerGroups, setProviderGroups] = useState<ProviderGroup[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const saved = safeParse(
-        globalThis.localStorage.getItem(STORAGE_KEYS.sessions),
-        [],
-      );
-      return Array.isArray(saved)
-        ? saved.map((session) => ({
-            ...session,
-            messages: Array.isArray(session.messages) ? session.messages : [],
-          }))
-        : [];
-    } catch {
-      return [];
-    }
-  });
-  const [activeSessionId, setActiveSessionId] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return globalThis.localStorage.getItem(STORAGE_KEYS.activeSessionId) || "";
-  });
-  const [activeProviderId, setActiveProviderId] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return globalThis.localStorage.getItem(STORAGE_KEYS.activeProviderId) || "";
-  });
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState("");
+  const [activeProviderId, setActiveProviderId] = useState("");
   const [activeModelId, setActiveModelId] = useState("");
-  const [draft, setDraft] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return globalThis.localStorage.getItem(STORAGE_KEYS.draft) || "";
-  });
+  const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState("");
@@ -319,6 +294,30 @@ export default function BasicChatPageClient() {
 
   useEffect(() => {
     setIsHydrated(true);
+    try {
+      const saved = safeParse(
+        globalThis.localStorage.getItem(STORAGE_KEYS.sessions),
+        [],
+      );
+      if (Array.isArray(saved)) {
+        setSessions(
+          saved.map((session) => ({
+            ...session,
+            messages: Array.isArray(session.messages) ? session.messages : [],
+          })),
+        );
+      }
+      const savedActiveSessionId = globalThis.localStorage.getItem(STORAGE_KEYS.activeSessionId) || "";
+      if (savedActiveSessionId) setActiveSessionId(savedActiveSessionId);
+
+      const savedActiveProviderId = globalThis.localStorage.getItem(STORAGE_KEYS.activeProviderId) || "";
+      if (savedActiveProviderId) setActiveProviderId(savedActiveProviderId);
+
+      const savedDraft = globalThis.localStorage.getItem(STORAGE_KEYS.draft) || "";
+      if (savedDraft) setDraft(savedDraft);
+    } catch {
+      setSessions([]);
+    }
   }, []);
 
   useEffect(() => {

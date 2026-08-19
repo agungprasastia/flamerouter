@@ -4,7 +4,7 @@ const backendUrl = process.env.BACKEND_URL || "http://127.0.0.1:20130";
 const nextConfig = {
   reactStrictMode: false,
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "open"],
   turbopack: {},

@@ -523,7 +523,7 @@ export default function ProviderDetailPage() {
       const override: Record<string, unknown> = {};
       if (strategy) override.fallbackStrategy = strategy;
       if (strategy === "round-robin" && stickyLimit !== "") {
-        override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+        override.stickyRoundRobinLimit = Number(stickyLimit) || 1;
       }
 
       const updated = { ...current };

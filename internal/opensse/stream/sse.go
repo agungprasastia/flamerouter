@@ -23,6 +23,12 @@ type readResult struct {
 }
 
 func startReaderRoutine(ctx context.Context, src io.Reader, resCh chan<- readResult) {
+	defer func() {
+		if closer, ok := src.(io.Closer); ok {
+			_ = closer.Close() //nolint:errcheck // best-effort close on reader exit
+		}
+	}()
+
 	for {
 		buf := make([]byte, 32*1024)
 

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flamerouter/internal/config"
 	"flamerouter/internal/netutil"
 	"flamerouter/internal/store"
@@ -42,17 +43,33 @@ type OIDCHandler struct {
 
 // NewOIDCHandler creates a new OpenID Connect authentication handler.
 func NewOIDCHandler(jwt *JWTManager, st *store.Store) *OIDCHandler {
-	return &OIDCHandler{
-		jwt: jwt,
-		st:  st,
-		client: &http.Client{
-			Transport:     nil,
-			CheckRedirect: nil,
-			Jar:           nil,
-			Timeout:       15 * time.Second,
-		},
+	h := &OIDCHandler{
+		jwt:          jwt,
+		st:           st,
+		client:       nil,
 		allowPrivate: false,
 	}
+
+	h.client = &http.Client{
+		Transport: nil,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+
+			if !h.allowPrivate {
+				if err := netutil.AssertPublicURL(req.URL.String()); err != nil {
+					return fmt.Errorf("disallowed redirect: %w", err)
+				}
+			}
+
+			return nil
+		},
+		Jar:     nil,
+		Timeout: 15 * time.Second,
+	}
+
+	return h
 }
 
 type oidcConfig struct {

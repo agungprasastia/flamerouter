@@ -544,6 +544,10 @@ func transformKiroEventStream(src io.Reader, model string) io.ReadCloser {
 
 	go func() {
 		defer func() {
+			if closer, ok := src.(io.Closer); ok {
+				_ = closer.Close() //nolint:errcheck // best-effort close on stream exit
+			}
+
 			if err := pw.Close(); err != nil {
 				_ = err
 			}

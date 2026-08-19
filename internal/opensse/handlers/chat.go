@@ -333,6 +333,8 @@ func prepareChatPayload(body []byte, providerID, modelName string, streamReq boo
 func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.Reader, sourceFormat, targetFormat string, reqBody []byte) usage.ExtractedUsage {
 	state := concerns.NewResponseState()
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+
 	finalUsage := usage.ExtractedUsage{
 		PromptTokens:     0,
 		CompletionTokens: 0,
@@ -343,11 +345,11 @@ func writeTranslatedStream(w http.ResponseWriter, flusher http.Flusher, body io.
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
 
-		data := strings.TrimPrefix(line, "data: ")
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
 			break
 		}
@@ -545,11 +547,9 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 			continue
 		}
 
-		defer res.Body.Close() //nolint:errcheck // best-effort body close
-
 		if res.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
-			lastStatus, lastBody = res.StatusCode, respBody
+			_ = res.Body.Close()                //nolint:errcheck // best-effort close on error
 
 			resetsAtMs := config.ParseResetDelayFromError(res.Header, string(respBody))
 			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, string(respBody), resetsAtMs)
@@ -568,6 +568,7 @@ func handleWithFallback(ctx context.Context, w http.ResponseWriter, body []byte,
 			return fmt.Errorf("%w: status %d", errUpstreamFailed, res.StatusCode)
 		}
 
+		defer res.Body.Close() //nolint:errcheck // best-effort body close
 		completeChatResponse(ctx, w, res, conn.ID, providerID, modelName, st, fb, streamReq, sourceFormat, targetFormat, body, usageSink)
 
 		return nil
@@ -596,6 +597,8 @@ func handleFallbackExhausted(w http.ResponseWriter, providerID string, excludeID
 
 func pipeRawStreamWithUsage(w http.ResponseWriter, flusher http.Flusher, body io.Reader, reqBody []byte) usage.ExtractedUsage {
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+
 	finalUsage := usage.ExtractedUsage{
 		PromptTokens:     0,
 		CompletionTokens: 0,
@@ -753,10 +756,9 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 			continue
 		}
 
-		defer res.Body.Close() //nolint:errcheck // best-effort body close
-
 		if res.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(res.Body) //nolint:errcheck // best-effort read
+			_ = res.Body.Close()                //nolint:errcheck // best-effort close on error
 
 			resetsAtMs := config.ParseResetDelayFromError(res.Header, string(respBody))
 			shouldFallback, _ := fb.MarkUnavailable(conn.ID, res.StatusCode, string(respBody), resetsAtMs)
@@ -769,6 +771,8 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 			return fmt.Errorf("%w: status %d", errUpstreamFailed, res.StatusCode)
 		}
 
+		defer res.Body.Close() //nolint:errcheck // best-effort body close
+
 		// Headers only after confirmed successful upstream (status < 400).
 		if w.Header().Get("Content-Type") == "" {
 			stream.WriteSSEHeaders(w)
@@ -778,7 +782,7 @@ func streamModel(ctx context.Context, w http.ResponseWriter, flusher http.Flushe
 
 		var extracted usage.ExtractedUsage
 		if translator.NeedsTranslation(sourceFormat, targetFormat) {
-			extracted = writeTranslatedStream(w, nil, res.Body, sourceFormat, targetFormat, body)
+			extracted = writeTranslatedStream(w, flusher, res.Body, sourceFormat, targetFormat, body)
 		} else {
 			extracted = pipeRawStreamWithUsage(w, flusher, res.Body, body)
 		}
