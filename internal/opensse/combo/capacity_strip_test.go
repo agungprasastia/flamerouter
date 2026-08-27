@@ -8,8 +8,8 @@ import (
 
 func TestStripHistoryForContext_NilOrInvalidInput(t *testing.T) {
 	tests := []struct {
-		name string
 		body map[string]any
+		name string
 	}{
 		{
 			name: "nil body",
@@ -36,6 +36,7 @@ func TestStripHistoryForContext_NilOrInvalidInput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := StripHistoryForContext(tt.body, 100)
+
 			if !reflect.DeepEqual(got, tt.body) {
 				t.Errorf("StripHistoryForContext() = %v, want %v", got, tt.body)
 			}
@@ -60,15 +61,16 @@ func TestStripHistoryForContext_MessageKeyVariations(t *testing.T) {
 				},
 			}
 
-			// Small context window forces trimming of older messages
 			res := StripHistoryForContext(body, 50)
 			if res == nil {
 				t.Fatalf("expected non-nil result")
 			}
+
 			arr, ok := res[key].([]any)
 			if !ok {
 				t.Fatalf("expected key %s to be slice", key)
 			}
+
 			if len(arr) >= 6 {
 				t.Errorf("expected trimmed array length < 6, got %d", len(arr))
 			}
@@ -89,9 +91,17 @@ func TestStripHistoryForContext_RolesAndNoAssistant(t *testing.T) {
 		}
 
 		res := StripHistoryForContext(body, 10)
-		arr := res["messages"].([]any)
-		// First item should be system/developer message
-		devMsg := arr[0].(map[string]any)
+
+		arr, ok := res["messages"].([]any)
+		if !ok || len(arr) == 0 {
+			t.Fatalf("expected messages slice in result")
+		}
+
+		devMsg, ok := arr[0].(map[string]any)
+		if !ok {
+			t.Fatalf("expected message item to be map[string]any")
+		}
+
 		if devMsg["role"] != "developer" {
 			t.Errorf("expected system/developer msg preserved, got %v", devMsg["role"])
 		}
@@ -104,7 +114,9 @@ func TestStripHistoryForContext_RolesAndNoAssistant(t *testing.T) {
 				map[string]any{"role": "developer", "content": "sys 2"},
 			},
 		}
+
 		got := StripHistoryForContext(body, 10)
+
 		if !reflect.DeepEqual(got, body) {
 			t.Errorf("expected untouched body when no rest messages")
 		}
@@ -117,7 +129,9 @@ func TestStripHistoryForContext_RolesAndNoAssistant(t *testing.T) {
 				map[string]any{"role": "user", "content": "user only"},
 			},
 		}
+
 		got := StripHistoryForContext(body, 10)
+
 		if !reflect.DeepEqual(got, body) {
 			t.Errorf("expected untouched body when no assistant message found")
 		}
@@ -130,7 +144,9 @@ func TestStripHistoryForContext_RolesAndNoAssistant(t *testing.T) {
 				12345,
 			},
 		}
+
 		got := StripHistoryForContext(body, 10)
+
 		if !reflect.DeepEqual(got, body) {
 			t.Errorf("expected untouched body when items are invalid types")
 		}
@@ -147,7 +163,9 @@ func TestStripHistoryForContext_BudgetingAndFits(t *testing.T) {
 				map[string]any{"role": "user", "content": "how are you?"},
 			},
 		}
+
 		res := StripHistoryForContext(body, 100000)
+
 		if !reflect.DeepEqual(res, body) {
 			t.Errorf("expected untouched body when content fits budget")
 		}
@@ -162,13 +180,15 @@ func TestStripHistoryForContext_BudgetingAndFits(t *testing.T) {
 				map[string]any{"role": "user", "content": "how are you?"},
 			},
 		}
-		// budgetChars = 200,000 * 0.8 * 4 = 640,000 chars (fits comfortably)
+
 		res0 := StripHistoryForContext(body, 0)
+
 		if !reflect.DeepEqual(res0, body) {
 			t.Errorf("expected untouched body for contextWindow 0")
 		}
 
 		resNeg := StripHistoryForContext(body, -500)
+
 		if !reflect.DeepEqual(resNeg, body) {
 			t.Errorf("expected untouched body for contextWindow < 0")
 		}
@@ -188,12 +208,13 @@ func TestStripHistoryForContext_BudgetingAndFits(t *testing.T) {
 		}
 
 		res := StripHistoryForContext(body, 10)
+
 		if reflect.ValueOf(res).Pointer() == reflect.ValueOf(body).Pointer() {
 			t.Errorf("expected new map returned when trimmed")
 		}
 
-		// Ensure original map's messages key is unmodified
-		if len(body["messages"].([]any)) != 4 {
+		origMsgs, ok := body["messages"].([]any)
+		if !ok || len(origMsgs) != 4 {
 			t.Errorf("original body was mutated!")
 		}
 	})
@@ -218,8 +239,12 @@ func TestStripHistoryForContext_ContentStructures(t *testing.T) {
 		}
 
 		res := StripHistoryForContext(body, 10)
-		msgs := res["messages"].([]any)
-		// Should drop the middle user message because budget exceeded
+
+		msgs, ok := res["messages"].([]any)
+		if !ok {
+			t.Fatalf("expected messages slice in result")
+		}
+
 		if len(msgs) >= 4 {
 			t.Errorf("expected trimmed messages slice, got len %d", len(msgs))
 		}
@@ -237,7 +262,12 @@ func TestStripHistoryForContext_ContentStructures(t *testing.T) {
 		}
 
 		res := StripHistoryForContext(body, 10)
-		contents := res["contents"].([]any)
+
+		contents, ok := res["contents"].([]any)
+		if !ok {
+			t.Fatalf("expected contents slice in result")
+		}
+
 		if len(contents) >= 4 {
 			t.Errorf("expected trimmed contents slice for gemini format, got len %d", len(contents))
 		}
@@ -253,8 +283,8 @@ func TestStripHistoryForContext_ContentStructures(t *testing.T) {
 			},
 		}
 
-		// Unknown content types contribute 0 length, so budget won't be exceeded
 		res := StripHistoryForContext(body, 10)
+
 		if !reflect.DeepEqual(res, body) {
 			t.Errorf("expected body untouched when content lengths sum to 0")
 		}
