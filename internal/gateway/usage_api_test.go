@@ -94,7 +94,9 @@ func BenchmarkExtractConnUsageData(b *testing.B) {
 	}
 
 	defer func() {
-		_ = st.Close()
+		if clErr := st.Close(); clErr != nil {
+			b.Log(clErr)
+		}
 	}()
 
 	// Seed 1000 request details across 10 connections
