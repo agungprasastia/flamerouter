@@ -121,7 +121,9 @@ func TestReorderForCapabilities_BlockTypes(t *testing.T) {
 		t.Run(tt.blockJSON, func(t *testing.T) {
 			models := []string{"openai/deepseek-v3", "openai/gpt-4o", "openai/whisper-1"}
 			body := []byte(`{"messages":[{"role":"user","content":[` + tt.blockJSON + `]}]}`)
+
 			got := ReorderForCapabilities(models, body)
+
 			if len(got) != 3 || got[0] != tt.wantFirst {
 				t.Errorf("ReorderForCapabilities(%s) first model = %s, want %s (full: %v)", tt.blockJSON, got[0], tt.wantFirst, got)
 			}
