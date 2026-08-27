@@ -275,11 +275,12 @@ func testRequestDetails(t *testing.T, st *store.Store) {
 	if err != nil {
 		t.Fatalf("QueryRequestDetailsByConnection err=%v", err)
 	}
+
 	if len(rdsConn) != 0 {
 		t.Fatalf("expected 0 details for conn-1, got %d", len(rdsConn))
 	}
 
-	if err := st.InsertRequestDetail(store.RequestDetail{
+	if err := st.InsertRequestDetail(store.RequestDetail{ //nolint:exhaustruct // test struct
 		Provider:     "openai",
 		Model:        "gpt-4o",
 		ConnectionID: "conn-1",
