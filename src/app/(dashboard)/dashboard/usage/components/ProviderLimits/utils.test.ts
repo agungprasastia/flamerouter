@@ -1,6 +1,5 @@
-import test, { describe, it } from "node:test";
-import assert from "node:assert/strict";
-import { formatResetTime, getConnectionLabel, ConnectionItem } from "./utils";
+import { describe, it, expect } from "vitest";
+import { formatResetTime, getConnectionLabel, ConnectionItem, calculatePercentage } from "./utils";
 
 describe("getConnectionLabel", () => {
   it("returns trimmed name when name is present", () => {
@@ -10,7 +9,7 @@ describe("getConnectionLabel", () => {
       email: "user@example.com",
       displayName: "Display Name",
     };
-    assert.strictEqual(getConnectionLabel(connection), "Primary Name");
+    expect(getConnectionLabel(connection)).toBe("Primary Name");
   });
 
   it("falls back to trimmed email when name is missing or whitespace", () => {
@@ -19,10 +18,7 @@ describe("getConnectionLabel", () => {
       email: "  user@example.com  ",
       displayName: "Display Name",
     };
-    assert.strictEqual(
-      getConnectionLabel(connectionWithNoName),
-      "user@example.com",
-    );
+    expect(getConnectionLabel(connectionWithNoName)).toBe("user@example.com");
 
     const connectionWithWhitespaceName: ConnectionItem = {
       id: "conn-3",
@@ -30,10 +26,7 @@ describe("getConnectionLabel", () => {
       email: "  user@example.com  ",
       displayName: "Display Name",
     };
-    assert.strictEqual(
-      getConnectionLabel(connectionWithWhitespaceName),
-      "user@example.com",
-    );
+    expect(getConnectionLabel(connectionWithWhitespaceName)).toBe("user@example.com");
   });
 
   it("falls back to trimmed displayName when name and email are missing or whitespace", () => {
@@ -41,10 +34,7 @@ describe("getConnectionLabel", () => {
       id: "conn-4",
       displayName: "  Display Name  ",
     };
-    assert.strictEqual(
-      getConnectionLabel(connectionWithNoNameOrEmail),
-      "Display Name",
-    );
+    expect(getConnectionLabel(connectionWithNoNameOrEmail)).toBe("Display Name");
 
     const connectionWithWhitespaceNameAndEmail: ConnectionItem = {
       id: "conn-5",
@@ -52,17 +42,14 @@ describe("getConnectionLabel", () => {
       email: "\t\n ",
       displayName: "  Display Name  ",
     };
-    assert.strictEqual(
-      getConnectionLabel(connectionWithWhitespaceNameAndEmail),
-      "Display Name",
-    );
+    expect(getConnectionLabel(connectionWithWhitespaceNameAndEmail)).toBe("Display Name");
   });
 
   it("returns null when name, email, and displayName are missing, empty, or whitespace", () => {
     const connectionEmptyObj: ConnectionItem = {
       id: "conn-6",
     };
-    assert.strictEqual(getConnectionLabel(connectionEmptyObj), null);
+    expect(getConnectionLabel(connectionEmptyObj)).toBeNull();
 
     const connectionAllWhitespace: ConnectionItem = {
       id: "conn-7",
@@ -70,7 +57,7 @@ describe("getConnectionLabel", () => {
       email: "   ",
       displayName: "\t",
     };
-    assert.strictEqual(getConnectionLabel(connectionAllWhitespace), null);
+    expect(getConnectionLabel(connectionAllWhitespace)).toBeNull();
   });
 
   it("respects precedence order: name > email > displayName", () => {
@@ -80,7 +67,7 @@ describe("getConnectionLabel", () => {
       email: "email@example.com",
       displayName: "Display",
     };
-    assert.strictEqual(getConnectionLabel(allPresent), "Name");
+    expect(getConnectionLabel(allPresent)).toBe("Name");
 
     const emailAndDisplayNameOnly: ConnectionItem = {
       id: "conn-9",
@@ -88,10 +75,7 @@ describe("getConnectionLabel", () => {
       email: "email@example.com",
       displayName: "Display",
     };
-    assert.strictEqual(
-      getConnectionLabel(emailAndDisplayNameOnly),
-      "email@example.com",
-    );
+    expect(getConnectionLabel(emailAndDisplayNameOnly)).toBe("email@example.com");
 
     const displayNameOnly: ConnectionItem = {
       id: "conn-10",
@@ -99,95 +83,120 @@ describe("getConnectionLabel", () => {
       email: "",
       displayName: "Display",
     };
-    assert.strictEqual(getConnectionLabel(displayNameOnly), "Display");
+    expect(getConnectionLabel(displayNameOnly)).toBe("Display");
+  });
+});
+
+describe("calculatePercentage", () => {
+  it("returns 0 when total is 0 or negative", () => {
+    expect(calculatePercentage(10, 0)).toBe(0);
+    expect(calculatePercentage(0, 0)).toBe(0);
+    expect(calculatePercentage(10, -5)).toBe(0);
+  });
+
+  it("returns 100 when used is 0 or negative", () => {
+    expect(calculatePercentage(0, 100)).toBe(100);
+    expect(calculatePercentage(-10, 100)).toBe(100);
+  });
+
+  it("returns 0 when used is equal to or greater than total", () => {
+    expect(calculatePercentage(100, 100)).toBe(0);
+    expect(calculatePercentage(150, 100)).toBe(0);
+  });
+
+  it("calculates remaining percentage correctly and rounds to nearest integer", () => {
+    expect(calculatePercentage(25, 100)).toBe(75);
+    expect(calculatePercentage(50, 100)).toBe(50);
+    expect(calculatePercentage(1, 3)).toBe(67);
+    expect(calculatePercentage(2, 3)).toBe(33);
   });
 });
 
 describe("formatResetTime", () => {
   describe("falsy and invalid inputs", () => {
-    test("returns '-' for null", () => {
-      assert.equal(formatResetTime(null), "-");
+    it("returns '-' for null", () => {
+      expect(formatResetTime(null)).toBe("-");
     });
 
-    test("returns '-' for undefined", () => {
-      assert.equal(formatResetTime(undefined), "-");
+    it("returns '-' for undefined", () => {
+      expect(formatResetTime(undefined)).toBe("-");
     });
 
-    test("returns '-' for empty string", () => {
-      assert.equal(formatResetTime(""), "-");
+    it("returns '-' for empty string", () => {
+      expect(formatResetTime("")).toBe("-");
     });
 
-    test("returns '-' for 0", () => {
-      assert.equal(formatResetTime(0), "-");
+    it("returns '-' for 0", () => {
+      expect(formatResetTime(0)).toBe("-");
     });
 
-    test("returns '-' for invalid date string", () => {
-      assert.equal(formatResetTime("invalid-date-string"), "-");
+    it("returns '-' for invalid date string", () => {
+      expect(formatResetTime("invalid-date-string")).toBe("-");
     });
   });
 
   describe("error catching block", () => {
-    test("catches thrown error when input throws during conversion and returns '-'", () => {
+    it("catches thrown error when input throws during conversion and returns '-'", () => {
       // Symbol throws TypeError when passed to new Date(Symbol()) or converted to primitive
       const throwOnConvert = Symbol("invalid-date-symbol") as unknown as string;
-      assert.equal(formatResetTime(throwOnConvert), "-");
+      expect(formatResetTime(throwOnConvert)).toBe("-");
     });
 
-    test("catches thrown error when object throws in valueOf and returns '-'", () => {
+    it("catches thrown error when object throws in valueOf and returns '-'", () => {
       const throwingObj = {
         valueOf() {
           throw new Error("Date parsing error");
         },
       } as unknown as string;
-      assert.equal(formatResetTime(throwingObj), "-");
+      expect(formatResetTime(throwingObj)).toBe("-");
     });
   });
 
   describe("past and current dates", () => {
-    test("returns '-' for past Date object", () => {
+    it("returns '-' for past Date object", () => {
       const pastDate = new Date(Date.now() - 1000 * 60 * 5); // 5 mins ago
-      assert.equal(formatResetTime(pastDate), "-");
+      expect(formatResetTime(pastDate)).toBe("-");
     });
 
-    test("returns '-' for current date or exact past timestamp", () => {
+    it("returns '-' for current date or exact past timestamp", () => {
       const now = new Date(Date.now());
-      assert.equal(formatResetTime(now), "-");
+      expect(formatResetTime(now)).toBe("-");
     });
   });
 
   describe("future reset times", () => {
-    test("formats minutes (< 60 minutes)", () => {
+    it("formats minutes (< 60 minutes)", () => {
       const futureDate = new Date(Date.now() + 15 * 60 * 1000); // 15 mins ahead
-      assert.equal(formatResetTime(futureDate), "15m");
+      expect(formatResetTime(futureDate)).toBe("15m");
     });
 
-    test("formats hours and minutes (< 24 hours)", () => {
+    it("formats hours and minutes (< 24 hours)", () => {
       const futureMs = (4 * 60 + 40) * 60 * 1000; // 4 hours 40 minutes ahead
       const futureDate = new Date(Date.now() + futureMs);
-      assert.equal(formatResetTime(futureDate), "4h 40m");
+      expect(formatResetTime(futureDate)).toBe("4h 40m");
     });
 
-    test("formats days, hours, and minutes (>= 24 hours)", () => {
+    it("formats days, hours, and minutes (>= 24 hours)", () => {
       const futureMs = (2 * 24 * 60 + 5 * 60 + 30) * 60 * 1000; // 2d 5h 30m ahead
       const futureDate = new Date(Date.now() + futureMs);
-      assert.equal(formatResetTime(futureDate), "2d 5h 30m");
+      expect(formatResetTime(futureDate)).toBe("2d 5h 30m");
     });
   });
 
   describe("different date input types", () => {
-    test("accepts ISO string format", () => {
+    it("accepts ISO string format", () => {
       const futureDateStr = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-      assert.equal(formatResetTime(futureDateStr), "30m");
+      expect(formatResetTime(futureDateStr)).toBe("30m");
     });
 
-    test("accepts numeric timestamp format", () => {
+    it("accepts numeric timestamp format", () => {
       const futureTimestamp = Date.now() + 45 * 60 * 1000;
-      assert.equal(formatResetTime(futureTimestamp), "45m");
+      expect(formatResetTime(futureTimestamp)).toBe("45m");
     });
 
-    test("accepts Date instance", () => {
+    it("accepts Date instance", () => {
       const futureDate = new Date(Date.now() + 20 * 60 * 1000);
-      assert.equal(formatResetTime(futureDate), "20m");
+      expect(formatResetTime(futureDate)).toBe("20m");
     });
   });
 });
