@@ -8,7 +8,8 @@
     "dev:next-only": "next dev --webpack --port 20129",
     "dev:turbo": "next dev --port 20129",
     "build": "next build --webpack",
-    "start": "next start --port 20129"
+    "start": "next start --port 20129",
+    "test": "tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -46,6 +47,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "^19",
     "tailwindcss": "^4.1.18",
+    "tsx": "^4.19.3",
     "typescript": "5.9.3"
   }
 }
