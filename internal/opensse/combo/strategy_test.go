@@ -8,60 +8,60 @@ import (
 
 func TestResolve_StrategySelection(t *testing.T) {
 	tests := []struct {
+		wantType      Strategy
+		perCombo      map[string]string
 		name          string
 		comboStrategy string
-		perCombo      map[string]string
 		comboName     string
-		wantType      Strategy
 	}{
 		{
+			wantType:      &FallbackStrategy{},
+			perCombo:      nil,
 			name:          "default fallback when strategy is empty",
 			comboStrategy: "",
-			perCombo:      nil,
 			comboName:     "combo1",
-			wantType:      &FallbackStrategy{},
 		},
 		{
+			wantType:      &FallbackStrategy{},
+			perCombo:      nil,
 			name:          "fallback strategy explicitly set",
 			comboStrategy: "fallback",
-			perCombo:      nil,
 			comboName:     "combo1",
-			wantType:      &FallbackStrategy{},
 		},
 		{
+			wantType:      &RoundRobin{},
+			perCombo:      nil,
 			name:          "round-robin strategy",
 			comboStrategy: "round-robin",
-			perCombo:      nil,
 			comboName:     "combo1",
-			wantType:      &RoundRobin{},
 		},
 		{
+			wantType:      &Fusion{},
+			perCombo:      nil,
 			name:          "fusion strategy",
 			comboStrategy: "fusion",
-			perCombo:      nil,
 			comboName:     "combo1",
-			wantType:      &Fusion{},
 		},
 		{
+			wantType:      &Fusion{},
+			perCombo:      map[string]string{"combo1": "fusion", "combo2": "round-robin"},
 			name:          "per-combo override matches comboName",
 			comboStrategy: "fallback",
-			perCombo:      map[string]string{"combo1": "fusion", "combo2": "round-robin"},
 			comboName:     "combo1",
-			wantType:      &Fusion{},
 		},
 		{
+			wantType:      &FallbackStrategy{},
+			perCombo:      map[string]string{"combo2": "fusion"},
 			name:          "per-combo override does not match comboName",
 			comboStrategy: "fallback",
-			perCombo:      map[string]string{"combo2": "fusion"},
 			comboName:     "combo1",
-			wantType:      &FallbackStrategy{},
 		},
 		{
+			wantType:      &FallbackStrategy{},
+			perCombo:      nil,
 			name:          "unknown strategy falls back to FallbackStrategy",
 			comboStrategy: "unknown-strategy",
-			perCombo:      nil,
 			comboName:     "combo1",
-			wantType:      &FallbackStrategy{},
 		},
 	}
 
@@ -91,9 +91,11 @@ func TestLoadStrategySettings_NilStore(t *testing.T) {
 	if strategy != "fallback" {
 		t.Errorf("expected strategy 'fallback', got %q", strategy)
 	}
+
 	if sticky != 1 {
 		t.Errorf("expected sticky 1, got %d", sticky)
 	}
+
 	if judge != "" {
 		t.Errorf("expected judge '', got %q", judge)
 	}
@@ -105,7 +107,11 @@ func TestLoadStrategySettings_WithStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
+	t.Cleanup(func() {
+		if errClose := st.Close(); errClose != nil {
+			_ = errClose
+		}
+	})
 
 	t.Run("defaults when store is empty", func(t *testing.T) {
 		strategy, sticky, judge := LoadStrategySettings(st, "my-combo")
@@ -126,9 +132,11 @@ func TestLoadStrategySettings_WithStore(t *testing.T) {
 		if strategy != "round-robin" {
 			t.Errorf("expected strategy 'round-robin', got %q", strategy)
 		}
+
 		if sticky != 5 {
 			t.Errorf("expected sticky 5, got %d", sticky)
 		}
+
 		if judge != "" {
 			t.Errorf("expected judge '', got %q", judge)
 		}
@@ -138,17 +146,17 @@ func TestLoadStrategySettings_WithStore(t *testing.T) {
 		if err := st.SetSetting("comboStickyRoundRobinLimit", "invalid"); err != nil {
 			t.Fatal(err)
 		}
-		_, sticky, _ := LoadStrategySettings(st, "my-combo")
-		if sticky != 1 {
-			t.Errorf("expected sticky 1 for invalid int, got %d", sticky)
+		_, sticky1, _ := LoadStrategySettings(st, "my-combo")
+		if sticky1 != 1 {
+			t.Errorf("expected sticky 1 for invalid int, got %d", sticky1)
 		}
 
 		if err := st.SetSetting("comboStickyRoundRobinLimit", "0"); err != nil {
 			t.Fatal(err)
 		}
-		_, sticky, _ = LoadStrategySettings(st, "my-combo")
-		if sticky != 1 {
-			t.Errorf("expected sticky 1 for 0 limit, got %d", sticky)
+		_, sticky2, _ := LoadStrategySettings(st, "my-combo")
+		if sticky2 != 1 {
+			t.Errorf("expected sticky 1 for 0 limit, got %d", sticky2)
 		}
 	})
 
@@ -171,6 +179,7 @@ func TestLoadStrategySettings_WithStore(t *testing.T) {
 		if strategy != "fusion" {
 			t.Errorf("expected strategy 'fusion', got %q", strategy)
 		}
+
 		if judge != "gpt-4o" {
 			t.Errorf("expected judge 'gpt-4o', got %q", judge)
 		}
@@ -180,12 +189,13 @@ func TestLoadStrategySettings_WithStore(t *testing.T) {
 		if strategy != "round-robin" {
 			t.Errorf("expected strategy 'round-robin', got %q", strategy)
 		}
+
 		if judge != "" {
 			t.Errorf("expected judge '', got %q", judge)
 		}
 
 		// Check unlisted combo
-		strategy, _, judge = LoadStrategySettings(st, "combo-other")
+		strategy, _, _ = LoadStrategySettings(st, "combo-other")
 		if strategy != "round-robin" { // should remain global comboStrategy ("round-robin" set earlier)
 			t.Errorf("expected global strategy 'round-robin', got %q", strategy)
 		}
@@ -198,15 +208,19 @@ func TestLoadComboOverride_EdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
+	t.Cleanup(func() {
+		if errClose := st.Close(); errClose != nil {
+			_ = errClose
+		}
+	})
 
 	t.Run("invalid JSON in comboStrategies setting", func(t *testing.T) {
 		if err := st.SetSetting("comboStrategies", "not-valid-json"); err != nil {
 			t.Fatal(err)
 		}
-		strat, judge := loadComboOverride(st, "my-combo", "fallback", "default-judge")
-		if strat != "fallback" || judge != "default-judge" {
-			t.Errorf("expected unchanged strategy and judge, got strat=%q judge=%q", strat, judge)
+		gotStrategy, judge := loadComboOverride(st, "my-combo", "fallback", "default-judge")
+		if gotStrategy != "fallback" || judge != "default-judge" {
+			t.Errorf("expected unchanged strategy and judge, gotStrategy=%q judge=%q", gotStrategy, judge)
 		}
 	})
 
@@ -220,10 +234,11 @@ func TestLoadComboOverride_EdgeCases(t *testing.T) {
 		if err := st.SetSetting("comboStrategies", jsonConfig); err != nil {
 			t.Fatal(err)
 		}
-		strat, judge := loadComboOverride(st, "my-combo", "fallback", "default-judge")
-		if strat != "fallback" {
-			t.Errorf("expected fallback strategy unchanged, got %q", strat)
+		gotStrategy, judge := loadComboOverride(st, "my-combo", "fallback", "default-judge")
+		if gotStrategy != "fallback" {
+			t.Errorf("expected fallback strategy unchanged, got %q", gotStrategy)
 		}
+
 		if judge != "new-judge" {
 			t.Errorf("expected judge model updated to 'new-judge', got %q", judge)
 		}
