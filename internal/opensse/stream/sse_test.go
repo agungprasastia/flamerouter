@@ -17,9 +17,7 @@ func TestWriteSSEHeaders(t *testing.T) {
 	WriteSSEHeaders(rec)
 
 	res := rec.Result()
-	defer func() {
-		_ = res.Body.Close()
-	}()
+	defer res.Body.Close() //nolint:errcheck // best effort close in test
 
 	tests := []struct {
 		header string
@@ -151,9 +149,9 @@ func TestPipeWithHeartbeat(t *testing.T) {
 
 	t.Run("heartbeat fired on idle", func(t *testing.T) {
 		pr, pw := io.Pipe()
-		defer func() {
-			_ = pr.Close()
-		}()
+
+		defer pr.Close() //nolint:errcheck // test cleanup
+		defer pw.Close() //nolint:errcheck // test cleanup
 
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
@@ -185,10 +183,9 @@ func TestPipeWithHeartbeat(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		pr, pw := io.Pipe()
-		defer func() {
-			_ = pr.Close()
-			_ = pw.Close()
-		}()
+
+		defer pr.Close() //nolint:errcheck // test cleanup
+		defer pw.Close() //nolint:errcheck // test cleanup
 
 		err := PipeWithHeartbeat(ctx, rec, pr, 100*time.Millisecond)
 		if !errors.Is(err, context.Canceled) {
@@ -203,10 +200,9 @@ func TestPipeWithHeartbeat(t *testing.T) {
 		expectedErr := errors.New("heartbeat write error")
 		dst := &errWriter{err: expectedErr}
 		pr, pw := io.Pipe()
-		defer func() {
-			_ = pr.Close()
-			_ = pw.Close()
-		}()
+
+		defer pr.Close() //nolint:errcheck // test cleanup
+		defer pw.Close() //nolint:errcheck // test cleanup
 
 		err := PipeWithHeartbeat(ctx, dst, pr, 10*time.Millisecond)
 		if !errors.Is(err, expectedErr) {
