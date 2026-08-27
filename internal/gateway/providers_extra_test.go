@@ -133,3 +133,25 @@ func TestStaticProviderPathsBeforeID(t *testing.T) {
 		t.Fatalf("id route %d", rr.Code)
 	}
 }
+
+func BenchmarkSelectConnsByID(b *testing.B) {
+	s, st := testServerForBench(b)
+
+	ids := make([]string, 0, 50)
+
+	for range 50 {
+		id, err := st.CreateConnection("openai", "api_key", "conn", "sk-test", "")
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		ids = append(ids, id)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for range b.N {
+		_ = s.selectConnsByID(ids)
+	}
+}

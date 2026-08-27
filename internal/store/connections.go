@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -154,6 +155,47 @@ func (s *Store) GetConnection(id string) (*Connection, error) {
 	}
 
 	return &c, nil
+}
+
+// GetConnectionsByIDs returns connections mapped by ID for a list of IDs.
+func (s *Store) GetConnectionsByIDs(ids []string) (map[string]Connection, error) {
+	if len(ids) == 0 {
+		return map[string]Connection{}, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := connectionSelect + ` WHERE id IN (` + strings.Join(placeholders, ",") + `)` //nolint:gosec // safe dynamic placeholder construction
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
+
+	out := make(map[string]Connection, len(ids))
+
+	for rows.Next() {
+		c, err := scanConnection(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		out[c.ID] = c
+	}
+
+	return out, rows.Err()
 }
 
 // CreateConnection inserts a new provider connection.

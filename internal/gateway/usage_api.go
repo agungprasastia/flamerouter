@@ -2,12 +2,13 @@ package gateway
 
 import (
 	"context"
-	"flamerouter/internal/store"
-	"flamerouter/internal/usage"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"flamerouter/internal/store"
+	"flamerouter/internal/usage"
 )
 
 func (s *Server) handleUsageStream(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +251,7 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	reqDetails, errDetails := s.st.QueryRequestDetails(100)
+	reqDetails, errDetails := s.st.QueryRequestDetailsSummary(100)
 	if errDetails != nil {
 		reqDetails = nil
 	}
@@ -465,7 +466,7 @@ func (s *Server) handleUsageProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Return list of distinct provider objects {id, name} for RequestDetailsTab
-	reqDetails, err := s.st.QueryRequestDetails(500)
+	reqDetails, err := s.st.QueryRequestDetailsSummary(500)
 	if err != nil {
 		reqDetails = nil
 	}

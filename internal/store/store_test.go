@@ -347,8 +347,38 @@ func testConnectionStrategy(t *testing.T, st *store.Store) {
 		t.Fatal(err)
 	}
 
+	connID2, err := st.CreateConnection("anthropic", "api_key", "c2", "sk2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	conns, err := st.ListActiveByProvider("openai")
 	if err != nil || len(conns) != 1 || conns[0].ID != connID {
 		t.Fatalf("conns: %+v err=%v", conns, err)
+	}
+
+	// Test GetConnectionsByIDs
+	emptyBatch, err := st.GetConnectionsByIDs([]string{})
+	if err != nil || len(emptyBatch) != 0 {
+		t.Fatalf("expected empty map for empty ids, got %v err %v", emptyBatch, err)
+	}
+
+	batch, err := st.GetConnectionsByIDs([]string{connID, connID2, "nonexistent"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(batch) != 2 {
+		t.Fatalf("expected 2 connections in map, got %d", len(batch))
+	}
+
+	c1, ok1 := batch[connID]
+	if !ok1 || c1.Name != "c1" {
+		t.Fatalf("expected c1, got %+v", c1)
+	}
+
+	c2, ok2 := batch[connID2]
+	if !ok2 || c2.Name != "c2" {
+		t.Fatalf("expected c2, got %+v", c2)
 	}
 }
