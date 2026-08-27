@@ -231,6 +231,7 @@ func TestTrailingUserItems(t *testing.T) {
 
 		m0, ok0 := res[0].(map[string]any)
 		m1, ok1 := res[1].(map[string]any)
+
 		if !ok0 || !ok1 || m0["content"] != "3" || m1["content"] != "4" {
 			t.Errorf("unexpected trailing items: %v", res)
 		}
