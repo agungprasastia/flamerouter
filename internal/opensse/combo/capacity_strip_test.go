@@ -2,6 +2,7 @@ package combo
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -197,4 +198,58 @@ func TestStripHistoryForContext_MalformedElementsInSlice(t *testing.T) {
 	if !ok || len(msgs) == 0 {
 		t.Fatalf("expected valid non-empty messages slice returned")
 	}
+}
+
+func TestStripHistoryForContext_MultimodalAndParts(t *testing.T) {
+	t.Run("slice of content parts (OpenAI multimodal format)", func(t *testing.T) {
+		longText := strings.Repeat("word ", 100)
+		body := map[string]any{
+			"messages": []any{
+				map[string]any{"role": "system", "content": "sys"},
+				map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "text", "text": longText},
+						map[string]any{"type": "image_url", "image_url": map[string]any{"url": "http://img"}},
+					},
+				},
+				map[string]any{"role": "assistant", "content": "resp"},
+				map[string]any{"role": "user", "content": "final"},
+			},
+		}
+
+		res := StripHistoryForContext(body, 10)
+
+		msgs, ok := res["messages"].([]any)
+		if !ok {
+			t.Fatalf("expected messages slice in result")
+		}
+
+		if len(msgs) >= 4 {
+			t.Errorf("expected trimmed messages slice, got len %d", len(msgs))
+		}
+	})
+
+	t.Run("parts field (Gemini content format)", func(t *testing.T) {
+		longText := strings.Repeat("text ", 100)
+		body := map[string]any{
+			"contents": []any{
+				map[string]any{"role": "system", "parts": []any{map[string]any{"text": "sys"}}},
+				map[string]any{"role": "user", "parts": []any{map[string]any{"text": longText}}},
+				map[string]any{"role": "model", "parts": []any{map[string]any{"text": "model response"}}},
+				map[string]any{"role": "user", "parts": []any{map[string]any{"text": "next user question"}}},
+			},
+		}
+
+		res := StripHistoryForContext(body, 10)
+
+		contents, ok := res["contents"].([]any)
+		if !ok {
+			t.Fatalf("expected contents slice in result")
+		}
+
+		if len(contents) >= 4 {
+			t.Errorf("expected trimmed contents slice for gemini format, got len %d", len(contents))
+		}
+	})
 }
