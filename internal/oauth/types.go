@@ -3,6 +3,7 @@
 package oauth
 
 import (
+	"os"
 	"time"
 )
 
@@ -69,7 +70,7 @@ var ProviderConfigs = map[string]*OAuthConfig{
 	"gemini": {
 		Provider:     "gemini",
 		ClientID:     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
-		ClientSecret: "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",
+		ClientSecret: getEnvSecret("GOOGLE_OAUTH_CLIENT_SECRET", "GEMINI_OAUTH_CLIENT_SECRET"),
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		RefreshURL:   "https://oauth2.googleapis.com/token",
@@ -176,7 +177,7 @@ var ProviderConfigs = map[string]*OAuthConfig{
 	"antigravity": {
 		Provider:     "antigravity",
 		ClientID:     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-		ClientSecret: "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",
+		ClientSecret: os.Getenv("ANTIGRAVITY_OAUTH_CLIENT_SECRET"),
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		RefreshURL:   "https://oauth2.googleapis.com/token",
@@ -266,6 +267,15 @@ var ProviderConfigs = map[string]*OAuthConfig{
 		AuthStyle:   "device",
 		TokenExpiry: time.Hour * 30,
 	},
+}
+
+func getEnvSecret(keys ...string) string {
+	for _, k := range keys {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // CopilotTokenURL exchanges GitHub OAuth token -> short-lived Copilot token.

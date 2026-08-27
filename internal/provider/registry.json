@@ -197,7 +197,7 @@
         "tokenUrl": "https://oauth2.googleapis.com/token"
       },
       "clientId": "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-      "clientSecret": "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"
+      "clientSecret": ""
     },
     "models": [
       {
@@ -2367,7 +2367,7 @@
         "loadCodeAssistUrl": "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
       },
       "clientId": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
-      "clientSecret": "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"
+      "clientSecret": ""
     },
     "models": [
       {
@@ -2441,7 +2441,7 @@
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/models",
       "format": "gemini",
       "clientId": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
-      "clientSecret": "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",
+      "clientSecret": "",
       "auth": {
         "apiKey": {
           "header": "x-goog-api-key",
