@@ -35,6 +35,7 @@ type refreshAdapter struct {
 	rm *tokenrefresh.RefreshManager
 }
 
+// Refresh implements the oauth refresh interface by delegating to the RefreshManager.
 func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken string) (string, string, string, time.Time, error) {
 	res, err := a.rm.Refresh(ctx, provider, refreshToken)
 	if err != nil {

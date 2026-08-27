@@ -323,6 +323,7 @@ func httpGetJSON(url, authHeader, authVal string) ([]byte, error) {
 
 type httpStatusError int
 
+// Error implements the error interface for httpStatusError.
 func (e httpStatusError) Error() string { return "http status" }
 func errHTTPStatus(code int) error      { return httpStatusError(code) }
 

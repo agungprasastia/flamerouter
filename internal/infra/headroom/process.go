@@ -316,7 +316,10 @@ type extraErr struct {
 	msg  string
 }
 
+// Error implements the error interface for extraErr.
 func (e *extraErr) Error() string { return e.msg }
+
+// Code returns the error code for extraErr.
 func (e *extraErr) Code() string  { return e.code }
 
 func filterExtras(in []string) []string {

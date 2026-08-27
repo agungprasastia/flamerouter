@@ -15,7 +15,7 @@ type FallbackStrategy struct{}
 
 // ponytail: simplest strategy - just iterates. Add circuit-breaker per model if needed.
 
-// Execute runs the combo using fallback strategy.
+// Execute runs the combo using fallback strategy, attempting models sequentially until one succeeds.
 func (f *FallbackStrategy) Execute(ctx context.Context, w http.ResponseWriter, body []byte,
 	models []string, st *store.Store, _ executor.Executor,
 	_ *fallback.Fallback, opts Options,

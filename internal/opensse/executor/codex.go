@@ -201,6 +201,7 @@ type combinedReadCloser struct {
 	orig   io.ReadCloser
 }
 
+// Read implements io.Reader by reading from prefix first, then from orig.
 func (c *combinedReadCloser) Read(p []byte) (int, error) {
 	if c.prefix != nil {
 		n, err := c.prefix.Read(p)
@@ -215,6 +216,7 @@ func (c *combinedReadCloser) Read(p []byte) (int, error) {
 	return c.orig.Read(p)
 }
 
+// Close implements io.Closer by closing the original reader.
 func (c *combinedReadCloser) Close() error {
 	return c.orig.Close()
 }

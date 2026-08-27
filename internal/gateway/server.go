@@ -46,6 +46,7 @@ type refreshAdapter struct {
 	rm *tokenrefresh.RefreshManager
 }
 
+// Refresh implements the oauth refresh interface by delegating to the RefreshManager.
 func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken string) (string, string, string, time.Time, error) {
 	res, err := a.rm.Refresh(ctx, provider, refreshToken)
 	if err != nil {
@@ -294,6 +295,7 @@ func (s *Server) routes() {
 	s.routesV1API()
 }
 
+// ServeHTTP implements the http.Handler interface for the Server.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		s.writeCORS(w, r)
@@ -619,6 +621,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 // usageBridge adapts usage.Tracker to handlers.UsageSink.
 type usageBridge struct{ t *usage.Tracker }
 
+// OnUsage implements the handlers.UsageSink interface by recording usage metrics.
 func (u usageBridge) OnUsage(provider, model, connectionID string, prompt, completion, cached, statusCode int) {
 	if u.t == nil {
 		return

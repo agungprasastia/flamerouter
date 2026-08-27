@@ -125,6 +125,7 @@ type Writer struct {
 	Log *ConsoleLog
 }
 
+// Write implements io.Writer by appending log entries to the ConsoleLog ring buffer.
 func (w Writer) Write(p []byte) (int, error) {
 	if w.Log == nil {
 		w.Log = DefaultConsole
