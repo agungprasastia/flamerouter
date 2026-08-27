@@ -98,7 +98,7 @@ export default function LandingPage() {
       </div>
 
       {/* Global styles for keyframes */}
-      <style jsx global>{`
+      <style>{`
         @keyframes float {
           0%,
           100% {

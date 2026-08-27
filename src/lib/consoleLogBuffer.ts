@@ -68,11 +68,14 @@ function stripAnsi(str: string): string {
 }
 
 function formatArg(arg: unknown): string {
+  if (arg === undefined) return "undefined";
   if (typeof arg === "string") return stripAnsi(arg);
   if (arg instanceof Error)
     return stripAnsi(arg.stack || arg.message || String(arg));
   try {
-    return stripAnsi(JSON.stringify(arg));
+    const json = JSON.stringify(arg);
+    if (typeof json === "string") return stripAnsi(json);
+    return stripAnsi(String(arg));
   } catch {
     return stripAnsi(String(arg));
   }
