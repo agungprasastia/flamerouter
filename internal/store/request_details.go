@@ -43,7 +43,7 @@ func (s *Store) InsertRequestDetail(d RequestDetail) error {
 	return err
 }
 
-// QueryRequestDetails returns the most recent request details.
+// QueryRequestDetails returns the most recent request details including request and response bodies.
 func (s *Store) QueryRequestDetails(limit int) ([]RequestDetail, error) {
 	if limit <= 0 {
 		limit = 100
@@ -54,6 +54,50 @@ func (s *Store) QueryRequestDetails(limit int) ([]RequestDetail, error) {
 		        COALESCE(status_code,0), COALESCE(duration_ms,0),
 		        COALESCE(prompt_tokens,0), COALESCE(completion_tokens,0), COALESCE(cached_tokens,0), COALESCE(cost,0.0),
 		        COALESCE(request_body,''), COALESCE(response_preview,''), COALESCE(error_text,''),
+		        COALESCE(client,''), COALESCE(source_format,''), COALESCE(target_format,'')
+		 FROM request_details ORDER BY timestamp DESC LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
+
+	var out []RequestDetail
+
+	for rows.Next() {
+		var d RequestDetail
+		if err := rows.Scan(
+			&d.ID, &d.Timestamp, &d.Provider, &d.Model, &d.ConnectionID,
+			&d.StatusCode, &d.DurationMs, &d.PromptTokens, &d.CompletionTokens, &d.CachedTokens, &d.Cost,
+			&d.RequestBody, &d.ResponsePreview, &d.ErrorText,
+			&d.Client, &d.SourceFormat, &d.TargetFormat,
+		); err != nil {
+			return nil, err
+		}
+
+		out = append(out, d)
+	}
+
+	return out, rows.Err()
+}
+
+// QueryRequestDetailsSummary returns recent request metadata excluding heavy request/response bodies for fast aggregation.
+func (s *Store) QueryRequestDetailsSummary(limit int) ([]RequestDetail, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, COALESCE(timestamp,''), provider, model, COALESCE(connection_id,''),
+		        COALESCE(status_code,0), COALESCE(duration_ms,0),
+		        COALESCE(prompt_tokens,0), COALESCE(completion_tokens,0), COALESCE(cached_tokens,0), COALESCE(cost,0.0),
+		        '', '', COALESCE(error_text,''),
 		        COALESCE(client,''), COALESCE(source_format,''), COALESCE(target_format,'')
 		 FROM request_details ORDER BY timestamp DESC LIMIT ?`,
 		limit,
