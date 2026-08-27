@@ -27,9 +27,9 @@ func TestSplitProviderModel(t *testing.T) {
 
 func TestScanBlockType(t *testing.T) {
 	tests := []struct {
-		name     string
 		block    map[string]any
 		expected map[string]bool
+		name     string
 	}{
 		{
 			name:     "invalid type field",
@@ -77,6 +77,7 @@ func TestScanBlockType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := map[string]bool{}
 			scanBlockType(tt.block, req)
+
 			if !reflect.DeepEqual(req, tt.expected) {
 				t.Errorf("scanBlockType() = %v; want %v", req, tt.expected)
 			}
@@ -86,10 +87,10 @@ func TestScanBlockType(t *testing.T) {
 
 func TestScanInlineOrFileData(t *testing.T) {
 	tests := []struct {
-		name     string
 		block    map[string]any
-		key      string
 		expected map[string]bool
+		name     string
+		key      string
 	}{
 		{
 			name:     "missing key",
@@ -133,6 +134,7 @@ func TestScanInlineOrFileData(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := map[string]bool{}
 			scanInlineOrFileData(tt.block, tt.key, req)
+
 			if !reflect.DeepEqual(req, tt.expected) {
 				t.Errorf("scanInlineOrFileData() = %v; want %v", req, tt.expected)
 			}
@@ -143,6 +145,7 @@ func TestScanInlineOrFileData(t *testing.T) {
 func TestScanBlock(t *testing.T) {
 	req := map[string]bool{}
 	scanBlock(nil, req)
+
 	if len(req) != 0 {
 		t.Errorf("scanBlock(nil) should not mutate req, got %v", req)
 	}
@@ -151,6 +154,7 @@ func TestScanBlock(t *testing.T) {
 		"inlineData": map[string]any{"mimeType": "image/jpeg"},
 	}
 	scanBlock(b, req)
+
 	if !req["vision"] {
 		t.Errorf("expected vision in req")
 	}
@@ -159,6 +163,7 @@ func TestScanBlock(t *testing.T) {
 func TestScanContent(t *testing.T) {
 	req := map[string]bool{}
 	scanContent("not an array", req)
+
 	if len(req) != 0 {
 		t.Errorf("scanContent with non-slice content should do nothing")
 	}
@@ -168,6 +173,7 @@ func TestScanContent(t *testing.T) {
 		map[string]any{"type": "input_file"},
 	}
 	scanContent(content, req)
+
 	if !req["pdf"] {
 		t.Errorf("expected pdf capability detected")
 	}
@@ -194,14 +200,19 @@ func TestExtractContentsField(t *testing.T) {
 
 func TestTrailingUserItems(t *testing.T) {
 	t.Run("nil or empty", func(t *testing.T) {
-		if res := trailingUserItems(nil); res != nil {
-			t.Errorf("expected nil, got %v", res)
+		resNil := trailingUserItems(nil)
+		if resNil != nil {
+			t.Errorf("expected nil, got %v", resNil)
 		}
-		if res := trailingUserItems([]any{}); res != nil {
-			t.Errorf("expected nil, got %v", res)
+
+		resEmpty := trailingUserItems([]any{})
+		if resEmpty != nil {
+			t.Errorf("expected nil, got %v", resEmpty)
 		}
-		if res := trailingUserItems("not a slice"); res != nil {
-			t.Errorf("expected nil, got %v", res)
+
+		resNotSlice := trailingUserItems("not a slice")
+		if resNotSlice != nil {
+			t.Errorf("expected nil, got %v", resNotSlice)
 		}
 	})
 
@@ -217,7 +228,10 @@ func TestTrailingUserItems(t *testing.T) {
 		if len(res) != 2 {
 			t.Fatalf("expected 2 items, got %d", len(res))
 		}
-		if res[0].(map[string]any)["content"] != "3" || res[1].(map[string]any)["content"] != "4" {
+
+		m0, ok0 := res[0].(map[string]any)
+		m1, ok1 := res[1].(map[string]any)
+		if !ok0 || !ok1 || m0["content"] != "3" || m1["content"] != "4" {
 			t.Errorf("unexpected trailing items: %v", res)
 		}
 	})
@@ -230,7 +244,12 @@ func TestTrailingUserItems(t *testing.T) {
 		}
 
 		res := trailingUserItems(items)
-		if len(res) != 1 || res[0].(map[string]any)["content"] != "3" {
+		if len(res) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(res))
+		}
+
+		m0, ok0 := res[0].(map[string]any)
+		if !ok0 || m0["content"] != "3" {
 			t.Errorf("unexpected trailing items for model role: %v", res)
 		}
 	})
@@ -243,7 +262,12 @@ func TestTrailingUserItems(t *testing.T) {
 		}
 
 		res := trailingUserItems(items)
-		if len(res) != 1 || res[0].(map[string]any)["content"] != "3" {
+		if len(res) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(res))
+		}
+
+		m0, ok0 := res[0].(map[string]any)
+		if !ok0 || m0["content"] != "3" {
 			t.Errorf("unexpected trailing items on non-map item: %v", res)
 		}
 	})
@@ -296,6 +320,7 @@ func TestDetectRequiredCapabilities(t *testing.T) {
 func TestReorderForCapabilities(t *testing.T) {
 	t.Run("short models slice", func(t *testing.T) {
 		models := []string{"gpt-4o"}
+
 		res := ReorderForCapabilities(models, []byte(`{}`))
 		if !reflect.DeepEqual(res, models) {
 			t.Errorf("expected unchanged models for len <= 1")
@@ -304,6 +329,7 @@ func TestReorderForCapabilities(t *testing.T) {
 
 	t.Run("invalid json body", func(t *testing.T) {
 		models := []string{"gpt-4o", "deepseek-v3"}
+
 		res := ReorderForCapabilities(models, []byte(`invalid json`))
 		if !reflect.DeepEqual(res, models) {
 			t.Errorf("expected unchanged models on json error")
@@ -312,6 +338,7 @@ func TestReorderForCapabilities(t *testing.T) {
 
 	t.Run("no capabilities required", func(t *testing.T) {
 		models := []string{"deepseek-v3", "gpt-4o"}
+
 		res := ReorderForCapabilities(models, []byte(`{"messages":[{"role":"user","content":"hello"}]}`))
 		if !reflect.DeepEqual(res, models) {
 			t.Errorf("expected unchanged models when no modalities detected")
@@ -319,7 +346,6 @@ func TestReorderForCapabilities(t *testing.T) {
 	})
 
 	t.Run("hard capability reordering (audio input)", func(t *testing.T) {
-		// whisper-1 supports audioInput, gpt-4o does not (by default caps mapping)
 		models := []string{"openai/gpt-4o", "openai/whisper-1"}
 		body := []byte(`{"messages":[{"role":"user","content":[{"type":"input_audio"}]}]}`)
 
@@ -332,28 +358,40 @@ func TestReorderForCapabilities(t *testing.T) {
 
 func TestModelHasCapability(t *testing.T) {
 	caps := provider.Capabilities{
-		Vision:     true,
-		PDF:        true,
-		AudioInput: true,
-		VideoInput: true,
-		Search:     true,
+		ThinkingFormat: "",
+		ContextWindow:  100000,
+		MaxOutput:      4000,
+		Vision:         true,
+		PDF:            true,
+		AudioInput:     true,
+		VideoInput:     true,
+		ImageOutput:    false,
+		AudioOutput:    false,
+		Search:         true,
+		Tools:          true,
+		Reasoning:      false,
 	}
 
 	if !modelHasCapability(caps, "vision") {
 		t.Error("expected vision true")
 	}
+
 	if !modelHasCapability(caps, "pdf") {
 		t.Error("expected pdf true")
 	}
+
 	if !modelHasCapability(caps, "audioInput") {
 		t.Error("expected audioInput true")
 	}
+
 	if !modelHasCapability(caps, "videoInput") {
 		t.Error("expected videoInput true")
 	}
+
 	if !modelHasCapability(caps, "search") {
 		t.Error("expected search true")
 	}
+
 	if modelHasCapability(caps, "unknown_capability") {
 		t.Error("expected unknown_capability false")
 	}
