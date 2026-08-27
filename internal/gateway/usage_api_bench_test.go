@@ -19,7 +19,10 @@ func BenchmarkHandleUsageStats(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer st.Close()
+
+	defer func() {
+		_ = st.Close()
+	}()
 
 	cfg := &config.Config{ //nolint:exhaustruct
 		DataDir:       dir,
@@ -43,7 +46,7 @@ func BenchmarkHandleUsageStats(b *testing.B) {
 	resp := strings.Repeat("b", 5000)
 
 	for i := 0; i < 1000; i++ {
-		_ = st.InsertRequestDetail(store.RequestDetail{
+		insErr := st.InsertRequestDetail(store.RequestDetail{
 			ID:               fmt.Sprintf("id-%d", i),
 			Timestamp:        fmt.Sprintf("2026-07-20T10:%02d:%02d.000Z", (i/60)%60, i%60),
 			Provider:         "openai",
@@ -58,9 +61,14 @@ func BenchmarkHandleUsageStats(b *testing.B) {
 			RequestBody:      body,
 			ResponsePreview:  resp,
 		})
+		if insErr != nil {
+			b.Fatal(insErr)
+		}
 	}
 
-	_ = st.InsertUsageDaily("2026-07-20", "openai", "gpt-4o", 1000, 100000, 50000, 10000, 2.0)
+	if insDailyErr := st.InsertUsageDaily("2026-07-20", "openai", "gpt-4o", 1000, 100000, 50000, 10000, 2.0); insDailyErr != nil {
+		b.Fatal(insDailyErr)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/usage/stats?from=2026-07-01&to=2026-07-31", nil)
 
@@ -70,6 +78,7 @@ func BenchmarkHandleUsageStats(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		rr := httptest.NewRecorder()
 		s.mux.ServeHTTP(rr, req)
+
 		if rr.Code != http.StatusOK {
 			b.Fatalf("expected status 200, got %d", rr.Code)
 		}

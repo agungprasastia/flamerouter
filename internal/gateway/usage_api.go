@@ -431,7 +431,7 @@ func (s *Server) handleRequestDetails(w http.ResponseWriter, r *http.Request) {
 	startDate := r.URL.Query().Get("startDate")
 	endDate := r.URL.Query().Get("endDate")
 
-	rows, err := s.st.QueryRequestDetailsSummary(500)
+	rows, err := s.st.QueryRequestDetails(500)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
