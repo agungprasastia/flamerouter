@@ -7,6 +7,7 @@ describe("calculatePercentage", () => {
     assert.strictEqual(calculatePercentage(10, 0), 0);
     assert.strictEqual(calculatePercentage(0, 0), 0);
     assert.strictEqual(calculatePercentage(10, -5), 0);
+    assert.strictEqual(calculatePercentage(0, -5), 0);
   });
 
   it("returns 100 when used is 0 or negative", () => {
