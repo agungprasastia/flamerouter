@@ -1,9 +1,8 @@
 package combo
 
 import (
-	"testing"
-
 	"flamerouter/internal/store"
+	"testing"
 )
 
 func TestResolve_StrategySelection(t *testing.T) {
