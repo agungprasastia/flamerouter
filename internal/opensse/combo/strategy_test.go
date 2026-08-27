@@ -102,16 +102,16 @@ func TestLoadStrategySettings_NilStore(t *testing.T) {
 }
 
 func TestLoadStrategySettings_WithStore(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.Open(dir)
+	st, err := store.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
-	t.Cleanup(func() {
+
+	defer func() {
 		if errClose := st.Close(); errClose != nil {
 			_ = errClose
 		}
-	})
+	}()
 
 	t.Run("defaults when store is empty", func(t *testing.T) {
 		strategy, sticky, judge := LoadStrategySettings(st, "my-combo")
@@ -121,11 +121,14 @@ func TestLoadStrategySettings_WithStore(t *testing.T) {
 	})
 
 	t.Run("loads global settings", func(t *testing.T) {
-		if err := st.SetSetting("comboStrategy", "round-robin"); err != nil {
-			t.Fatal(err)
+		err1 := st.SetSetting("comboStrategy", "round-robin")
+		if err1 != nil {
+			t.Fatal(err1)
 		}
-		if err := st.SetSetting("comboStickyRoundRobinLimit", "5"); err != nil {
-			t.Fatal(err)
+
+		err2 := st.SetSetting("comboStickyRoundRobinLimit", "5")
+		if err2 != nil {
+			t.Fatal(err2)
 		}
 
 		strategy, sticky, judge := LoadStrategySettings(st, "my-combo")
@@ -143,17 +146,21 @@ func TestLoadStrategySettings_WithStore(t *testing.T) {
 	})
 
 	t.Run("invalid sticky limit falls back to default 1", func(t *testing.T) {
-		if err := st.SetSetting("comboStickyRoundRobinLimit", "invalid"); err != nil {
-			t.Fatal(err)
+		err1 := st.SetSetting("comboStickyRoundRobinLimit", "invalid")
+		if err1 != nil {
+			t.Fatal(err1)
 		}
+
 		_, sticky1, _ := LoadStrategySettings(st, "my-combo")
 		if sticky1 != 1 {
 			t.Errorf("expected sticky 1 for invalid int, got %d", sticky1)
 		}
 
-		if err := st.SetSetting("comboStickyRoundRobinLimit", "0"); err != nil {
-			t.Fatal(err)
+		err2 := st.SetSetting("comboStickyRoundRobinLimit", "0")
+		if err2 != nil {
+			t.Fatal(err2)
 		}
+
 		_, sticky2, _ := LoadStrategySettings(st, "my-combo")
 		if sticky2 != 1 {
 			t.Errorf("expected sticky 1 for 0 limit, got %d", sticky2)
@@ -170,54 +177,58 @@ func TestLoadStrategySettings_WithStore(t *testing.T) {
 				"fallbackStrategy": "round-robin"
 			}
 		}`
-		if err := st.SetSetting("comboStrategies", jsonConfig); err != nil {
-			t.Fatal(err)
+
+		errSet := st.SetSetting("comboStrategies", jsonConfig)
+		if errSet != nil {
+			t.Fatal(errSet)
 		}
 
 		// Check combo-alpha
-		strategy, _, judge := LoadStrategySettings(st, "combo-alpha")
-		if strategy != "fusion" {
-			t.Errorf("expected strategy 'fusion', got %q", strategy)
+		strategy1, _, judge1 := LoadStrategySettings(st, "combo-alpha")
+		if strategy1 != "fusion" {
+			t.Errorf("expected strategy 'fusion', got %q", strategy1)
 		}
 
-		if judge != "gpt-4o" {
-			t.Errorf("expected judge 'gpt-4o', got %q", judge)
+		if judge1 != "gpt-4o" {
+			t.Errorf("expected judge 'gpt-4o', got %q", judge1)
 		}
 
 		// Check combo-beta
-		strategy, _, judge = LoadStrategySettings(st, "combo-beta")
-		if strategy != "round-robin" {
-			t.Errorf("expected strategy 'round-robin', got %q", strategy)
+		strategy2, _, judge2 := LoadStrategySettings(st, "combo-beta")
+		if strategy2 != "round-robin" {
+			t.Errorf("expected strategy 'round-robin', got %q", strategy2)
 		}
 
-		if judge != "" {
-			t.Errorf("expected judge '', got %q", judge)
+		if judge2 != "" {
+			t.Errorf("expected judge '', got %q", judge2)
 		}
 
 		// Check unlisted combo
-		strategy, _, _ = LoadStrategySettings(st, "combo-other")
-		if strategy != "round-robin" { // should remain global comboStrategy ("round-robin" set earlier)
-			t.Errorf("expected global strategy 'round-robin', got %q", strategy)
+		strategy3, _, _ := LoadStrategySettings(st, "combo-other")
+		if strategy3 != "round-robin" { // should remain global comboStrategy ("round-robin" set earlier)
+			t.Errorf("expected global strategy 'round-robin', got %q", strategy3)
 		}
 	})
 }
 
 func TestLoadComboOverride_EdgeCases(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.Open(dir)
+	st, err := store.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
-	t.Cleanup(func() {
+
+	defer func() {
 		if errClose := st.Close(); errClose != nil {
 			_ = errClose
 		}
-	})
+	}()
 
 	t.Run("invalid JSON in comboStrategies setting", func(t *testing.T) {
-		if err := st.SetSetting("comboStrategies", "not-valid-json"); err != nil {
-			t.Fatal(err)
+		errSet := st.SetSetting("comboStrategies", "not-valid-json")
+		if errSet != nil {
+			t.Fatal(errSet)
 		}
+
 		gotStrategy, judge := loadComboOverride(st, "my-combo", "fallback", "default-judge")
 		if gotStrategy != "fallback" || judge != "default-judge" {
 			t.Errorf("expected unchanged strategy and judge, gotStrategy=%q judge=%q", gotStrategy, judge)
@@ -231,9 +242,12 @@ func TestLoadComboOverride_EdgeCases(t *testing.T) {
 				"judgeModel": "new-judge"
 			}
 		}`
-		if err := st.SetSetting("comboStrategies", jsonConfig); err != nil {
-			t.Fatal(err)
+
+		errSet := st.SetSetting("comboStrategies", jsonConfig)
+		if errSet != nil {
+			t.Fatal(errSet)
 		}
+
 		gotStrategy, judge := loadComboOverride(st, "my-combo", "fallback", "default-judge")
 		if gotStrategy != "fallback" {
 			t.Errorf("expected fallback strategy unchanged, got %q", gotStrategy)
