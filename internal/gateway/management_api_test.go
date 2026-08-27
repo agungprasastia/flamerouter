@@ -47,6 +47,40 @@ func testServer(t *testing.T) (http.Handler, *store.Store) {
 	return s, st
 }
 
+func testServerForBench(tb testing.TB) (*Server, *store.Store) {
+	tb.Helper()
+	dir := tb.TempDir()
+
+	st, err := store.Open(dir)
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	tb.Cleanup(func() {
+		_ = st.Close() //nolint:errcheck // test cleanup
+	})
+
+	cfg := &config.Config{ //nolint:exhaustruct // test config
+		DataDir:       dir,
+		JWTSecret:     "test-secret-long-enough",
+		APIKeySecret:  "test-api-key-secret",
+		MachineIDSalt: "test-salt",
+	}
+	keys := auth.New(cfg.APIKeySecret)
+	s := &Server{ //nolint:exhaustruct // test server
+		cfg:     cfg,
+		st:      st,
+		keys:    keys,
+		fb:      fallback.New(st),
+		jwt:     auth.NewJWTManager(cfg.JWTSecret),
+		session: auth.NewSessionHandler(auth.NewJWTManager(cfg.JWTSecret), st, "123456"),
+		mux:     http.NewServeMux(),
+	}
+	s.routes()
+
+	return s, st
+}
+
 func TestSettingsAPI(t *testing.T) {
 	h, _ := testServer(t)
 
