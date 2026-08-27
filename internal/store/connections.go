@@ -165,12 +165,14 @@ func (s *Store) GetConnectionsByIDs(ids []string) (map[string]Connection, error)
 
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
+
 	for i, id := range ids {
 		placeholders[i] = "?"
 		args[i] = id
 	}
 
-	query := connectionSelect + ` WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+	query := connectionSelect + ` WHERE id IN (` + strings.Join(placeholders, ",") + `)` //nolint:gosec // safe dynamic placeholder construction
+
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -183,6 +185,7 @@ func (s *Store) GetConnectionsByIDs(ids []string) (map[string]Connection, error)
 	}()
 
 	out := make(map[string]Connection, len(ids))
+
 	for rows.Next() {
 		c, err := scanConnection(rows)
 		if err != nil {

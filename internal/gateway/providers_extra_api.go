@@ -461,6 +461,7 @@ func (s *Server) selectConnsByID(ids []string) []store.Connection {
 	}
 
 	toTest := make([]store.Connection, 0, len(ids))
+
 	for _, id := range ids {
 		c, ok := connMap[id]
 		if !ok {

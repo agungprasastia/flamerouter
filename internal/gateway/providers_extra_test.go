@@ -138,18 +138,20 @@ func BenchmarkSelectConnsByID(b *testing.B) {
 	s, st := testServerForBench(b)
 
 	ids := make([]string, 0, 50)
-	for i := 0; i < 50; i++ {
+
+	for range 50 {
 		id, err := st.CreateConnection("openai", "api_key", "conn", "sk-test", "")
 		if err != nil {
 			b.Fatal(err)
 		}
+
 		ids = append(ids, id)
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = s.selectConnsByID(ids)
 	}
 }

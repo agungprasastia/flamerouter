@@ -344,13 +344,18 @@ func testConnectionStrategy(t *testing.T, st *store.Store) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if len(batch) != 2 {
 		t.Fatalf("expected 2 connections in map, got %d", len(batch))
 	}
-	if c, ok := batch[connID]; !ok || c.Name != "c1" {
-		t.Fatalf("expected c1, got %+v", c)
+
+	c1, ok1 := batch[connID]
+	if !ok1 || c1.Name != "c1" {
+		t.Fatalf("expected c1, got %+v", c1)
 	}
-	if c, ok := batch[connID2]; !ok || c.Name != "c2" {
-		t.Fatalf("expected c2, got %+v", c)
+
+	c2, ok2 := batch[connID2]
+	if !ok2 || c2.Name != "c2" {
+		t.Fatalf("expected c2, got %+v", c2)
 	}
 }
