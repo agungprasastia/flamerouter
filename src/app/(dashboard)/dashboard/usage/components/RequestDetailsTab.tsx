@@ -217,7 +217,7 @@ export default function RequestDetailsTab() {
       const cache = await fetchProviderNames();
       setProviderNameCache(cache.providerNameCache);
     } catch (error) {
-      console.error("Failed to fetch providers:", error);
+      setError("Failed to fetch providers.");
     }
   }, []);
 
