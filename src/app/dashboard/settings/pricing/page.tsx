@@ -5,14 +5,17 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Card from "@/shared/components/Card";
 import PricingModal from "@/shared/components/PricingModal";
+import { useNotificationStore } from "@/store/notificationStore";
 
 type PricingMap = Record<string, Record<string, unknown>>;
 
 export default function PricingSettingsPage() {
   const router = useRouter();
+  const notify = useNotificationStore();
   const [showModal, setShowModal] = useState(false);
   const [currentPricing, setCurrentPricing] = useState<PricingMap | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadPricing();
@@ -20,14 +23,21 @@ export default function PricingSettingsPage() {
 
   const loadPricing = async () => {
     setLoading(true);
+    setError(null);
     try {
       const response = await fetch("/api/pricing");
       if (response.ok) {
         const data = (await response.json()) as PricingMap;
         setCurrentPricing(data);
+      } else {
+        const errMsg = "Failed to load pricing data";
+        setError(errMsg);
+        notify.error(errMsg);
       }
-    } catch (error) {
-      console.error("Failed to load pricing:", error);
+    } catch (err) {
+      const errMsg = "Failed to load pricing data";
+      setError(errMsg);
+      notify.error(errMsg);
     } finally {
       setLoading(false);
     }
@@ -164,6 +174,8 @@ export default function PricingSettingsPage() {
           <div className="text-center py-4 text-text-muted">
             Loading pricing data...
           </div>
+        ) : error ? (
+          <div className="text-error font-medium py-2">{error}</div>
         ) : currentPricing ? (
           <div className="space-y-3">
             {Object.keys(currentPricing)
