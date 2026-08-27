@@ -22,6 +22,7 @@ func TestGetRotatedModels_EdgeCases(t *testing.T) {
 
 		singleModel := []string{"model-1"}
 		gotSingle := GetRotatedModels(singleModel, "c1", "round-robin", 1)
+
 		if !reflect.DeepEqual(gotSingle, singleModel) {
 			t.Fatalf("expected %v, got %v", singleModel, gotSingle)
 		}
@@ -29,24 +30,28 @@ func TestGetRotatedModels_EdgeCases(t *testing.T) {
 
 	t.Run("non round-robin strategy", func(t *testing.T) {
 		models := []string{"m1", "m2", "m3"}
-		for _, strat := range []string{"fallback", "fusion", "", "random"} {
-			got := GetRotatedModels(models, "c1", strat, 1)
+
+		for _, strategy := range []string{"fallback", "fusion", "", "random"} {
+			got := GetRotatedModels(models, "c1", strategy, 1)
 			if !reflect.DeepEqual(got, models) {
-				t.Fatalf("strategy %s expected %v, got %v", strat, models, got)
+				t.Fatalf("strategy %s expected %v, got %v", strategy, models, got)
 			}
 		}
 	})
 
 	t.Run("negative or zero sticky limit defaults to 1", func(t *testing.T) {
 		ResetRotation("")
+
 		models := []string{"m1", "m2", "m3"}
 
 		for _, limit := range []int{0, -1, -5} {
 			ResetRotation("")
+
 			got1 := GetRotatedModels(models, "c_neg", "round-robin", limit)
 			if got1[0] != "m1" {
 				t.Fatalf("limit %d call 1 expected m1, got %v", limit, got1)
 			}
+
 			got2 := GetRotatedModels(models, "c_neg", "round-robin", limit)
 			if got2[0] != "m2" {
 				t.Fatalf("limit %d call 2 expected m2, got %v", limit, got2)
@@ -56,6 +61,7 @@ func TestGetRotatedModels_EdgeCases(t *testing.T) {
 
 	t.Run("empty combo name uses default key", func(t *testing.T) {
 		ResetRotation("")
+
 		models := []string{"m1", "m2"}
 
 		got1 := GetRotatedModels(models, "", "round-robin", 1)
@@ -79,6 +85,7 @@ func TestGetRotatedModels_EdgeCases(t *testing.T) {
 
 	t.Run("independent rotation state per combo name", func(t *testing.T) {
 		ResetRotation("")
+
 		models := []string{"m1", "m2"}
 
 		// combo1: 1 call -> index 1 for next call
@@ -104,6 +111,7 @@ func TestGetRotatedModels_EdgeCases(t *testing.T) {
 func TestResetRotation(funcT *testing.T) {
 	funcT.Run("selective reset", func(t *testing.T) {
 		ResetRotation("")
+
 		models := []string{"m1", "m2"}
 
 		GetRotatedModels(models, "combo-a", "round-robin", 1)
@@ -119,6 +127,7 @@ func TestResetRotation(funcT *testing.T) {
 		if hasA {
 			t.Fatalf("combo-a should have been reset")
 		}
+
 		if !hasB {
 			t.Fatalf("combo-b should still exist in rotation state")
 		}
@@ -138,6 +147,7 @@ func TestResetRotation(funcT *testing.T) {
 
 	funcT.Run("global reset with empty string", func(t *testing.T) {
 		ResetRotation("")
+
 		models := []string{"m1", "m2"}
 
 		GetRotatedModels(models, "combo-x", "round-robin", 1)
@@ -161,44 +171,44 @@ func TestRotateFromIndex(t *testing.T) {
 	tests := []struct {
 		name     string
 		models   []string
-		index    int
 		expected []string
+		index    int
 	}{
 		{
 			name:     "negative index returns slice copy",
 			models:   models,
-			index:    -1,
 			expected: []string{"a", "b", "c", "d"},
+			index:    -1,
 		},
 		{
 			name:     "zero index returns slice copy",
 			models:   models,
-			index:    0,
 			expected: []string{"a", "b", "c", "d"},
+			index:    0,
 		},
 		{
 			name:     "index out of bounds upper returns slice copy",
 			models:   models,
-			index:    4,
 			expected: []string{"a", "b", "c", "d"},
+			index:    4,
 		},
 		{
 			name:     "valid rotation at index 1",
 			models:   models,
-			index:    1,
 			expected: []string{"b", "c", "d", "a"},
+			index:    1,
 		},
 		{
 			name:     "valid rotation at index 2",
 			models:   models,
-			index:    2,
 			expected: []string{"c", "d", "a", "b"},
+			index:    2,
 		},
 		{
 			name:     "valid rotation at index 3",
 			models:   models,
-			index:    3,
 			expected: []string{"d", "a", "b", "c"},
+			index:    3,
 		},
 	}
 
@@ -214,18 +224,23 @@ func TestRotateFromIndex(t *testing.T) {
 
 func TestGetRotatedModels_Concurrency(t *testing.T) {
 	ResetRotation("")
+
+	const (
+		numGoroutines          = 50
+		iterationsPerGoroutine = 100
+	)
+
 	models := []string{"m1", "m2", "m3", "m4"}
 	comboNames := []string{"c1", "c2", "c3", ""}
 
-	const numGoroutines = 50
-	const iterationsPerGoroutine = 100
-
 	var wg sync.WaitGroup
+
 	wg.Add(numGoroutines)
 
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
 			defer wg.Done()
+
 			combo := comboNames[id%len(comboNames)]
 
 			for j := 0; j < iterationsPerGoroutine; j++ {
