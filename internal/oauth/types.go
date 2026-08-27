@@ -275,6 +275,7 @@ func getEnvSecret(keys ...string) string {
 			return v
 		}
 	}
+
 	return ""
 }
 
