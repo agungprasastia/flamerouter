@@ -45,6 +45,7 @@ import type { EditConnectionData, ProxyPoolItem, ConnectionUpdates } from "@/sha
 import type { QuotaTableRow } from "./QuotaTable";
 import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { useNotificationStore } from "@/store/notificationStore";
 
 // Maps the stored providerSpecificData.authMethod to a human label for Kiro.
 // Values come from the Kiro connect flows: builder-id/idc (device code),
@@ -141,6 +142,7 @@ function formatTimeRemaining(value: string | number | Date | null | undefined) {
 
 export default function ProviderLimits() {
   const { copied, copy } = useCopyToClipboard();
+  const notify = useNotificationStore();
   const [connections, setConnections] = useState<ConnectionItem[]>([]);
   const [quotaData, setQuotaData] = useState<Record<string, { quotas?: QuotaEntry[]; message?: string | null }>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
@@ -442,19 +444,23 @@ export default function ProviderLimits() {
                 );
               }
             } catch (e) {
-              console.error("Error deleting cache entry:", e);
+              notify.warning("Failed to clear cached quota entry");
             }
           }
 
+          notify.success("Connection deleted successfully");
           await reconcileConnectionsPage(fetchConnections, page);
+        } else {
+          const data = await res.json().catch(() => ({}));
+          notify.error(data.error || data.message || "Failed to delete connection");
         }
       } catch (error) {
-        console.error("Error deleting connection:", error);
+        notify.error("Failed to delete connection");
       } finally {
         setDeletingId(null);
       }
     },
-    [fetchConnections, page],
+    [fetchConnections, notify, page],
   );
 
   const handleToggleConnectionActive = useCallback(

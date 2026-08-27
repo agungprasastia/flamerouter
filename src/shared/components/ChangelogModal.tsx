@@ -4,6 +4,7 @@
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { GITHUB_CONFIG } from "@/shared/constants/config";
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -30,10 +31,7 @@ export default function ChangelogModal({ isOpen, onClose }: ChangelogModalProps)
       })
       .then(async (md) => {
         const parsed = await marked.parse(md);
-        const cleanHtml = parsed
-          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
-          .replace(/on\w+="[^"]*"/gi, "")
-          .replace(/on\w+='[^']*'/gi, "");
+        const cleanHtml = DOMPurify.sanitize(parsed);
         setHtml(cleanHtml);
       })
       .catch((err: unknown) => {
