@@ -451,15 +451,23 @@ func (s *Server) selectConnsForBatchTest(ids []string, mode, providerID string) 
 }
 
 func (s *Server) selectConnsByID(ids []string) []store.Connection {
-	toTest := make([]store.Connection, 0, len(ids))
+	if len(ids) == 0 {
+		return nil
+	}
 
+	connMap, err := s.st.GetConnectionsByIDs(ids)
+	if err != nil {
+		return nil
+	}
+
+	toTest := make([]store.Connection, 0, len(ids))
 	for _, id := range ids {
-		c, err := s.st.GetConnection(id)
-		if err != nil || c == nil {
+		c, ok := connMap[id]
+		if !ok {
 			continue
 		}
 
-		toTest = append(toTest, *c)
+		toTest = append(toTest, c)
 	}
 
 	return toTest
