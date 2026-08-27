@@ -26,7 +26,7 @@ serve: ## Run server
 	$(GO) run ./cmd/flamerouter serve
 
 build: ## Compile binary
-	CGO_ENABLED=0 $(GO) build -o $(BINARY) ./cmd/flamerouter
+	$(GO) build -o $(BINARY) ./cmd/flamerouter
 
 test: ## Run all Go tests
 	$(GO) test ./... -count=1
