@@ -1,13 +1,14 @@
-package stream_test
+package stream
 
 import (
 	"bytes"
 	"context"
 	"errors"
-	"flamerouter/internal/opensse/stream"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -93,6 +94,20 @@ func (r *errReader) Read(p []byte) (int, error) {
 	return 0, r.err
 }
 
+type errWriter struct {
+	err error
+}
+
+func (e *errWriter) Header() http.Header {
+	return http.Header{}
+}
+
+func (e *errWriter) Write(_ []byte) (int, error) {
+	return 0, e.err
+}
+
+func (e *errWriter) WriteHeader(_ int) {}
+
 type trackingCloserReader struct {
 	io.Reader
 	mu     sync.Mutex
@@ -155,20 +170,25 @@ func (r *blockingPipeReader) Close() error {
 func TestWriteSSEHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
 
-	stream.WriteSSEHeaders(rec)
+	WriteSSEHeaders(rec)
 
 	res := rec.Result()
+	defer res.Body.Close() //nolint:errcheck // best effort close in test
 
-	if got := res.Header.Get("Content-Type"); got != "text/event-stream" {
-		t.Errorf("expected Content-Type text/event-stream, got %q", got)
+	tests := []struct {
+		header string
+		want   string
+	}{
+		{"Content-Type", "text/event-stream"},
+		{"Cache-Control", "no-cache"},
+		{"Connection", "keep-alive"},
 	}
 
-	if got := res.Header.Get("Cache-Control"); got != "no-cache" {
-		t.Errorf("expected Cache-Control no-cache, got %q", got)
-	}
-
-	if got := res.Header.Get("Connection"); got != "keep-alive" {
-		t.Errorf("expected Connection keep-alive, got %q", got)
+	for _, tt := range tests {
+		got := res.Header.Get(tt.header)
+		if got != tt.want {
+			t.Errorf("Header %s = %q; want %q", tt.header, got, tt.want)
+		}
 	}
 }
 
@@ -182,7 +202,7 @@ func TestPipe_SuccessWithFlusher(t *testing.T) {
 		idx: 0,
 	}
 
-	err := stream.Pipe(w, src)
+	err := Pipe(w, src)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -208,7 +228,7 @@ func TestPipe_SuccessWithoutFlusher(t *testing.T) {
 		idx: 0,
 	}
 
-	err := stream.Pipe(w, src)
+	err := Pipe(w, src)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -225,7 +245,7 @@ func TestPipe_LargeDataBufferLimit(t *testing.T) {
 	largeData := bytes.Repeat([]byte("A"), 70*1024)
 	src := bytes.NewReader(largeData)
 
-	err := stream.Pipe(w, src)
+	err := Pipe(w, src)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -243,7 +263,7 @@ func TestPipe_EmptyReader(t *testing.T) {
 	w := newMockFlushingWriter()
 	src := bytes.NewReader([]byte{})
 
-	err := stream.Pipe(w, src)
+	err := Pipe(w, src)
 	if err != nil {
 		t.Fatalf("expected no error on empty reader, got %v", err)
 	}
@@ -266,7 +286,7 @@ func TestPipe_WriteError(t *testing.T) {
 	}
 	src := bytes.NewReader([]byte("some data"))
 
-	err := stream.Pipe(w, src)
+	err := Pipe(w, src)
 	if !errors.Is(err, writeErr) {
 		t.Errorf("expected write error %v, got %v", writeErr, err)
 	}
@@ -281,7 +301,7 @@ func TestPipe_ReadError(t *testing.T) {
 		read: false,
 	}
 
-	err := stream.Pipe(w, src)
+	err := Pipe(w, src)
 	if !errors.Is(err, customErr) {
 		t.Errorf("expected error %v, got %v", customErr, err)
 	}
@@ -303,7 +323,7 @@ func TestPipeWithHeartbeat_Success(t *testing.T) {
 
 	ctx := context.Background()
 
-	err := stream.PipeWithHeartbeat(ctx, w, src, 100*time.Millisecond)
+	err := PipeWithHeartbeat(ctx, w, src, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -329,7 +349,7 @@ func TestPipeWithHeartbeat_SendsHeartbeat(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	go func() {
-		errCh <- stream.PipeWithHeartbeat(ctx, w, blockingReader, 20*time.Millisecond)
+		errCh <- PipeWithHeartbeat(ctx, w, blockingReader, 20*time.Millisecond)
 	}()
 
 	time.Sleep(60 * time.Millisecond)
@@ -373,7 +393,7 @@ func TestPipeWithHeartbeat_ContextCancelled(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	go func() {
-		errCh <- stream.PipeWithHeartbeat(ctx, w, blockingReader, 100*time.Millisecond)
+		errCh <- PipeWithHeartbeat(ctx, w, blockingReader, 100*time.Millisecond)
 	}()
 
 	cancel()
@@ -399,7 +419,7 @@ func TestPipeWithHeartbeat_ClosesCloserReader(t *testing.T) {
 
 	ctx := context.Background()
 
-	err := stream.PipeWithHeartbeat(ctx, w, tracker, 100*time.Millisecond)
+	err := PipeWithHeartbeat(ctx, w, tracker, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -428,7 +448,7 @@ func TestPipeWithHeartbeat_HeartbeatWriteError(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	go func() {
-		errCh <- stream.PipeWithHeartbeat(ctx, w, blockingReader, 10*time.Millisecond)
+		errCh <- PipeWithHeartbeat(ctx, w, blockingReader, 10*time.Millisecond)
 	}()
 
 	select {
@@ -447,7 +467,7 @@ func TestPipeWithHeartbeat_DefaultInterval(t *testing.T) {
 
 	ctx := context.Background()
 
-	err := stream.PipeWithHeartbeat(ctx, w, src, 0)
+	err := PipeWithHeartbeat(ctx, w, src, 0)
 	if err != nil {
 		t.Fatalf("expected no error with default interval, got %v", err)
 	}
@@ -469,7 +489,7 @@ func TestPipeWithHeartbeat_ReadError(t *testing.T) {
 
 	ctx := context.Background()
 
-	err := stream.PipeWithHeartbeat(ctx, w, src, 100*time.Millisecond)
+	err := PipeWithHeartbeat(ctx, w, src, 100*time.Millisecond)
 	if !errors.Is(err, readErr) {
 		t.Errorf("expected error %v, got %v", readErr, err)
 	}
@@ -481,7 +501,7 @@ func TestPipeWithHeartbeat_WithoutFlusher(t *testing.T) {
 
 	ctx := context.Background()
 
-	err := stream.PipeWithHeartbeat(ctx, w, src, 100*time.Millisecond)
+	err := PipeWithHeartbeat(ctx, w, src, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -489,5 +509,19 @@ func TestPipeWithHeartbeat_WithoutFlusher(t *testing.T) {
 	got := w.Body.String()
 	if got != "no flusher test" {
 		t.Errorf("expected body %q, got %q", "no flusher test", got)
+	}
+}
+
+func TestPipeWithHeartbeat_PipeErrorOnChunk(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	expectedErr := errors.New("chunk write error")
+	dst := &errWriter{err: expectedErr}
+	src := strings.NewReader("chunk data")
+
+	err := PipeWithHeartbeat(ctx, dst, src, 100*time.Millisecond)
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("got error %v, want %v", err, expectedErr)
 	}
 }

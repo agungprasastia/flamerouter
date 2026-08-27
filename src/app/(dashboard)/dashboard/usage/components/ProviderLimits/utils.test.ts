@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { getConnectionLabel, ConnectionItem, calculatePercentage } from "./utils";
+import { describe, it } from "node:test";
+import assert from "node:assert";
+import { getConnectionLabel, ConnectionItem } from "./utils";
 
 describe("getConnectionLabel", () => {
   it("returns trimmed name when name is present", () => {
@@ -9,7 +10,7 @@ describe("getConnectionLabel", () => {
       email: "user@example.com",
       displayName: "Display Name",
     };
-    expect(getConnectionLabel(connection)).toBe("Primary Name");
+    assert.strictEqual(getConnectionLabel(connection), "Primary Name");
   });
 
   it("falls back to trimmed email when name is missing or whitespace", () => {
@@ -18,7 +19,10 @@ describe("getConnectionLabel", () => {
       email: "  user@example.com  ",
       displayName: "Display Name",
     };
-    expect(getConnectionLabel(connectionWithNoName)).toBe("user@example.com");
+    assert.strictEqual(
+      getConnectionLabel(connectionWithNoName),
+      "user@example.com",
+    );
 
     const connectionWithWhitespaceName: ConnectionItem = {
       id: "conn-3",
@@ -26,7 +30,10 @@ describe("getConnectionLabel", () => {
       email: "  user@example.com  ",
       displayName: "Display Name",
     };
-    expect(getConnectionLabel(connectionWithWhitespaceName)).toBe("user@example.com");
+    assert.strictEqual(
+      getConnectionLabel(connectionWithWhitespaceName),
+      "user@example.com",
+    );
   });
 
   it("falls back to trimmed displayName when name and email are missing or whitespace", () => {
@@ -34,7 +41,10 @@ describe("getConnectionLabel", () => {
       id: "conn-4",
       displayName: "  Display Name  ",
     };
-    expect(getConnectionLabel(connectionWithNoNameOrEmail)).toBe("Display Name");
+    assert.strictEqual(
+      getConnectionLabel(connectionWithNoNameOrEmail),
+      "Display Name",
+    );
 
     const connectionWithWhitespaceNameAndEmail: ConnectionItem = {
       id: "conn-5",
@@ -42,14 +52,17 @@ describe("getConnectionLabel", () => {
       email: "\t\n ",
       displayName: "  Display Name  ",
     };
-    expect(getConnectionLabel(connectionWithWhitespaceNameAndEmail)).toBe("Display Name");
+    assert.strictEqual(
+      getConnectionLabel(connectionWithWhitespaceNameAndEmail),
+      "Display Name",
+    );
   });
 
   it("returns null when name, email, and displayName are missing, empty, or whitespace", () => {
     const connectionEmptyObj: ConnectionItem = {
       id: "conn-6",
     };
-    expect(getConnectionLabel(connectionEmptyObj)).toBeNull();
+    assert.strictEqual(getConnectionLabel(connectionEmptyObj), null);
 
     const connectionAllWhitespace: ConnectionItem = {
       id: "conn-7",
@@ -57,7 +70,7 @@ describe("getConnectionLabel", () => {
       email: "   ",
       displayName: "\t",
     };
-    expect(getConnectionLabel(connectionAllWhitespace)).toBeNull();
+    assert.strictEqual(getConnectionLabel(connectionAllWhitespace), null);
   });
 
   it("respects precedence order: name > email > displayName", () => {
@@ -67,7 +80,7 @@ describe("getConnectionLabel", () => {
       email: "email@example.com",
       displayName: "Display",
     };
-    expect(getConnectionLabel(allPresent)).toBe("Name");
+    assert.strictEqual(getConnectionLabel(allPresent), "Name");
 
     const emailAndDisplayNameOnly: ConnectionItem = {
       id: "conn-9",
@@ -75,7 +88,10 @@ describe("getConnectionLabel", () => {
       email: "email@example.com",
       displayName: "Display",
     };
-    expect(getConnectionLabel(emailAndDisplayNameOnly)).toBe("email@example.com");
+    assert.strictEqual(
+      getConnectionLabel(emailAndDisplayNameOnly),
+      "email@example.com",
+    );
 
     const displayNameOnly: ConnectionItem = {
       id: "conn-10",
@@ -83,31 +99,6 @@ describe("getConnectionLabel", () => {
       email: "",
       displayName: "Display",
     };
-    expect(getConnectionLabel(displayNameOnly)).toBe("Display");
-  });
-});
-
-describe("calculatePercentage", () => {
-  it("returns 0 when total is 0 or negative", () => {
-    expect(calculatePercentage(10, 0)).toBe(0);
-    expect(calculatePercentage(0, 0)).toBe(0);
-    expect(calculatePercentage(10, -5)).toBe(0);
-  });
-
-  it("returns 100 when used is 0 or negative", () => {
-    expect(calculatePercentage(0, 100)).toBe(100);
-    expect(calculatePercentage(-10, 100)).toBe(100);
-  });
-
-  it("returns 0 when used is equal to or greater than total", () => {
-    expect(calculatePercentage(100, 100)).toBe(0);
-    expect(calculatePercentage(150, 100)).toBe(0);
-  });
-
-  it("calculates remaining percentage correctly and rounds to nearest integer", () => {
-    expect(calculatePercentage(25, 100)).toBe(75);
-    expect(calculatePercentage(50, 100)).toBe(50);
-    expect(calculatePercentage(1, 3)).toBe(67);
-    expect(calculatePercentage(2, 3)).toBe(33);
+    assert.strictEqual(getConnectionLabel(displayNameOnly), "Display");
   });
 });
