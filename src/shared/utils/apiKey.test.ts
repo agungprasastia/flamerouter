@@ -72,4 +72,5 @@ describe("apiKey utils", () => {
     expect(verifyApiKeyCrc(oldKey)).toBe(true);
     expect(isNewFormatKey(oldKey)).toBe(false);
   });
+
 });
