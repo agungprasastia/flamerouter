@@ -209,6 +209,95 @@ func TestStripHistoryForContext(t *testing.T) {
 	verifyStrippedMessages(t, msgs)
 }
 
+func TestStripHistoryForContext_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          map[string]any
+		contextWindow int
+		want          map[string]any
+	}{
+		{
+			name:          "nil body",
+			body:          nil,
+			contextWindow: 100,
+			want:          nil,
+		},
+		{
+			name:          "empty body map",
+			body:          map[string]any{},
+			contextWindow: 100,
+			want:          map[string]any{},
+		},
+		{
+			name:          "no recognized messages key",
+			body:          map[string]any{"other_key": "val"},
+			contextWindow: 100,
+			want:          map[string]any{"other_key": "val"},
+		},
+		{
+			name:          "empty messages array",
+			body:          map[string]any{"messages": []any{}},
+			contextWindow: 100,
+			want:          map[string]any{"messages": []any{}},
+		},
+		{
+			name: "messages array containing non-map items",
+			body: map[string]any{
+				"messages": []any{"invalid_item", 123},
+			},
+			contextWindow: 100,
+			want: map[string]any{
+				"messages": []any{"invalid_item", 123},
+			},
+		},
+		{
+			name: "messages without assistant role (lastIdx == -1)",
+			body: map[string]any{
+				"messages": []any{
+					map[string]any{"role": "user", "content": "hello"},
+					map[string]any{"role": "user", "content": "world"},
+				},
+			},
+			contextWindow: 10,
+			want: map[string]any{
+				"messages": []any{
+					map[string]any{"role": "user", "content": "hello"},
+					map[string]any{"role": "user", "content": "world"},
+				},
+			},
+		},
+		{
+			name: "alternate key input",
+			body: map[string]any{
+				"input": []any{},
+			},
+			contextWindow: 100,
+			want: map[string]any{
+				"input": []any{},
+			},
+		},
+		{
+			name: "alternate key contents",
+			body: map[string]any{
+				"contents": []any{},
+			},
+			contextWindow: 100,
+			want: map[string]any{
+				"contents": []any{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := StripHistoryForContext(tt.body, tt.contextWindow)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("StripHistoryForContext() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadCapacityAdapterConfig(t *testing.T) {
 	st, err := store.Open(t.TempDir())
 	if err != nil {
