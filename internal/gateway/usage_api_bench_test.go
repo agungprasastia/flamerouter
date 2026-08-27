@@ -21,7 +21,7 @@ func BenchmarkHandleUsageStats(b *testing.B) {
 	}
 
 	defer func() {
-		_ = st.Close()
+		_ = st.Close() //nolint:errcheck // test cleanup
 	}()
 
 	cfg := &config.Config{ //nolint:exhaustruct
@@ -46,7 +46,7 @@ func BenchmarkHandleUsageStats(b *testing.B) {
 	resp := strings.Repeat("b", 5000)
 
 	for i := 0; i < 1000; i++ {
-		insErr := st.InsertRequestDetail(store.RequestDetail{
+		insErr := st.InsertRequestDetail(store.RequestDetail{ //nolint:exhaustruct
 			ID:               fmt.Sprintf("id-%d", i),
 			Timestamp:        fmt.Sprintf("2026-07-20T10:%02d:%02d.000Z", (i/60)%60, i%60),
 			Provider:         "openai",
