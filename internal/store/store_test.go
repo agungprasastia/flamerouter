@@ -270,6 +270,27 @@ func testRequestDetails(t *testing.T, st *store.Store) {
 	if err != nil || len(rds) != 1 {
 		t.Fatalf("request details: %+v err=%v", rds, err)
 	}
+
+	rdsConn, err := st.QueryRequestDetailsByConnection("conn-1", 10)
+	if err != nil {
+		t.Fatalf("QueryRequestDetailsByConnection err=%v", err)
+	}
+	if len(rdsConn) != 0 {
+		t.Fatalf("expected 0 details for conn-1, got %d", len(rdsConn))
+	}
+
+	if err := st.InsertRequestDetail(store.RequestDetail{
+		Provider:     "openai",
+		Model:        "gpt-4o",
+		ConnectionID: "conn-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rdsConn, err = st.QueryRequestDetailsByConnection("conn-1", 10)
+	if err != nil || len(rdsConn) != 1 {
+		t.Fatalf("expected 1 detail for conn-1: %+v err=%v", rdsConn, err)
+	}
 }
 
 func testUsageStats(t *testing.T, st *store.Store) {

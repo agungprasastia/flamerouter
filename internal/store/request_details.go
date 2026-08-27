@@ -86,3 +86,43 @@ func (s *Store) QueryRequestDetails(limit int) ([]RequestDetail, error) {
 
 	return out, rows.Err()
 }
+
+// QueryRequestDetailsByConnection returns the most recent request details for a given connection ID.
+func (s *Store) QueryRequestDetailsByConnection(connID string, limit int) ([]RequestDetail, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, COALESCE(timestamp,''), provider, model, COALESCE(connection_id,''),
+		        COALESCE(status_code,0), COALESCE(duration_ms,0),
+		        COALESCE(prompt_tokens,0), COALESCE(completion_tokens,0)
+		 FROM request_details WHERE connection_id = ? ORDER BY timestamp DESC LIMIT ?`,
+		connID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if clErr := rows.Close(); clErr != nil {
+			_ = clErr
+		}
+	}()
+
+	var out []RequestDetail
+
+	for rows.Next() {
+		var d RequestDetail
+		if err := rows.Scan(
+			&d.ID, &d.Timestamp, &d.Provider, &d.Model, &d.ConnectionID,
+			&d.StatusCode, &d.DurationMs, &d.PromptTokens, &d.CompletionTokens,
+		); err != nil {
+			return nil, err
+		}
+
+		out = append(out, d)
+	}
+
+	return out, rows.Err()
+}
