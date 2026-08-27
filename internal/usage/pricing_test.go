@@ -49,17 +49,17 @@ func TestCalculateCost(t *testing.T) {
 			want: 0.00492,
 		},
 		{
-			name:             "pattern matching - gpt-4o variant",
+			name:             "pattern matching - codex-high variant",
 			provider:         "openai",
-			model:            "gpt-4o-2024-08-06",
+			model:            "custom-codex-high",
 			promptTokens:     2000,
 			cachedTokens:     500,
 			completionTokens: 1000,
-			// Matches glob pattern "gpt-4o-*": Input $0.15/1M, Output $0.60/1M, Cached $0.075/1M
+			// Matches glob pattern "*-codex-high": Input $8.00/1M, Output $32.00/1M, Cached $4.00/1M
 			// nonCachedPrompt = 1500
-			// cost = (1500 * 0.15 / 1e6) + (500 * 0.075 / 1e6) + (1000 * 0.60 / 1e6)
-			//      = 0.000225 + 0.0000375 + 0.000600 = 0.0008625 -> round 6 decimals = 0.000863
-			want: 0.000863,
+			// cost = (1500 * 8.00 / 1e6) + (500 * 4.00 / 1e6) + (1000 * 32.00 / 1e6)
+			//      = 0.0120 + 0.0020 + 0.0320 = 0.0460
+			want: 0.046,
 		},
 		{
 			name:             "unknown model default fallback",
@@ -108,40 +108,6 @@ func TestCalculateCost(t *testing.T) {
 	}
 }
 
-func TestCalculateCost_ZeroCachedRateFallback(t *testing.T) {
-	// Temporarily construct pricing entry with Cached = 0 to test fallback rate logic
-	pricing := ModelPricing{
-		Input:  2.00,
-		Output: 10.00,
-		Cached: 0,
-	}
-
-	// Verify formula when Cached == 0
-	// If p.Cached == 0, cachedRate = inputRate (p.Input / 1000000.0)
-	inputRate := pricing.Input / 1000000.0
-	cachedRate := inputRate
-	outputRate := pricing.Output / 1000000.0
-
-	promptTokens := 1000
-	cachedTokens := 300
-	completionTokens := 500
-	nonCachedPrompt := promptTokens - cachedTokens
-
-	expectedCost := (float64(nonCachedPrompt) * inputRate) +
-		(float64(cachedTokens) * cachedRate) +
-		(float64(completionTokens) * outputRate)
-	expectedCost = math.Round(expectedCost*1000000) / 1000000
-
-	// promptTotal = nonCached + cached = total promptTokens * inputRate
-	totalPromptCost := float64(promptTokens) * inputRate
-	totalCompletionCost := float64(completionTokens) * outputRate
-	altCost := math.Round((totalPromptCost+totalCompletionCost)*1000000) / 1000000
-
-	if expectedCost != altCost {
-		t.Fatalf("expected cost fallback calculation mismatch: %v vs %v", expectedCost, altCost)
-	}
-}
-
 func TestGetPricingForModel(t *testing.T) {
 	tests := []struct {
 		model     string
@@ -163,6 +129,7 @@ func TestGetPricingForModel(t *testing.T) {
 			if found != tt.wantFound {
 				t.Errorf("GetPricingForModel(%q) found = %v, wantFound = %v", tt.model, found, tt.wantFound)
 			}
+
 			if pricing.Input != tt.wantInput {
 				t.Errorf("GetPricingForModel(%q) Input rate = %v, wantInput = %v", tt.model, pricing.Input, tt.wantInput)
 			}
