@@ -165,6 +165,7 @@ func TestPipeWithHeartbeat(t *testing.T) {
 		}()
 
 		time.Sleep(70 * time.Millisecond)
+
 		_ = pw.Close() //nolint:errcheck // best effort close
 
 		err := <-errCh
