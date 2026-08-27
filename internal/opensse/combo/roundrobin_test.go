@@ -1,6 +1,10 @@
 package combo
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sync"
 	"testing"
@@ -219,6 +223,47 @@ func TestRotateFromIndex(t *testing.T) {
 				t.Fatalf("rotateFromIndex(%v, %d) = %v, want %v", tt.models, tt.index, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestRoundRobin_Execute(t *testing.T) {
+	ResetRotation("execute-combo")
+
+	models := []string{"provider/model-1", "provider/model-2"}
+	r := &RoundRobin{}
+
+	var attempted []string
+
+	opts := Options{
+		ClientHeaders:  nil,
+		SourceFormat:   "",
+		TargetFormat:   "",
+		TokenSaverJSON: "",
+		JudgeModel:     "",
+		ComboName:      "execute-combo",
+		StickyLimit:    1,
+		Stream:         false,
+		SingleModel: func(_ context.Context, _ http.ResponseWriter, _ []byte, modelStr string, _ bool) error {
+			attempted = append(attempted, modelStr)
+
+			if modelStr == "provider/model-1" {
+				return errors.New("model 1 error")
+			}
+
+			return nil
+		},
+	}
+
+	w := httptest.NewRecorder()
+	ctx := context.Background()
+
+	err := r.Execute(ctx, w, []byte(`{"messages":[{"role":"user stream":false}]}`), models, nil, nil, nil, opts)
+	if err != nil {
+		t.Fatalf("expected execution success on model-2 fallback, got err: %v", err)
+	}
+
+	if len(attempted) != 2 || attempted[0] != "provider/model-1" || attempted[1] != "provider/model-2" {
+		t.Fatalf("expected sequential fallback attempted [provider/model-1, provider/model-2], got %v", attempted)
 	}
 }
 

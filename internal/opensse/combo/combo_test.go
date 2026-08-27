@@ -12,31 +12,124 @@ import (
 	"testing"
 )
 
-func TestResolve_Default(t *testing.T) {
-	s := Resolve("", nil, "test")
-	if _, ok := s.(*FallbackStrategy); !ok {
-		t.Fatal("expected FallbackStrategy for empty string")
+func TestResolve(t *testing.T) {
+	tests := []struct {
+		name          string
+		comboStrategy string
+		perCombo      map[string]string
+		comboName     string
+		wantType      string
+	}{
+		{
+			name:          "empty comboStrategy defaults to FallbackStrategy",
+			comboStrategy: "",
+			perCombo:      nil,
+			comboName:     "test",
+			wantType:      "*combo.FallbackStrategy",
+		},
+		{
+			name:          "unknown strategy defaults to FallbackStrategy",
+			comboStrategy: "unknown-strategy",
+			perCombo:      nil,
+			comboName:     "test",
+			wantType:      "*combo.FallbackStrategy",
+		},
+		{
+			name:          "explicit fallback strategy returns FallbackStrategy",
+			comboStrategy: "fallback",
+			perCombo:      nil,
+			comboName:     "test",
+			wantType:      "*combo.FallbackStrategy",
+		},
+		{
+			name:          "round-robin strategy returns RoundRobin",
+			comboStrategy: "round-robin",
+			perCombo:      nil,
+			comboName:     "test",
+			wantType:      "*combo.RoundRobin",
+		},
+		{
+			name:          "fusion strategy returns Fusion",
+			comboStrategy: "fusion",
+			perCombo:      nil,
+			comboName:     "test",
+			wantType:      "*combo.Fusion",
+		},
+		{
+			name:          "perCombo override matches comboName to fusion",
+			comboStrategy: "fallback",
+			perCombo:      map[string]string{"mycombo": "fusion"},
+			comboName:     "mycombo",
+			wantType:      "*combo.Fusion",
+		},
+		{
+			name:          "perCombo override matches comboName to round-robin",
+			comboStrategy: "fallback",
+			perCombo:      map[string]string{"mycombo": "round-robin"},
+			comboName:     "mycombo",
+			wantType:      "*combo.RoundRobin",
+		},
+		{
+			name:          "perCombo override matches comboName to fallback",
+			comboStrategy: "round-robin",
+			perCombo:      map[string]string{"mycombo": "fallback"},
+			comboName:     "mycombo",
+			wantType:      "*combo.FallbackStrategy",
+		},
+		{
+			name:          "perCombo non-matching comboName retains comboStrategy",
+			comboStrategy: "round-robin",
+			perCombo:      map[string]string{"othercombo": "fusion"},
+			comboName:     "mycombo",
+			wantType:      "*combo.RoundRobin",
+		},
+		{
+			name:          "empty perCombo map retains comboStrategy",
+			comboStrategy: "fusion",
+			perCombo:      map[string]string{},
+			comboName:     "mycombo",
+			wantType:      "*combo.Fusion",
+		},
+		{
+			name:          "perCombo override to unknown strategy defaults to FallbackStrategy",
+			comboStrategy: "round-robin",
+			perCombo:      map[string]string{"mycombo": "invalid-strategy"},
+			comboName:     "mycombo",
+			wantType:      "*combo.FallbackStrategy",
+		},
+		{
+			name:          "empty comboName matching empty key in perCombo",
+			comboStrategy: "fallback",
+			perCombo:      map[string]string{"": "fusion"},
+			comboName:     "",
+			wantType:      "*combo.Fusion",
+		},
 	}
-}
 
-func TestResolve_RoundRobin(t *testing.T) {
-	s := Resolve("round-robin", nil, "test")
-	if _, ok := s.(*RoundRobin); !ok {
-		t.Fatal("expected RoundRobin")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := Resolve(tt.comboStrategy, tt.perCombo, tt.comboName)
+			if s == nil {
+				t.Fatalf("Resolve(%q, %v, %q) returned nil", tt.comboStrategy, tt.perCombo, tt.comboName)
+			}
 
-func TestResolve_Fusion(t *testing.T) {
-	s := Resolve("fusion", nil, "test")
-	if _, ok := s.(*Fusion); !ok {
-		t.Fatal("expected Fusion")
-	}
-}
+			var gotType string
+			switch s.(type) {
+			case *FallbackStrategy:
+				gotType = "*combo.FallbackStrategy"
+			case *RoundRobin:
+				gotType = "*combo.RoundRobin"
+			case *Fusion:
+				gotType = "*combo.Fusion"
+			default:
+				gotType = "unknown"
+			}
 
-func TestResolve_PerComboOverride(t *testing.T) {
-	s := Resolve("fallback", map[string]string{"mycombo": "fusion"}, "mycombo")
-	if _, ok := s.(*Fusion); !ok {
-		t.Fatal("expected Fusion override for mycombo")
+			if gotType != tt.wantType {
+				t.Errorf("Resolve(%q, %v, %q) = %T (%s), want %s",
+					tt.comboStrategy, tt.perCombo, tt.comboName, s, gotType, tt.wantType)
+			}
+		})
 	}
 }
 
