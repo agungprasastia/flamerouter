@@ -117,8 +117,9 @@ export function sortVisibleConnections(
   };
 
   return [...connections].sort((a, b) => {
-    const expiryDiff = getEarliestResetTime(a) - getEarliestResetTime(b);
-    if (expiryDiff !== 0) return expiryDiff;
+    const timeA = getEarliestResetTime(a);
+    const timeB = getEarliestResetTime(b);
+    if (timeA !== timeB) return timeA - timeB;
     return (
       (a.provider || "").localeCompare(b.provider || "") ||
       (getConnectionLabel(a) || "").localeCompare(getConnectionLabel(b) || "")
@@ -268,6 +269,7 @@ export function formatResetTime(date: string | number | Date | null | undefined)
 
   try {
     const resetDate = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(resetDate.getTime())) return "-";
     const now = new Date();
     const diffMs = resetDate.getTime() - now.getTime();
 
