@@ -17,7 +17,9 @@ func TestWriteSSEHeaders(t *testing.T) {
 	WriteSSEHeaders(rec)
 
 	res := rec.Result()
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
 	tests := []struct {
 		header string
@@ -49,7 +51,7 @@ type errReader struct {
 	err error
 }
 
-func (e *errReader) Read(p []byte) (n int, err error) {
+func (e *errReader) Read(_ []byte) (n int, err error) {
 	return 0, e.err
 }
 
@@ -61,11 +63,11 @@ func (e *errWriter) Header() http.Header {
 	return http.Header{}
 }
 
-func (e *errWriter) Write(p []byte) (int, error) {
+func (e *errWriter) Write(_ []byte) (int, error) {
 	return 0, e.err
 }
 
-func (e *errWriter) WriteHeader(statusCode int) {}
+func (e *errWriter) WriteHeader(_ int) {}
 
 func TestPipe(t *testing.T) {
 	t.Run("successful pipe without flusher", func(t *testing.T) {
@@ -83,7 +85,10 @@ func TestPipe(t *testing.T) {
 	})
 
 	t.Run("successful pipe with flusher", func(t *testing.T) {
-		rec := &dummyFlusherResponseRecorder{ResponseRecorder: httptest.NewRecorder()}
+		rec := &dummyFlusherResponseRecorder{
+			ResponseRecorder: httptest.NewRecorder(),
+			flushed:          false,
+		}
 		src := strings.NewReader("data: test flusher\n\n")
 
 		err := Pipe(rec, src)
@@ -94,6 +99,7 @@ func TestPipe(t *testing.T) {
 		if !rec.flushed {
 			t.Errorf("expected flusher to be called")
 		}
+
 		if rec.Body.String() != "data: test flusher\n\n" {
 			t.Fatalf("got body %q, want %q", rec.Body.String(), "data: test flusher\n\n")
 		}
@@ -127,7 +133,10 @@ func TestPipeWithHeartbeat(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		rec := &dummyFlusherResponseRecorder{ResponseRecorder: httptest.NewRecorder()}
+		rec := &dummyFlusherResponseRecorder{
+			ResponseRecorder: httptest.NewRecorder(),
+			flushed:          false,
+		}
 		src := strings.NewReader("data: chunk1\n\n")
 
 		err := PipeWithHeartbeat(ctx, rec, src, 50*time.Millisecond)
@@ -142,7 +151,9 @@ func TestPipeWithHeartbeat(t *testing.T) {
 
 	t.Run("heartbeat fired on idle", func(t *testing.T) {
 		pr, pw := io.Pipe()
-		defer pr.Close()
+		defer func() {
+			_ = pr.Close()
+		}()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
@@ -174,8 +185,10 @@ func TestPipeWithHeartbeat(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		pr, pw := io.Pipe()
-		defer pr.Close()
-		defer pw.Close()
+		defer func() {
+			_ = pr.Close()
+			_ = pw.Close()
+		}()
 
 		err := PipeWithHeartbeat(ctx, rec, pr, 100*time.Millisecond)
 		if !errors.Is(err, context.Canceled) {
@@ -190,8 +203,10 @@ func TestPipeWithHeartbeat(t *testing.T) {
 		expectedErr := errors.New("heartbeat write error")
 		dst := &errWriter{err: expectedErr}
 		pr, pw := io.Pipe()
-		defer pr.Close()
-		defer pw.Close()
+		defer func() {
+			_ = pr.Close()
+			_ = pw.Close()
+		}()
 
 		err := PipeWithHeartbeat(ctx, dst, pr, 10*time.Millisecond)
 		if !errors.Is(err, expectedErr) {
