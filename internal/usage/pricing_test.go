@@ -5,14 +5,38 @@ import (
 	"testing"
 )
 
-func TestGetPricingForModel(t *testing.T) {
-	tests := []struct {
-		name          string
-		model         string
-		expectedInput float64
-		expectedOut   float64
-		expectedOK    bool
-	}{
+type modelPricingTestCase struct {
+	name          string
+	model         string
+	expectedInput float64
+	expectedOut   float64
+	expectedOK    bool
+}
+
+func runPricingTestCases(t *testing.T, tests []modelPricingTestCase) {
+	t.Helper()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pricing, ok := GetPricingForModel(tt.model)
+
+			if ok != tt.expectedOK {
+				t.Errorf("GetPricingForModel(%q) ok = %v, expectedOK = %v", tt.model, ok, tt.expectedOK)
+			}
+
+			if pricing.Input != tt.expectedInput {
+				t.Errorf("GetPricingForModel(%q) Input = %v, expected %v", tt.model, pricing.Input, tt.expectedInput)
+			}
+
+			if pricing.Output != tt.expectedOut {
+				t.Errorf("GetPricingForModel(%q) Output = %v, expected %v", tt.model, pricing.Output, tt.expectedOut)
+			}
+		})
+	}
+}
+
+func TestGetPricingForModel_ExactAndPrefix(t *testing.T) {
+	tests := []modelPricingTestCase{
 		{
 			name:          "exact match - gpt-4o",
 			model:         "gpt-4o",
@@ -55,6 +79,13 @@ func TestGetPricingForModel(t *testing.T) {
 			expectedOut:   10.00,
 			expectedOK:    true,
 		},
+	}
+
+	runPricingTestCases(t, tests)
+}
+
+func TestGetPricingForModel_PatternsAndFallback(t *testing.T) {
+	tests := []modelPricingTestCase{
 		{
 			name:          "pattern match - claude-opus-*",
 			model:         "claude-opus-4.7",
@@ -113,20 +144,7 @@ func TestGetPricingForModel(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pricing, ok := GetPricingForModel(tt.model)
-			if ok != tt.expectedOK {
-				t.Errorf("GetPricingForModel(%q) ok = %v, expectedOK = %v", tt.model, ok, tt.expectedOK)
-			}
-			if pricing.Input != tt.expectedInput {
-				t.Errorf("GetPricingForModel(%q) Input = %v, expected %v", tt.model, pricing.Input, tt.expectedInput)
-			}
-			if pricing.Output != tt.expectedOut {
-				t.Errorf("GetPricingForModel(%q) Output = %v, expected %v", tt.model, pricing.Output, tt.expectedOut)
-			}
-		})
-	}
+	runPricingTestCases(t, tests)
 }
 
 func TestCalculateCost(t *testing.T) {
@@ -146,7 +164,7 @@ func TestCalculateCost(t *testing.T) {
 			promptTokens:     1000000,
 			cachedTokens:     0,
 			completionTokens: 1000000,
-			expectedCost:     12.50, // 2.50 + 10.00
+			expectedCost:     12.50,
 		},
 		{
 			name:             "known model with cached tokens",
@@ -155,7 +173,7 @@ func TestCalculateCost(t *testing.T) {
 			promptTokens:     1000000,
 			cachedTokens:     400000,
 			completionTokens: 1000000,
-			expectedCost:     12.00, // (0.6*2.50) + (0.4*1.25) + (1.0*10.00) = 1.50 + 0.50 + 10.00
+			expectedCost:     12.00,
 		},
 		{
 			name:             "cached tokens exceed prompt tokens",
@@ -164,7 +182,7 @@ func TestCalculateCost(t *testing.T) {
 			promptTokens:     500,
 			cachedTokens:     600,
 			completionTokens: 1000,
-			expectedCost:     0.01075, // nonCached=0, (600/1e6 * 1.25) + (1000/1e6 * 10.00) = 0.00075 + 0.01 = 0.01075
+			expectedCost:     0.01075,
 		},
 		{
 			name:             "unknown model fallback pricing",
@@ -173,13 +191,14 @@ func TestCalculateCost(t *testing.T) {
 			promptTokens:     1000000,
 			cachedTokens:     0,
 			completionTokens: 1000000,
-			expectedCost:     5.00, // 1.00 + 4.00
+			expectedCost:     5.00,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cost := CalculateCost(tt.provider, tt.model, tt.promptTokens, tt.cachedTokens, tt.completionTokens)
+
 			if math.Abs(cost-tt.expectedCost) > 1e-6 {
 				t.Errorf("CalculateCost(%q, %q, %d, %d, %d) = %v, expected %v",
 					tt.provider, tt.model, tt.promptTokens, tt.cachedTokens, tt.completionTokens, cost, tt.expectedCost)
