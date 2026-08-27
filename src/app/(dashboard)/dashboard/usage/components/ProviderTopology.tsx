@@ -336,6 +336,97 @@ function TopologyEdge({
 const nodeTypes = { provider: ProviderNode, router: RouterNode };
 const edgeTypes = { topology: TopologyEdge };
 
+function getTopologyEdgeStyle(
+  active: boolean,
+  last: boolean,
+  error: boolean,
+): CSSProperties {
+  if (error) return { stroke: "#ef4444", strokeWidth: 2.5, opacity: 0.9 };
+  if (active) return { stroke: "#22d3ee", strokeWidth: 3.5, opacity: 1 };
+  if (last) return { stroke: "#f59e0b", strokeWidth: 2, opacity: 0.7 };
+  return { stroke: "var(--color-border)", strokeWidth: 1, opacity: 0.3 };
+}
+
+function determineHandles(
+  angle: number,
+  cx: number,
+): { sourceHandle: string; targetHandle: string } {
+  if (
+    Math.abs(angle + Math.PI / 2) < Math.PI / 4 ||
+    Math.abs(angle - (3 * Math.PI) / 2) < Math.PI / 4
+  ) {
+    return { sourceHandle: "top", targetHandle: "bottom" };
+  }
+  if (Math.abs(angle - Math.PI / 2) < Math.PI / 4) {
+    return { sourceHandle: "bottom", targetHandle: "top" };
+  }
+  if (cx > 0) {
+    return { sourceHandle: "right", targetHandle: "left" };
+  }
+  return { sourceHandle: "left", targetHandle: "right" };
+}
+
+function createRouterNode(
+  activeCount: number,
+  position: { x: number; y: number } = { x: 0, y: 0 },
+): Node {
+  return {
+    id: "router",
+    type: "router",
+    position,
+    data: { activeCount },
+    draggable: false,
+  };
+}
+
+function createProviderNode(
+  providerItem: ProviderItem,
+  active: boolean,
+  position: { x: number; y: number },
+): Node {
+  const config = getProviderConfig(providerItem.provider);
+  const data: ProviderNodeData = {
+    label:
+      (config.name !== providerItem.provider ? config.name : null) ||
+      providerItem.nodeName ||
+      providerItem.name ||
+      providerItem.provider,
+    color: config.color || "#6b7280",
+    imageUrl: getProviderImageUrl(providerItem.provider),
+    textIcon:
+      config.textIcon || (providerItem.provider || "?").slice(0, 2).toUpperCase(),
+    active,
+  };
+
+  return {
+    id: `provider-${providerItem.provider}`,
+    type: "provider",
+    position,
+    data,
+    draggable: false,
+  };
+}
+
+function createTopologyEdge(
+  nodeId: string,
+  sourceHandle: string,
+  targetHandle: string,
+  active: boolean,
+  style: CSSProperties,
+): Edge {
+  return {
+    id: `e-${nodeId}`,
+    type: "topology",
+    source: "router",
+    sourceHandle,
+    target: nodeId,
+    targetHandle,
+    animated: false,
+    data: { active },
+    style,
+  };
+}
+
 // Place N nodes evenly along an ellipse around the router center.
 function buildLayout(
   providers: readonly ProviderItem[],
@@ -343,115 +434,59 @@ function buildLayout(
   lastSet: Set<string>,
   errorSet: Set<string>,
 ): { nodes: Node[]; edges: Edge[] } {
+  const count = providers.length;
+  if (count === 0) {
+    return {
+      nodes: [createRouterNode(0, { x: 0, y: 0 })],
+      edges: [],
+    };
+  }
+
   const nodeW = 180;
   const nodeH = 30;
   const routerW = 120;
   const routerH = 44;
   const nodeGap = 24;
 
-  const count = providers.length;
-
   // Compute rx so arc spacing between nodes >= nodeW + nodeGap
   const minRx = ((nodeW + nodeGap) * count) / (2 * Math.PI);
   const rx = Math.max(320, minRx);
   const ry = Math.max(200, rx * 0.55); // ellipse ratio ~0.55
-  if (count === 0) {
-    return {
-      nodes: [
-        {
-          id: "router",
-          type: "router",
-          position: { x: 0, y: 0 },
-          data: { activeCount: 0 },
-          draggable: false,
-        },
-      ],
-      edges: [],
-    };
-  }
 
-  const nodes: Node[] = [];
+  const routerNode = createRouterNode(activeSet.size, {
+    x: -routerW / 2,
+    y: -routerH / 2,
+  });
+  const nodes: Node[] = [routerNode];
   const edges: Edge[] = [];
 
-  nodes.push({
-    id: "router",
-    type: "router",
-    position: { x: -routerW / 2, y: -routerH / 2 },
-    data: { activeCount: activeSet.size },
-    draggable: false,
-  });
-
-  const edgeStyle = (active: boolean, last: boolean, error: boolean): CSSProperties => {
-    if (error) return { stroke: "#ef4444", strokeWidth: 2.5, opacity: 0.9 };
-    if (active) return { stroke: "#22d3ee", strokeWidth: 3.5, opacity: 1 };
-    if (last) return { stroke: "#f59e0b", strokeWidth: 2, opacity: 0.7 };
-    return { stroke: "var(--color-border)", strokeWidth: 1, opacity: 0.3 };
-  };
-
   providers.forEach((p, i) => {
-    const config = getProviderConfig(p.provider);
-    const active = activeSet.has(p.provider?.toLowerCase());
-    const last = !active && lastSet.has(p.provider?.toLowerCase());
-    const error = !active && errorSet.has(p.provider?.toLowerCase());
-    const nodeId = `provider-${p.provider}`;
-    const data: ProviderNodeData = {
-      label:
-        (config.name !== p.provider ? config.name : null) ||
-        p.nodeName ||
-        p.name ||
-        p.provider,
-      color: config.color || "#6b7280",
-      imageUrl: getProviderImageUrl(p.provider),
-      textIcon:
-        config.textIcon || (p.provider || "?").slice(0, 2).toUpperCase(),
-      active,
-    };
+    const providerKey = p.provider?.toLowerCase();
+    const active = activeSet.has(providerKey);
+    const last = !active && lastSet.has(providerKey);
+    const error = !active && errorSet.has(providerKey);
 
     // Distribute evenly starting from top (−π/2), clockwise
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / count;
     const cx = rx * Math.cos(angle);
     const cy = ry * Math.sin(angle);
 
-    // Pick router handle closest to the node direction
-    let sourceHandle: string;
-    let targetHandle: string;
-    if (
-      Math.abs(angle + Math.PI / 2) < Math.PI / 4 ||
-      Math.abs(angle - (3 * Math.PI) / 2) < Math.PI / 4
-    ) {
-      sourceHandle = "top";
-      targetHandle = "bottom";
-    } else if (Math.abs(angle - Math.PI / 2) < Math.PI / 4) {
-      sourceHandle = "bottom";
-      targetHandle = "top";
-    } else if (cx > 0) {
-      sourceHandle = "right";
-      targetHandle = "left";
-    } else {
-      sourceHandle = "left";
-      targetHandle = "right";
-    }
-
-    nodes.push({
-      id: nodeId,
-      type: "provider",
-      position: { x: cx - nodeW / 2, y: cy - nodeH / 2 },
-      data,
-      draggable: false,
+    const providerNode = createProviderNode(p, active, {
+      x: cx - nodeW / 2,
+      y: cy - nodeH / 2,
     });
-
-    edges.push({
-      id: `e-${nodeId}`,
-      type: "topology",
-      source: "router",
+    const { sourceHandle, targetHandle } = determineHandles(angle, cx);
+    const edgeStyle = getTopologyEdgeStyle(active, last, error);
+    const topologyEdge = createTopologyEdge(
+      providerNode.id,
       sourceHandle,
-      target: nodeId,
       targetHandle,
-      // Built-in animated uses stroke-dasharray (CPU-heavy); use particle beam instead
-      animated: false,
-      data: { active },
-      style: edgeStyle(active, last, error),
-    });
+      active,
+      edgeStyle,
+    );
+
+    nodes.push(providerNode);
+    edges.push(topologyEdge);
   });
 
   return { nodes, edges };
