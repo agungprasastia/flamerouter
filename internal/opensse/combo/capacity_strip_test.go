@@ -59,13 +59,23 @@ func TestStripHistoryForContext_KeysAndRoles(t *testing.T) {
 				t.Fatalf("expected at least 2 msgs after stripping, got %d", len(msgs))
 			}
 
-			firstRole := msgs[0].(map[string]any)["role"].(string)
-			if firstRole != "developer" {
+			firstMap, ok := msgs[0].(map[string]any)
+			if !ok {
+				t.Fatalf("expected map[string]any for first msg")
+			}
+
+			firstRole, ok := firstMap["role"].(string)
+			if !ok || firstRole != "developer" {
 				t.Fatalf("expected developer system role preserved, got %s", firstRole)
 			}
 
-			lastRole := msgs[len(msgs)-1].(map[string]any)["role"].(string)
-			if lastRole != "user" {
+			lastMap, ok := msgs[len(msgs)-1].(map[string]any)
+			if !ok {
+				t.Fatalf("expected map[string]any for last msg")
+			}
+
+			lastRole, ok := lastMap["role"].(string)
+			if !ok || lastRole != "user" {
 				t.Fatalf("expected tail user role preserved, got %s", lastRole)
 			}
 		})
@@ -148,15 +158,20 @@ func TestStripHistoryForContext_ContentFormats(t *testing.T) {
 	stripped := StripHistoryForContext(body, 10)
 
 	// Confirm copy-on-write (original body extra_field intact, messages unmodified in original)
-	if len(body["messages"].([]any)) != 4 {
-		t.Fatalf("original body was mutated")
+	origMsgs, ok := body["messages"].([]any)
+	if !ok || len(origMsgs) != 4 {
+		t.Fatalf("original body was mutated or invalid")
 	}
 
 	if stripped["extra_field"] != "preserved" {
 		t.Fatalf("expected extra fields preserved in output body")
 	}
 
-	msgs := stripped["messages"].([]any)
+	msgs, ok := stripped["messages"].([]any)
+	if !ok {
+		t.Fatalf("expected []any slice under messages")
+	}
+
 	// Trimming should drop the head user message because total length > budgetChars (32)
 	// Remaining should be system msg + tail msg (user 2)
 	if len(msgs) != 2 {
@@ -177,11 +192,9 @@ func TestStripHistoryForContext_MalformedElementsInSlice(t *testing.T) {
 	}
 
 	stripped := StripHistoryForContext(body, 10)
+
 	msgs, ok := stripped["messages"].([]any)
-	if !ok {
-		t.Fatalf("expected valid messages slice returned")
-	}
-	if len(msgs) == 0 {
-		t.Fatalf("expected non-empty stripped messages")
+	if !ok || len(msgs) == 0 {
+		t.Fatalf("expected valid non-empty messages slice returned")
 	}
 }
