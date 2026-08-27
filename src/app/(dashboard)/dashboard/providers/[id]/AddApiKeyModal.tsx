@@ -6,7 +6,7 @@ import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import { planBulkAdd } from "@/shared/utils/bulkAdd";
 
-const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
+const BULK_PLACEHOLDER = `Production|sk-proj-example-key-1\nStaging|sk-proj-example-key-2\nsk-proj-example-key-3`;
 
 type ProxyPoolItem = {
   id: string;
@@ -102,9 +102,9 @@ export default function AddApiKeyModal({
   const [validationResult, setValidationResult] = useState<"success" | "failed" | null>(null);
   const [saving, setSaving] = useState(false);
   const bulkPlaceholder = isCloudflareAi
-    ? `name1|sk-key1|acc123456\nname2|sk-key2|def789012\nsk-key-only-auto-named`
+    ? `Production|sk-proj-example-key-1|1234567890abcdef1234567890abcdef\nStaging|sk-proj-example-key-2|1234567890abcdef1234567890abcdef\nsk-proj-example-key-3`
     : provider === "qoder"
-      ? `name1|pt-xxxxx\nname2|pt-yyyyy\npt-only-auto-named`
+      ? `Production|pt-example-token-1\nStaging|pt-example-token-2\npt-example-token-3`
       : BULK_PLACEHOLDER;
 
   const [mode, setMode] = useState("single"); // "single" | "bulk"
