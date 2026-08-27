@@ -211,10 +211,10 @@ func TestStripHistoryForContext(t *testing.T) {
 
 func TestStripHistoryForContext_EdgeCases(t *testing.T) {
 	tests := []struct {
-		name          string
 		body          map[string]any
-		contextWindow int
 		want          map[string]any
+		name          string
+		contextWindow int
 	}{
 		{
 			name:          "nil body",
