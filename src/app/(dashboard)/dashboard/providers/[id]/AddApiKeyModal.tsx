@@ -58,7 +58,7 @@ export default function AddApiKeyModal({
       : "API Key";
   const credentialPlaceholder = isCookie
     ? provider === "grok-web"
-      ? "sso=xxxxx... or just the raw value"
+      ? "sso=eyJhbGciOi... or raw cookie token"
       : "eyJhbGciOi..."
     : isXaiApiKey
       ? "xai-..."
