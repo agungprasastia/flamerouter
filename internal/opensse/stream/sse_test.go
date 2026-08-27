@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flamerouter/internal/opensse/stream"
 	"fmt"
 	"io"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
-
-	"flamerouter/internal/opensse/stream"
 )
 
 type mockFlushingWriter struct {
@@ -277,8 +276,8 @@ func TestPipe_ReadError(t *testing.T) {
 	w := newMockFlushingWriter()
 	customErr := errors.New("read failed")
 	src := &errReader{
-		data: []byte("partial data"),
 		err:  customErr,
+		data: []byte("partial data"),
 		read: false,
 	}
 
@@ -365,7 +364,9 @@ func TestPipeWithHeartbeat_ContextCancelled(t *testing.T) {
 	blockingReader := newBlockingPipeReader()
 
 	defer func() {
-		_ = blockingReader.Close()
+		if clErr := blockingReader.Close(); clErr != nil {
+			t.Errorf("close error: %v", clErr)
+		}
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -418,7 +419,9 @@ func TestPipeWithHeartbeat_HeartbeatWriteError(t *testing.T) {
 	blockingReader := newBlockingPipeReader()
 
 	defer func() {
-		_ = blockingReader.Close()
+		if clErr := blockingReader.Close(); clErr != nil {
+			t.Errorf("close error: %v", clErr)
+		}
 	}()
 
 	ctx := context.Background()
@@ -459,8 +462,8 @@ func TestPipeWithHeartbeat_ReadError(t *testing.T) {
 	w := newMockFlushingWriter()
 	readErr := fmt.Errorf("stream interrupted")
 	src := &errReader{
-		data: []byte("partial"),
 		err:  readErr,
+		data: []byte("partial"),
 		read: false,
 	}
 
