@@ -322,6 +322,99 @@ function extractTools(body) {
 // ─── OpenAI SSE → EventStream binary conversion ───────────────────────────────
 
 /**
+ * Handle end-of-stream flush. Ensures clean stream termination or flushes buffered thinking.
+ */
+function handleFlush(state) {
+  if (state.finishSent) return null;
+  // Flush any remaining buffered thinking
+  if (state.inThink && state.thinkBuf) {
+    state.inThink = false;
+    const thinking = state.thinkBuf;
+    state.thinkBuf = "";
+    return buildEventStreamFrame("reasoningContentEvent", {
+      content: thinking,
+      modelId: state.modelId || "kiro-unknown",
+    });
+  }
+  return buildEventStreamFrame("messageStopEvent", {});
+}
+
+/**
+ * Process tool_calls delta and return binary frames for tool initialization and argument fragments.
+ */
+function processToolCalls(toolCalls, state) {
+  const frames = [];
+  state.hasToolCalls = true;
+  for (const tc of toolCalls) {
+    const idx = tc.index ?? 0;
+
+    if (tc.id && tc.function?.name && !state.toolCallInit[idx]) {
+      // First appearance: emit frame with name + id, no input
+      state.toolCallInit[idx] = { id: tc.id, name: tc.function.name };
+      dbg(`toolUseEvent init: ${tc.function.name} (${tc.id})`);
+      frames.push(
+        buildEventStreamFrame("toolUseEvent", {
+          name: tc.function.name,
+          toolUseId: tc.id,
+        }),
+      );
+    }
+
+    // Emit incremental input fragment
+    if (tc.function?.arguments) {
+      const init = state.toolCallInit[idx];
+      dbg(`toolUseEvent fragment: ${tc.function.arguments.slice(0, 100)}`);
+      frames.push(
+        buildEventStreamFrame("toolUseEvent", {
+          input: tc.function.arguments,
+          name: init?.name || tc.function?.name || "",
+          toolUseId: init?.id || tc.id || "",
+        }),
+      );
+    }
+  }
+  return frames;
+}
+
+/**
+ * Process explicit reasoning_content delta.
+ */
+function processReasoningContent(reasoningContent, modelId) {
+  return buildEventStreamFrame("reasoningContentEvent", {
+    content: reasoningContent,
+    modelId,
+  });
+}
+
+/**
+ * Process text content delta, extracting thinking blocks if present.
+ */
+function processTextContent(content, state, modelId) {
+  const frames = [];
+  const { thinking, text } = extractThinking(content, state);
+
+  if (thinking) {
+    frames.push(
+      buildEventStreamFrame("reasoningContentEvent", {
+        content: thinking,
+        modelId,
+      }),
+    );
+  }
+
+  if (text) {
+    frames.push(
+      buildEventStreamFrame("assistantResponseEvent", {
+        content: text,
+        modelId,
+      }),
+    );
+  }
+
+  return frames;
+}
+
+/**
  * Convert an OpenAI SSE chunk to AWS EventStream binary frame(s)
  * This replaces pipeOpenAIasEventStream and works with pipeTransformedEventStream
  *
@@ -332,21 +425,9 @@ function extractTools(body) {
 function convertOpenAIToKiro(chunk, state) {
   // Flush: ensure clean stream termination
   if (!chunk) {
-    if (state.finishSent) return null;
-    // Flush any remaining buffered thinking
-    if (state.inThink && state.thinkBuf) {
-      state.inThink = false;
-      const thinking = state.thinkBuf;
-      state.thinkBuf = "";
-      return buildEventStreamFrame("reasoningContentEvent", {
-        content: thinking,
-        modelId: state.modelId || "kiro-unknown",
-      });
-    }
-    return buildEventStreamFrame("messageStopEvent", {});
+    return handleFlush(state);
   }
 
-  const frames = [];
   const choice = chunk.choices?.[0];
   const delta = choice?.delta || {};
 
@@ -361,70 +442,21 @@ function convertOpenAIToKiro(chunk, state) {
     state.usage = chunk.usage;
   }
 
+  const frames = [];
+
   // Handle tool calls — stream incrementally, matching real API format
   if (delta.tool_calls) {
-    state.hasToolCalls = true;
-    for (const tc of delta.tool_calls) {
-      const idx = tc.index ?? 0;
-
-      if (tc.id && tc.function?.name && !state.toolCallInit[idx]) {
-        // First appearance: emit frame with name + id, no input
-        state.toolCallInit[idx] = { id: tc.id, name: tc.function.name };
-        dbg(`toolUseEvent init: ${tc.function.name} (${tc.id})`);
-        frames.push(
-          buildEventStreamFrame("toolUseEvent", {
-            name: tc.function.name,
-            toolUseId: tc.id,
-          }),
-        );
-      }
-
-      // Emit incremental input fragment
-      if (tc.function?.arguments) {
-        const init = state.toolCallInit[idx];
-        dbg(`toolUseEvent fragment: ${tc.function.arguments.slice(0, 100)}`);
-        frames.push(
-          buildEventStreamFrame("toolUseEvent", {
-            input: tc.function.arguments,
-            name: init?.name || tc.function?.name || "",
-            toolUseId: init?.id || tc.id || "",
-          }),
-        );
-      }
-    }
+    frames.push(...processToolCalls(delta.tool_calls, state));
   }
 
   // Handle explicit reasoning_content (type-specific thinking channel)
   if (delta.reasoning_content) {
-    frames.push(
-      buildEventStreamFrame("reasoningContentEvent", {
-        content: delta.reasoning_content,
-        modelId,
-      }),
-    );
+    frames.push(processReasoningContent(delta.reasoning_content, modelId));
   }
 
   // Handle text content — extract thinking blocks, emit rest as assistantResponseEvent
   if (delta.content) {
-    const { thinking, text } = extractThinking(delta.content, state);
-
-    if (thinking) {
-      frames.push(
-        buildEventStreamFrame("reasoningContentEvent", {
-          content: thinking,
-          modelId,
-        }),
-      );
-    }
-
-    if (text) {
-      frames.push(
-        buildEventStreamFrame("assistantResponseEvent", {
-          content: text,
-          modelId,
-        }),
-      );
-    }
+    frames.push(...processTextContent(delta.content, state, modelId));
   }
 
   // Handle finish_reason
@@ -571,4 +603,14 @@ function isBinaryEventStream(buffer) {
   return totalLen > 12 && totalLen < 1000000 && headersLen < totalLen - 12;
 }
 
-module.exports = { intercept };
+module.exports = {
+  intercept,
+  initKiroState,
+  extractThinking,
+  convertOpenAIToKiro,
+  buildEventStreamFrame,
+  handleFlush,
+  processToolCalls,
+  processReasoningContent,
+  processTextContent,
+};
