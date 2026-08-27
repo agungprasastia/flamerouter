@@ -250,7 +250,7 @@ func (s *Server) handleUsageStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	reqDetails, errDetails := s.st.QueryRequestDetails(100)
+	reqDetails, errDetails := s.st.QueryRequestDetailsSummary(100)
 	if errDetails != nil {
 		reqDetails = nil
 	}
@@ -431,7 +431,7 @@ func (s *Server) handleRequestDetails(w http.ResponseWriter, r *http.Request) {
 	startDate := r.URL.Query().Get("startDate")
 	endDate := r.URL.Query().Get("endDate")
 
-	rows, err := s.st.QueryRequestDetails(500)
+	rows, err := s.st.QueryRequestDetailsSummary(500)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
@@ -465,7 +465,7 @@ func (s *Server) handleUsageProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Return list of distinct provider objects {id, name} for RequestDetailsTab
-	reqDetails, err := s.st.QueryRequestDetails(500)
+	reqDetails, err := s.st.QueryRequestDetailsSummary(500)
 	if err != nil {
 		reqDetails = nil
 	}
@@ -548,7 +548,7 @@ func (s *Server) handleUsageChart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) extractConnUsageData(connID string, limit int) ([]map[string]any, int, int, error) {
-	rows, err := s.st.QueryRequestDetails(limit)
+	rows, err := s.st.QueryRequestDetailsSummary(limit)
 	if err != nil {
 		return nil, 0, 0, err
 	}
