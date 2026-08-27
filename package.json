@@ -8,7 +8,8 @@
     "dev:next-only": "next dev --webpack --port 20129",
     "dev:turbo": "next dev --port 20129",
     "build": "next build --webpack",
-    "start": "next start --port 20129"
+    "start": "next start --port 20129",
+    "test": "vitest run"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -44,10 +45,14 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "22.20.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "^19",
+    "jsdom": "^29.1.1",
     "tailwindcss": "^4.1.18",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^4.1.11"
   }
 }
