@@ -18,7 +18,6 @@ vi.mock("@/shared/components/PricingModal", () => ({
 
 describe("PricingSettingsPage - loadPricing Error Handling", () => {
   const originalFetch = global.fetch;
-  const originalConsoleError = console.error;
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -26,12 +25,9 @@ describe("PricingSettingsPage - loadPricing Error Handling", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
-    console.error = originalConsoleError;
   });
 
   it("handles fetch network error gracefully when loading pricing", async () => {
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
     // Mock fetch to reject with a network error
     global.fetch = vi.fn().mockRejectedValue(new Error("Network Error"));
 
@@ -40,21 +36,13 @@ describe("PricingSettingsPage - loadPricing Error Handling", () => {
     // Initially should show loading state
     expect(screen.getByText("Loading pricing data...")).toBeDefined();
 
-    // After fetch fails, loading state should clear and show "No pricing data available"
+    // After fetch fails, loading state should clear and show the error message
     await waitFor(() => {
-      expect(screen.getByText("No pricing data available")).toBeDefined();
+      expect(screen.getByText("Failed to load pricing data")).toBeDefined();
     });
-
-    // Console error should have been called with the error
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "Failed to load pricing:",
-      expect.any(Error)
-    );
   });
 
   it("handles non-OK HTTP response gracefully when loading pricing", async () => {
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
     // Mock fetch to return response with ok: false (e.g. 500 status)
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -66,7 +54,7 @@ describe("PricingSettingsPage - loadPricing Error Handling", () => {
 
     // After loadPricing finishes with response.ok === false
     await waitFor(() => {
-      expect(screen.getByText("No pricing data available")).toBeDefined();
+      expect(screen.getByText("Failed to load pricing data")).toBeDefined();
     });
 
     // Loading indicator text for overview should not be present
