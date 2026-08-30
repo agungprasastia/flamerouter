@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    exclude: ["node_modules/**", "internal/**", "cmd/**", "docs/**", "src/mitm/**"],
+    exclude: ["node_modules/**", "internal/**", "cmd/**", "docs/**"],
   },
   resolve: {
     alias: {

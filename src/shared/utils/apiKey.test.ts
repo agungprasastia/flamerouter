@@ -31,7 +31,11 @@ describe("apiKey utils", () => {
       const cachedSecret = getApiKeySecret();
       expect(cachedSecret).toBe(secret);
     } finally {
-      process.env.API_KEY_SECRET = originalEnv;
+      if (originalEnv === undefined) {
+        delete process.env.API_KEY_SECRET;
+      } else {
+        process.env.API_KEY_SECRET = originalEnv;
+      }
       resetApiKeySecretCache();
     }
   });
