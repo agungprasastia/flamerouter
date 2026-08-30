@@ -424,19 +424,13 @@ func TestPipeWithHeartbeat_ClosesCloserReader(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	closed := false
+	deadline := time.Now().Add(500 * time.Millisecond)
 
-	for i := 0; i < 50; i++ {
-		if tracker.IsClosed() {
-			closed = true
-
-			break
-		}
-
+	for !tracker.IsClosed() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	if !closed {
+	if !tracker.IsClosed() {
 		t.Errorf("expected reader to be closed on exit")
 	}
 }
