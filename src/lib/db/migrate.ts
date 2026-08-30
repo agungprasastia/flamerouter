@@ -144,17 +144,18 @@ function syncSchemaFromTables(adapter: DatabaseAdapter) {
 }
 
 // ─── Legacy JSON import (one-time) ───────────────────────────────────────
-function importLegacyMain(adapter: DatabaseAdapter, data: Record<string, unknown> | null) {
-  if (!data || typeof data !== "object") return;
+function importLegacySettings(adapter: DatabaseAdapter, settings: unknown) {
+  if (!settings) return;
+  adapter.run(
+    `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
+    [stringifyJson(settings)],
+  );
+}
 
-  if (data.settings) {
-    adapter.run(
-      `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
-      [stringifyJson(data.settings)],
-    );
-  }
-
-  const connections = (data.providerConnections as Record<string, unknown>[]) || [];
+function importLegacyConnections(
+  adapter: DatabaseAdapter,
+  connections: Record<string, unknown>[],
+) {
   importWithAssertion(
     adapter,
     "providerConnections",
@@ -194,8 +195,12 @@ function importLegacyMain(adapter: DatabaseAdapter, data: Record<string, unknown
       name: c.name ?? null,
     }),
   );
+}
 
-  const nodes = (data.providerNodes as Record<string, unknown>[]) || [];
+function importLegacyNodes(
+  adapter: DatabaseAdapter,
+  nodes: Record<string, unknown>[],
+) {
   importWithAssertion(
     adapter,
     "providerNodes",
@@ -216,8 +221,12 @@ function importLegacyMain(adapter: DatabaseAdapter, data: Record<string, unknown
     },
     (n: Record<string, unknown>) => ({ id: n.id ?? null, type: n.type ?? null, name: n.name ?? null }),
   );
+}
 
-  const pools = (data.proxyPools as Record<string, unknown>[]) || [];
+function importLegacyPools(
+  adapter: DatabaseAdapter,
+  pools: Record<string, unknown>[],
+) {
   importWithAssertion(
     adapter,
     "proxyPools",
@@ -238,8 +247,12 @@ function importLegacyMain(adapter: DatabaseAdapter, data: Record<string, unknown
     },
     (p: Record<string, unknown>) => ({ id: p.id ?? null }),
   );
+}
 
-  const apiKeys = (data.apiKeys as Record<string, unknown>[]) || [];
+function importLegacyApiKeys(
+  adapter: DatabaseAdapter,
+  apiKeys: Record<string, unknown>[],
+) {
   importWithAssertion(
     adapter,
     "apiKeys",
@@ -259,8 +272,12 @@ function importLegacyMain(adapter: DatabaseAdapter, data: Record<string, unknown
     },
     (k: Record<string, unknown>) => ({ id: k.id ?? null, name: k.name ?? null }),
   );
+}
 
-  const combos = (data.combos as Record<string, unknown>[]) || [];
+function importLegacyCombos(
+  adapter: DatabaseAdapter,
+  combos: Record<string, unknown>[],
+) {
   importWithAssertion(
     adapter,
     "combos",
@@ -280,32 +297,97 @@ function importLegacyMain(adapter: DatabaseAdapter, data: Record<string, unknown
     },
     (c: Record<string, unknown>) => ({ id: c.id ?? null, name: c.name ?? null }),
   );
+}
 
-  for (const [alias, model] of Object.entries((data.modelAliases as Record<string, unknown>) || {})) {
+function importLegacyModelAliases(
+  adapter: DatabaseAdapter,
+  modelAliases: Record<string, unknown>,
+) {
+  for (const [alias, model] of Object.entries(modelAliases || {})) {
     adapter.run(
       `INSERT OR REPLACE INTO kv(scope, key, value) VALUES('modelAliases', ?, ?)`,
       [alias, stringifyJson(model)],
     );
   }
-  for (const m of (data.customModels as Array<{ providerAlias?: string; id?: string; type?: string }>) || []) {
+}
+
+function importLegacyCustomModels(
+  adapter: DatabaseAdapter,
+  customModels: Array<{ providerAlias?: string; id?: string; type?: string }>,
+) {
+  for (const m of customModels || []) {
     const k = `${m.providerAlias}|${m.id}|${m.type || "llm"}`;
     adapter.run(
       `INSERT OR REPLACE INTO kv(scope, key, value) VALUES('customModels', ?, ?)`,
       [k, stringifyJson(m)],
     );
   }
-  for (const [tool, mappings] of Object.entries((data.mitmAlias as Record<string, unknown>) || {})) {
+}
+
+function importLegacyMitmAliases(
+  adapter: DatabaseAdapter,
+  mitmAlias: Record<string, unknown>,
+) {
+  for (const [tool, mappings] of Object.entries(mitmAlias || {})) {
     adapter.run(
       `INSERT OR REPLACE INTO kv(scope, key, value) VALUES('mitmAlias', ?, ?)`,
       [tool, stringifyJson(mappings || {})],
     );
   }
-  for (const [provider, models] of Object.entries((data.pricing as Record<string, unknown>) || {})) {
+}
+
+function importLegacyPricing(
+  adapter: DatabaseAdapter,
+  pricing: Record<string, unknown>,
+) {
+  for (const [provider, models] of Object.entries(pricing || {})) {
     adapter.run(
       `INSERT OR REPLACE INTO kv(scope, key, value) VALUES('pricing', ?, ?)`,
       [provider, stringifyJson(models || {})],
     );
   }
+}
+
+function importLegacyMain(adapter: DatabaseAdapter, data: Record<string, unknown> | null) {
+  if (!data || typeof data !== "object") return;
+
+  importLegacySettings(adapter, data.settings);
+  importLegacyConnections(
+    adapter,
+    (data.providerConnections as Record<string, unknown>[]) || [],
+  );
+  importLegacyNodes(
+    adapter,
+    (data.providerNodes as Record<string, unknown>[]) || [],
+  );
+  importLegacyPools(
+    adapter,
+    (data.proxyPools as Record<string, unknown>[]) || [],
+  );
+  importLegacyApiKeys(
+    adapter,
+    (data.apiKeys as Record<string, unknown>[]) || [],
+  );
+  importLegacyCombos(
+    adapter,
+    (data.combos as Record<string, unknown>[]) || [],
+  );
+  importLegacyModelAliases(
+    adapter,
+    (data.modelAliases as Record<string, unknown>) || {},
+  );
+  importLegacyCustomModels(
+    adapter,
+    (data.customModels as Array<{ providerAlias?: string; id?: string; type?: string }>) || [],
+  );
+  importLegacyMitmAliases(
+    adapter,
+    (data.mitmAlias as Record<string, unknown>) || {},
+  );
+  importLegacyPricing(
+    adapter,
+    (data.pricing as Record<string, unknown>) || {},
+  );
 }
 
 function importLegacyUsage(adapter: DatabaseAdapter, data: Record<string, unknown> | null) {

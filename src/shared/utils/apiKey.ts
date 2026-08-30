@@ -1,7 +1,51 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { DATA_DIR } from "@/lib/dataDir";
 
-const API_KEY_SECRET =
-  process.env.API_KEY_SECRET || "endpoint-proxy-api-key-secret";
+let cachedApiKeySecret: string | null = null;
+
+/**
+ * Resets the in-memory cached secret (useful for testing when process.env changes).
+ */
+export function resetApiKeySecretCache() {
+  cachedApiKeySecret = null;
+}
+
+/**
+ * Resolve the API key secret dynamically:
+ * 1. process.env.API_KEY_SECRET if set
+ * 2. Cached secret in memory
+ * 3. Secret stored in DATA_DIR/api-key-secret
+ * 4. Newly generated and persisted 32-byte hex secret
+ * 5. In-memory generated secret as fallback if disk operations fail
+ */
+export function getApiKeySecret(): string {
+  const envSecret = process.env.API_KEY_SECRET?.trim();
+  if (envSecret) return envSecret;
+
+  if (cachedApiKeySecret) return cachedApiKeySecret;
+
+  try {
+    const filePath = path.join(DATA_DIR, "api-key-secret");
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath, "utf8").trim();
+      if (data) {
+        cachedApiKeySecret = data;
+        return data;
+      }
+    }
+
+    const generated = crypto.randomBytes(32).toString("hex");
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(filePath, generated, { mode: 0o600 });
+    cachedApiKeySecret = generated;
+    return generated;
+  } catch {
+    cachedApiKeySecret = crypto.randomBytes(32).toString("hex");
+    return cachedApiKeySecret;
+  }
+}
 
 /**
  * Generate 6-char random keyId
@@ -20,7 +64,7 @@ function generateKeyId() {
  */
 function generateCrc(machineId: string, keyId: string) {
   return crypto
-    .createHmac("sha256", API_KEY_SECRET)
+    .createHmac("sha256", getApiKeySecret())
     .update(machineId + keyId)
     .digest("hex")
     .slice(0, 8);
@@ -45,7 +89,7 @@ export function generateApiKeyWithMachine(machineId: string) {
  * - New: sk-{machineId}-{keyId}-{crc8}
  * - Old: sk-{random8}
  * @param {string} apiKey
- * @returns {{ machineId: string, keyId: string, isNewFormat: boolean } | null}
+ * @returns {{ machineId: string | null, keyId: string, isNewFormat: boolean } | null}
  */
 export function parseApiKey(apiKey: string) {
   if (!apiKey || !apiKey.startsWith("sk-")) return null;
