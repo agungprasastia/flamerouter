@@ -335,7 +335,7 @@ func TestPipeWithHeartbeat_Success(t *testing.T) {
 	}
 
 	if w.flushCount != 2 {
-		t.Errorf("expected 2 flushes, got %d", w.flushCount)
+		t.Errorf("expected flush count 2, got %d", w.flushCount)
 	}
 }
 
@@ -425,11 +425,14 @@ func TestPipeWithHeartbeat_ClosesCloserReader(t *testing.T) {
 	}
 
 	closed := false
+
 	for i := 0; i < 50; i++ {
 		if tracker.IsClosed() {
 			closed = true
+
 			break
 		}
+
 		time.Sleep(10 * time.Millisecond)
 	}
 
