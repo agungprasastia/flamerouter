@@ -217,23 +217,30 @@ export default function RequestDetailsTab() {
 
       const cache = await fetchProviderNames();
       setProviderNameCache(cache.providerNameCache);
-      if (errorSource === "providers") {
-        setError("");
-        setErrorSource(null);
-      }
+      setErrorSource((prev) => {
+        if (prev === "providers") {
+          setError("");
+          return null;
+        }
+        return prev;
+      });
     } catch (err) {
       console.error("Failed to fetch providers:", err);
       setError("Failed to fetch providers.");
       setErrorSource("providers");
     }
-  }, [errorSource]);
+  }, []);
 
   const fetchDetails = useCallback(async () => {
     setLoading(true);
-    if (errorSource === "details") {
-      setError("");
-      setErrorSource(null);
-    }
+    setErrorSource((prev) => {
+      if (prev === "details") {
+        setError("");
+        return null;
+      }
+      return prev;
+    });
+
     try {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
@@ -258,7 +265,7 @@ export default function RequestDetailsTab() {
     } finally {
       setLoading(false);
     }
-  }, [pagination.page, pagination.pageSize, filters, errorSource]);
+  }, [pagination.page, pagination.pageSize, filters]);
 
   const handleRetry = useCallback(() => {
     if (errorSource === "providers") {
