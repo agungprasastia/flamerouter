@@ -229,6 +229,7 @@ export default function RequestDetailsTab() {
   const fetchDetails = useCallback(async () => {
     setLoading(true);
     setError("");
+
     try {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
@@ -246,8 +247,8 @@ export default function RequestDetailsTab() {
       if (data.pagination) {
         setPagination((prev) => ({ ...prev, ...data.pagination }));
       }
-    } catch (error) {
-      console.error("Failed to fetch request details:", error);
+    } catch (err) {
+      console.error("Failed to fetch request details:", err);
       setError("Request details could not be loaded.");
     } finally {
       setLoading(false);

@@ -271,7 +271,7 @@ export function formatResetTime(date: string | number | Date | null | undefined)
     const now = new Date();
     const diffMs = resetDate.getTime() - now.getTime();
 
-    if (diffMs <= 0) return "-";
+    if (isNaN(diffMs) || diffMs <= 0) return "-";
 
     const totalMinutes = Math.ceil(diffMs / (1000 * 60));
 
