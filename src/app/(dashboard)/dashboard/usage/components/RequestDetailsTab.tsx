@@ -87,6 +87,7 @@ async function fetchProviderNames(): Promise<{
   }
 
   const nodesRes = await fetch("/api/provider-nodes");
+  if (!nodesRes.ok) throw new Error(`Provider nodes failed: ${nodesRes.status}`);
   const nodesData = (await nodesRes.json()) as { nodes?: ProviderItem[] };
   const nodes = nodesData.nodes || [];
   providerNodesCache = {};
@@ -213,6 +214,7 @@ export default function RequestDetailsTab() {
     setProviderError("");
     try {
       const res = await fetch("/api/usage/providers");
+      if (!res.ok) throw new Error(`Providers failed: ${res.status}`);
       const data = (await res.json()) as { providers?: ProviderItem[] };
       setProviders(data.providers || []);
 
