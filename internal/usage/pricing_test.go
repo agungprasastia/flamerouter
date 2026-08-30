@@ -164,6 +164,22 @@ func TestCalculateCost(t *testing.T) {
 		}
 	})
 
+	t.Run("zero cached rate falls back to input rate", func(t *testing.T) {
+		const model = "test-zero-cached-rate"
+		modelPricingTable[model] = ModelPricing{Input: 2.00, Output: 4.00}
+		t.Cleanup(func() {
+			delete(modelPricingTable, model)
+		})
+
+		// 1M prompt tokens with 500k cached: both cached and non-cached tokens use the $2.00/1M input rate.
+		cost := CalculateCost("test", model, 1_000_000, 500_000, 0)
+		expected := 2.00
+
+		if math.Abs(cost-expected) > 1e-6 {
+			t.Errorf("CalculateCost = %f; want %f", cost, expected)
+		}
+	})
+
 	t.Run("zero cached rate fallback to input rate", func(t *testing.T) {
 		// Custom test model behavior if p.Cached == 0
 		// We test CalculateCost on unknown model with zero cached rate by checking logic behavior with fallback/known model
