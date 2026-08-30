@@ -5,6 +5,7 @@ import {
   getConnectionLabel,
   type ConnectionItem,
   calculatePercentage,
+  formatResetTime,
 } from "./utils";
 
 describe("getConnectionsPageRange", () => {
@@ -112,7 +113,9 @@ describe("getConnectionLabel", () => {
       email: "  user@example.com  ",
       displayName: "Display Name",
     };
-    expect(getConnectionLabel(connectionWithWhitespaceName)).toBe("user@example.com");
+    expect(getConnectionLabel(connectionWithWhitespaceName)).toBe(
+      "user@example.com",
+    );
   });
 
   it("falls back to trimmed displayName when name and email are missing or whitespace", () => {
@@ -120,7 +123,9 @@ describe("getConnectionLabel", () => {
       id: "conn-4",
       displayName: "  Display Name  ",
     };
-    expect(getConnectionLabel(connectionWithNoNameOrEmail)).toBe("Display Name");
+    expect(getConnectionLabel(connectionWithNoNameOrEmail)).toBe(
+      "Display Name",
+    );
 
     const connectionWithWhitespaceNameAndEmail: ConnectionItem = {
       id: "conn-5",
@@ -128,7 +133,9 @@ describe("getConnectionLabel", () => {
       email: "\t\n ",
       displayName: "  Display Name  ",
     };
-    expect(getConnectionLabel(connectionWithWhitespaceNameAndEmail)).toBe("Display Name");
+    expect(getConnectionLabel(connectionWithWhitespaceNameAndEmail)).toBe(
+      "Display Name",
+    );
   });
 
   it("returns null when name, email, and displayName are missing, empty, or whitespace", () => {
@@ -161,7 +168,9 @@ describe("getConnectionLabel", () => {
       email: "email@example.com",
       displayName: "Display",
     };
-    expect(getConnectionLabel(emailAndDisplayNameOnly)).toBe("email@example.com");
+    expect(getConnectionLabel(emailAndDisplayNameOnly)).toBe(
+      "email@example.com",
+    );
 
     const displayNameOnly: ConnectionItem = {
       id: "conn-10",
@@ -195,5 +204,94 @@ describe("calculatePercentage", () => {
     expect(calculatePercentage(50, 100)).toBe(50);
     expect(calculatePercentage(1, 3)).toBe(67);
     expect(calculatePercentage(2, 3)).toBe(33);
+  });
+});
+
+describe("formatResetTime", () => {
+  describe("falsy and invalid inputs", () => {
+    it("returns '-' for null", () => {
+      expect(formatResetTime(null)).toBe("-");
+    });
+
+    it("returns '-' for undefined", () => {
+      expect(formatResetTime(undefined)).toBe("-");
+    });
+
+    it("returns '-' for empty string", () => {
+      expect(formatResetTime("")).toBe("-");
+    });
+
+    it("returns '-' for 0", () => {
+      expect(formatResetTime(0)).toBe("-");
+    });
+
+    it("returns '-' for invalid date string", () => {
+      expect(formatResetTime("invalid-date-string")).toBe("-");
+    });
+  });
+
+  describe("error catching block", () => {
+    it("catches thrown error when input throws during conversion and returns '-'", () => {
+      // Symbol throws TypeError when passed to new Date(Symbol()) or converted to primitive
+      const throwOnConvert = Symbol("invalid-date-symbol") as unknown as string;
+      expect(formatResetTime(throwOnConvert)).toBe("-");
+    });
+
+    it("catches thrown error when object throws in valueOf and returns '-'", () => {
+      const throwingObj = {
+        valueOf() {
+          throw new Error("Date parsing error");
+        },
+      } as unknown as string;
+      expect(formatResetTime(throwingObj)).toBe("-");
+    });
+  });
+
+  describe("past and current dates", () => {
+    it("returns '-' for past Date object", () => {
+      const pastDate = new Date(Date.now() - 1000 * 60 * 5); // 5 mins ago
+      expect(formatResetTime(pastDate)).toBe("-");
+    });
+
+    it("returns '-' for current date or exact past timestamp", () => {
+      const now = new Date(Date.now());
+      expect(formatResetTime(now)).toBe("-");
+    });
+  });
+
+  describe("future reset times", () => {
+    it("formats minutes (< 60 minutes)", () => {
+      const futureDate = new Date(Date.now() + 15 * 60 * 1000); // 15 mins ahead
+      expect(formatResetTime(futureDate)).toBe("15m");
+    });
+
+    it("formats hours and minutes (< 24 hours)", () => {
+      const futureMs = (4 * 60 + 40) * 60 * 1000; // 4 hours 40 minutes ahead
+      const futureDate = new Date(Date.now() + futureMs);
+      expect(formatResetTime(futureDate)).toBe("4h 40m");
+    });
+
+    it("formats days, hours, and minutes (>= 24 hours)", () => {
+      const futureMs = (2 * 24 * 60 + 5 * 60 + 30) * 60 * 1000; // 2d 5h 30m ahead
+      const futureDate = new Date(Date.now() + futureMs);
+      expect(formatResetTime(futureDate)).toBe("2d 5h 30m");
+    });
+  });
+
+  describe("different date input types", () => {
+    it("accepts ISO string format", () => {
+      const futureDateStr = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      expect(formatResetTime(futureDateStr)).toBe("30m");
+    });
+
+    it("accepts numeric timestamp format", () => {
+      const futureTimestamp = Date.now() + 45 * 60 * 1000;
+      expect(formatResetTime(futureTimestamp)).toBe("45m");
+    });
+
+    it("accepts Date instance", () => {
+      const futureDate = new Date(Date.now() + 20 * 60 * 1000);
+      expect(formatResetTime(futureDate)).toBe("20m");
+    });
   });
 });
