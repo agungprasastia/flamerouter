@@ -475,6 +475,9 @@ func TestReorderForCapabilities_BlockTypes(t *testing.T) {
 			body := []byte(`{"messages":[{"role":"user","content":[` + tt.blockJSON + `]}]}`)
 
 			got := ReorderForCapabilities(models, body)
+			if len(got) == 0 {
+				t.Fatalf("ReorderForCapabilities(%s) returned empty result, want length 3 with first model %s", tt.blockJSON, tt.wantFirst)
+			}
 
 			if len(got) != 3 || got[0] != tt.wantFirst {
 				t.Errorf("ReorderForCapabilities(%s) first model = %s, want %s (full: %v)", tt.blockJSON, got[0], tt.wantFirst, got)
