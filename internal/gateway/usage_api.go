@@ -2,12 +2,13 @@ package gateway
 
 import (
 	"context"
-	"flamerouter/internal/store"
-	"flamerouter/internal/usage"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"flamerouter/internal/store"
+	"flamerouter/internal/usage"
 )
 
 func (s *Server) handleUsageStream(w http.ResponseWriter, r *http.Request) {
@@ -548,20 +549,16 @@ func (s *Server) handleUsageChart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) extractConnUsageData(connID string, limit int) ([]map[string]any, int, int, error) {
-	rows, err := s.st.QueryRequestDetailsSummary(limit)
+	rows, err := s.st.QueryRequestDetailsByConnection(connID, limit)
 	if err != nil {
 		return nil, 0, 0, err
 	}
 
-	out := make([]map[string]any, 0)
+	out := make([]map[string]any, 0, len(rows))
 
 	var prompt, completion int
 
 	for _, d := range rows {
-		if d.ConnectionID != connID {
-			continue
-		}
-
 		prompt += d.PromptTokens
 		completion += d.CompletionTokens
 		out = append(out, map[string]any{

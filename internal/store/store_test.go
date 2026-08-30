@@ -1,8 +1,9 @@
 package store_test
 
 import (
-	"flamerouter/internal/store"
 	"testing"
+
+	"flamerouter/internal/store"
 )
 
 func setupTestStore(t *testing.T) *store.Store {
@@ -269,6 +270,28 @@ func testRequestDetails(t *testing.T, st *store.Store) {
 	rds, err := st.QueryRequestDetails(10)
 	if err != nil || len(rds) != 1 {
 		t.Fatalf("request details: %+v err=%v", rds, err)
+	}
+
+	rdsConn, err := st.QueryRequestDetailsByConnection("conn-1", 10)
+	if err != nil {
+		t.Fatalf("QueryRequestDetailsByConnection err=%v", err)
+	}
+
+	if len(rdsConn) != 0 {
+		t.Fatalf("expected 0 details for conn-1, got %d", len(rdsConn))
+	}
+
+	if insErr := st.InsertRequestDetail(store.RequestDetail{ //nolint:exhaustruct // test struct
+		Provider:     "openai",
+		Model:        "gpt-4o",
+		ConnectionID: "conn-1",
+	}); insErr != nil {
+		t.Fatal(insErr)
+	}
+
+	rdsConn, err = st.QueryRequestDetailsByConnection("conn-1", 10)
+	if err != nil || len(rdsConn) != 1 {
+		t.Fatalf("expected 1 detail for conn-1: %+v err=%v", rdsConn, err)
 	}
 }
 
