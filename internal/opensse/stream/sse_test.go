@@ -133,12 +133,14 @@ func (t *trackingCloserReader) IsClosed() bool {
 type blockingPipeReader struct {
 	ch     chan []byte
 	closed chan struct{}
+	once   sync.Once
 }
 
 func newBlockingPipeReader() *blockingPipeReader {
 	return &blockingPipeReader{
 		ch:     make(chan []byte, 10),
 		closed: make(chan struct{}),
+		once:   sync.Once{},
 	}
 }
 
@@ -158,11 +160,9 @@ func (r *blockingPipeReader) Read(p []byte) (int, error) {
 }
 
 func (r *blockingPipeReader) Close() error {
-	select {
-	case <-r.closed:
-	default:
+	r.once.Do(func() {
 		close(r.closed)
-	}
+	})
 
 	return nil
 }
@@ -424,7 +424,16 @@ func TestPipeWithHeartbeat_ClosesCloserReader(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if !tracker.IsClosed() {
+	closed := false
+	for i := 0; i < 50; i++ {
+		if tracker.IsClosed() {
+			closed = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if !closed {
 		t.Errorf("expected reader to be closed on exit")
 	}
 }
