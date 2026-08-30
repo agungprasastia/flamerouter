@@ -198,7 +198,6 @@ export default function RequestDetailsTab() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [errorSource, setErrorSource] = useState<"providers" | "details" | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<RequestDetailItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -217,30 +216,14 @@ export default function RequestDetailsTab() {
 
       const cache = await fetchProviderNames();
       setProviderNameCache(cache.providerNameCache);
-      setErrorSource((prev) => {
-        if (prev === "providers") {
-          setError("");
-          return null;
-        }
-        return prev;
-      });
-    } catch (err) {
-      console.error("Failed to fetch providers:", err);
+    } catch (error) {
       setError("Failed to fetch providers.");
-      setErrorSource("providers");
     }
   }, []);
 
   const fetchDetails = useCallback(async () => {
     setLoading(true);
-    setErrorSource((prev) => {
-      if (prev === "details") {
-        setError("");
-        return null;
-      }
-      return prev;
-    });
-
+    setError("");
     try {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
@@ -258,22 +241,13 @@ export default function RequestDetailsTab() {
       if (data.pagination) {
         setPagination((prev) => ({ ...prev, ...data.pagination }));
       }
-    } catch (err) {
-      console.error("Failed to fetch request details:", err);
+    } catch (error) {
+      console.error("Failed to fetch request details:", error);
       setError("Request details could not be loaded.");
-      setErrorSource("details");
     } finally {
       setLoading(false);
     }
   }, [pagination.page, pagination.pageSize, filters]);
-
-  const handleRetry = useCallback(() => {
-    if (errorSource === "providers") {
-      fetchProviders();
-    } else {
-      fetchDetails();
-    }
-  }, [errorSource, fetchProviders, fetchDetails]);
 
   useEffect(() => {
     fetchProviders();
@@ -451,7 +425,7 @@ export default function RequestDetailsTab() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={handleRetry}
+                      onClick={fetchDetails}
                       className="mt-3"
                     >
                       Retry

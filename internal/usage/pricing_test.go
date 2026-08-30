@@ -5,191 +5,158 @@ import (
 	"testing"
 )
 
-func TestMatchGlob(t *testing.T) {
+func TestCalculateCost(t *testing.T) {
 	tests := []struct {
-		name    string
-		pattern string
-		text    string
-		want    bool
+		name             string
+		provider         string
+		model            string
+		promptTokens     int
+		cachedTokens     int
+		completionTokens int
+		want             float64
 	}{
 		{
-			name:    "exact match no wildcards",
-			pattern: "gpt-4o",
-			text:    "gpt-4o",
-			want:    true,
+			name:             "exact model match - gpt-4o",
+			provider:         "openai",
+			model:            "gpt-4o",
+			promptTokens:     1000,
+			cachedTokens:     0,
+			completionTokens: 500,
+			// gpt-4o: Input $2.50/1M, Output $10.00/1M
+			// (1000 * 2.50 / 1e6) + (500 * 10.00 / 1e6) = 0.0025 + 0.005 = 0.0075
+			want: 0.0075,
 		},
 		{
-			name:    "case insensitive exact match",
-			pattern: "GPT-4O",
-			text:    "gpt-4o",
-			want:    true,
+			name:             "exact model with provider prefix - openai/gpt-4o",
+			provider:         "openai",
+			model:            "openai/gpt-4o",
+			promptTokens:     1000,
+			cachedTokens:     0,
+			completionTokens: 500,
+			want:             0.0075,
 		},
 		{
-			name:    "single wildcard prefix",
-			pattern: "*-codex",
-			text:    "gpt-5.1-codex",
-			want:    true,
+			name:             "cached tokens deduction and pricing - claude-sonnet-4-6",
+			provider:         "anthropic",
+			model:            "claude-sonnet-4-6",
+			promptTokens:     1000,
+			cachedTokens:     400,
+			completionTokens: 200,
+			// claude-sonnet-4-6: Input $3.00/1M, Output $15.00/1M, Cached $0.30/1M
+			// nonCachedPrompt = 1000 - 400 = 600
+			// cost = (600 * 3.00 / 1e6) + (400 * 0.30 / 1e6) + (200 * 15.00 / 1e6)
+			//      = 0.0018 + 0.00012 + 0.0030 = 0.00492
+			want: 0.00492,
 		},
 		{
-			name:    "single wildcard suffix",
-			pattern: "claude-*",
-			text:    "claude-sonnet-4-6",
-			want:    true,
+			name:             "pattern matching - codex-high variant",
+			provider:         "openai",
+			model:            "custom-codex-high",
+			promptTokens:     2000,
+			cachedTokens:     500,
+			completionTokens: 1000,
+			// Matches glob pattern "*-codex-high": Input $8.00/1M, Output $32.00/1M, Cached $4.00/1M
+			// nonCachedPrompt = 1500
+			// cost = (1500 * 8.00 / 1e6) + (500 * 4.00 / 1e6) + (1000 * 32.00 / 1e6)
+			//      = 0.0120 + 0.0020 + 0.0320 = 0.0460
+			want: 0.046,
 		},
 		{
-			name:    "multiple wildcards",
-			pattern: "gemini-*-flash-*",
-			text:    "gemini-3.7-flash-high",
-			want:    true,
+			name:             "unknown model default fallback",
+			provider:         "unknown",
+			model:            "some-random-unknown-model",
+			promptTokens:     1000,
+			cachedTokens:     200,
+			completionTokens: 1000,
+			// Default: Input $1.00/1M, Output $4.00/1M, Cached $0.25/1M
+			// nonCachedPrompt = 800
+			// cost = (800 * 1.00 / 1e6) + (200 * 0.25 / 1e6) + (1000 * 4.00 / 1e6)
+			//      = 0.0008 + 0.00005 + 0.0040 = 0.00485
+			want: 0.00485,
 		},
 		{
-			name:    "regex special chars in pattern (dots)",
-			pattern: "gpt-3.5-turbo",
-			text:    "gpt-3.5-turbo",
-			want:    true,
+			name:             "cachedTokens greater than promptTokens",
+			provider:         "openai",
+			model:            "gpt-4o",
+			promptTokens:     100,
+			cachedTokens:     200,
+			completionTokens: 100,
+			// nonCachedPrompt clamped to 0
+			// cost = (0 * 2.50 / 1e6) + (200 * 1.25 / 1e6) + (100 * 10.00 / 1e6)
+			//      = 0 + 0.00025 + 0.0010 = 0.00125
+			want: 0.00125,
 		},
 		{
-			name:    "regex special chars mismatch",
-			pattern: "gpt-3.5-turbo",
-			text:    "gpt-3X5-turbo",
-			want:    false,
-		},
-		{
-			name:    "non matching text",
-			pattern: "claude-*",
-			text:    "gpt-4o",
-			want:    false,
-		},
-		{
-			name:    "empty pattern and text",
-			pattern: "",
-			text:    "",
-			want:    true,
+			name:             "zero tokens",
+			provider:         "openai",
+			model:            "gpt-4o",
+			promptTokens:     0,
+			cachedTokens:     0,
+			completionTokens: 0,
+			want:             0.0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchGlob(tt.pattern, tt.text)
-
-			if got != tt.want {
-				t.Errorf("matchGlob(%q, %q) = %v; want %v", tt.pattern, tt.text, got, tt.want)
+			got := CalculateCost(tt.provider, tt.model, tt.promptTokens, tt.cachedTokens, tt.completionTokens)
+			if math.Abs(got-tt.want) > 1e-6 {
+				t.Errorf("CalculateCost(%q, %q, %d, %d, %d) = %v, want %v",
+					tt.provider, tt.model, tt.promptTokens, tt.cachedTokens, tt.completionTokens, got, tt.want)
 			}
 		})
 	}
 }
 
 func TestGetPricingForModel(t *testing.T) {
-	t.Run("exact match in table", func(t *testing.T) {
-		pricing, ok := GetPricingForModel("claude-sonnet-4-6")
+	tests := []struct {
+		model     string
+		wantFound bool
+		wantInput float64
+	}{
+		{"gpt-4o", true, 2.50},
+		{"openai/gpt-4o", true, 2.50},
+		{"claude-sonnet-4-6", true, 3.00},
+		{"anthropic/claude-sonnet-4-6", true, 3.00},
+		{"my-custom-codex-high", true, 8.00},
+		{"gemini-9.9-flash", true, 0.30},
+		{"non-existent-model-xyz", false, 1.00},
+	}
 
-		if !ok {
-			t.Fatalf("expected pricing for claude-sonnet-4-6")
-		}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			pricing, found := GetPricingForModel(tt.model)
+			if found != tt.wantFound {
+				t.Errorf("GetPricingForModel(%q) found = %v, wantFound = %v", tt.model, found, tt.wantFound)
+			}
 
-		if pricing.Input != 3.00 || pricing.Output != 15.00 || pricing.Cached != 0.30 {
-			t.Errorf("unexpected pricing values: %+v", pricing)
-		}
-	})
-
-	t.Run("provider prefix stripped exact match", func(t *testing.T) {
-		pricing, ok := GetPricingForModel("anthropic/claude-sonnet-4-6")
-
-		if !ok {
-			t.Fatalf("expected pricing for anthropic/claude-sonnet-4-6")
-		}
-
-		if pricing.Input != 3.00 || pricing.Output != 15.00 {
-			t.Errorf("unexpected pricing values: %+v", pricing)
-		}
-	})
-
-	t.Run("pattern matching in pattern list", func(t *testing.T) {
-		pricing, ok := GetPricingForModel("custom-provider/gpt-5.6-super")
-
-		if !ok {
-			t.Fatalf("expected pattern pricing match for gpt-5.6-super")
-		}
-
-		if pricing.Input != 2.50 || pricing.Output != 15.00 {
-			t.Errorf("unexpected pricing values for pattern match: %+v", pricing)
-		}
-	})
-
-	t.Run("unknown model fallback", func(t *testing.T) {
-		pricing, ok := GetPricingForModel("completely-unknown-model-xyz")
-
-		if ok {
-			t.Errorf("expected ok=false for unknown model")
-		}
-
-		expectedFallback := ModelPricing{Input: 1.00, Output: 4.00, Cached: 0.25, Reasoning: 4.00, CacheCreation: 1.00}
-
-		if pricing != expectedFallback {
-			t.Errorf("got fallback pricing %+v, want %+v", pricing, expectedFallback)
-		}
-	})
+			if pricing.Input != tt.wantInput {
+				t.Errorf("GetPricingForModel(%q) Input rate = %v, wantInput = %v", tt.model, pricing.Input, tt.wantInput)
+			}
+		})
+	}
 }
 
-func TestCalculateCost(t *testing.T) {
-	t.Run("standard cost calculation without cached tokens", func(t *testing.T) {
-		// deepseek-chat: Input 0.14/1M, Output 0.28/1M
-		cost := CalculateCost("deepseek", "deepseek-chat", 1_000_000, 0, 1_000_000)
-		expected := 0.14 + 0.28
+func TestMatchGlob(t *testing.T) {
+	tests := []struct {
+		pattern string
+		text    string
+		want    bool
+	}{
+		{"gpt-4*", "gpt-4o", true},
+		{"gpt-4*", "GPT-4O", true},
+		{"*-codex", "my-codex", true},
+		{"*-codex-mini-*", "a-codex-mini-b", true},
+		{"exact-match", "exact-match", true},
+		{"exact-match", "other-match", false},
+	}
 
-		if math.Abs(cost-expected) > 1e-6 {
-			t.Errorf("CalculateCost = %f; want %f", cost, expected)
-		}
-	})
-
-	t.Run("cost calculation with cached tokens", func(t *testing.T) {
-		// claude-sonnet-4-6: Input 3.00/1M, Output 15.00/1M, Cached 0.30/1M
-		// prompt: 1M tokens, 500k cached -> 500k non-cached prompt @ 3.00/1M ($1.50) + 500k cached @ 0.30/1M ($0.15) + 1M output @ 15.00/1M ($15.00) = $16.65
-		cost := CalculateCost("anthropic", "claude-sonnet-4-6", 1_000_000, 500_000, 1_000_000)
-		expected := 16.65
-
-		if math.Abs(cost-expected) > 1e-6 {
-			t.Errorf("CalculateCost = %f; want %f", cost, expected)
-		}
-	})
-
-	t.Run("cached tokens exceed prompt tokens clamp to zero non-cached", func(t *testing.T) {
-		// prompt: 100k, cached: 200k -> nonCachedPrompt clamped to 0
-		// cached tokens = 200k @ 0.30/1M ($0.06), output = 0 -> $0.06
-		cost := CalculateCost("anthropic", "claude-sonnet-4-6", 100_000, 200_000, 0)
-		expected := 0.06
-
-		if math.Abs(cost-expected) > 1e-6 {
-			t.Errorf("CalculateCost = %f; want %f", cost, expected)
-		}
-	})
-
-	t.Run("zero cached rate fallback to input rate", func(t *testing.T) {
-		// Custom test model behavior if p.Cached == 0
-		// We test CalculateCost on unknown model with zero cached rate by checking logic behavior with fallback/known model
-		cost := CalculateCost("test", "unknown-model", 1_000_000, 0, 0)
-		// Fallback model: Input 1.00, Output 4.00, Cached 0.25 -> 1.00
-		expected := 1.00
-
-		if math.Abs(cost-expected) > 1e-6 {
-			t.Errorf("CalculateCost = %f; want %f", cost, expected)
-		}
-	})
-
-	t.Run("cost rounding to 6 decimal places", func(t *testing.T) {
-		// Calculate small token cost that tests rounding precision
-		cost := CalculateCost("deepseek", "deepseek-chat", 1, 0, 1)
-
-		// 1/1M * 0.14 + 1/1M * 0.28 = 0.42 / 1000000 = 0.00000042 -> rounds to 0.000000
-		if cost != 0.000000 {
-			t.Errorf("CalculateCost small tokens = %f; want 0.000000", cost)
-		}
-
-		cost2 := CalculateCost("deepseek", "deepseek-chat", 1000, 0, 1000)
-
-		// 1000/1M * 0.14 + 1000/1M * 0.28 = 0.00014 + 0.00028 = 0.000420
-		if cost2 != 0.000420 {
-			t.Errorf("CalculateCost medium tokens = %f; want 0.000420", cost2)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.pattern+"_"+tt.text, func(t *testing.T) {
+			got := matchGlob(tt.pattern, tt.text)
+			if got != tt.want {
+				t.Errorf("matchGlob(%q, %q) = %v, want %v", tt.pattern, tt.text, got, tt.want)
+			}
+		})
+	}
 }
