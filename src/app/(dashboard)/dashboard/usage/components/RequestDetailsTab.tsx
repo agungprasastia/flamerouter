@@ -198,7 +198,7 @@ export default function RequestDetailsTab() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [errorSource, setErrorSource] = useState<"providers" | "details" | null>(null);
+  const [providerError, setProviderError] = useState("");
   const [selectedDetail, setSelectedDetail] = useState<RequestDetailItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -210,6 +210,7 @@ export default function RequestDetailsTab() {
   });
 
   const fetchProviders = useCallback(async () => {
+    setProviderError("");
     try {
       const res = await fetch("/api/usage/providers");
       const data = (await res.json()) as { providers?: ProviderItem[] };
@@ -217,30 +218,15 @@ export default function RequestDetailsTab() {
 
       const cache = await fetchProviderNames();
       setProviderNameCache(cache.providerNameCache);
-      setErrorSource((prev) => {
-        if (prev === "providers") {
-          setError("");
-          return null;
-        }
-        return prev;
-      });
     } catch (err) {
       console.error("Failed to fetch providers:", err);
-      setError("Failed to fetch providers.");
-      setErrorSource("providers");
+      setProviderError("Failed to fetch providers.");
     }
   }, []);
 
   const fetchDetails = useCallback(async () => {
     setLoading(true);
-    setErrorSource((prev) => {
-      if (prev === "details") {
-        setError("");
-        return null;
-      }
-      return prev;
-    });
-
+    setError("");
     try {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
@@ -261,19 +247,10 @@ export default function RequestDetailsTab() {
     } catch (err) {
       console.error("Failed to fetch request details:", err);
       setError("Request details could not be loaded.");
-      setErrorSource("details");
     } finally {
       setLoading(false);
     }
   }, [pagination.page, pagination.pageSize, filters]);
-
-  const handleRetry = useCallback(() => {
-    if (errorSource === "providers") {
-      fetchProviders();
-    } else {
-      fetchDetails();
-    }
-  }, [errorSource, fetchProviders, fetchDetails]);
 
   useEffect(() => {
     fetchProviders();
@@ -305,12 +282,27 @@ export default function RequestDetailsTab() {
       <section className="border-y border-border py-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex min-w-0 flex-col gap-2">
-            <label
-              htmlFor="provider-filter"
-              className="text-sm font-medium text-text-main"
-            >
-              Provider
-            </label>
+            <div className="flex items-center justify-between">
+              <label
+                htmlFor="provider-filter"
+                className="text-sm font-medium text-text-main"
+              >
+                Provider
+              </label>
+              {providerError && (
+                <span className="flex items-center gap-1.5 text-xs text-error">
+                  <span>{providerError}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={fetchProviders}
+                    className="h-auto p-0 text-xs font-normal underline hover:bg-transparent"
+                  >
+                    Retry
+                  </Button>
+                </span>
+              )}
+            </div>
             <select
               id="provider-filter"
               value={filters.provider}
@@ -451,7 +443,7 @@ export default function RequestDetailsTab() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={handleRetry}
+                      onClick={fetchDetails}
                       className="mt-3"
                     >
                       Retry
