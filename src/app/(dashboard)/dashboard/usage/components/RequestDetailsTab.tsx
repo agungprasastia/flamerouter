@@ -198,6 +198,7 @@ export default function RequestDetailsTab() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [providerError, setProviderError] = useState("");
   const [selectedDetail, setSelectedDetail] = useState<RequestDetailItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -209,6 +210,7 @@ export default function RequestDetailsTab() {
   });
 
   const fetchProviders = useCallback(async () => {
+    setProviderError("");
     try {
       const res = await fetch("/api/usage/providers");
       const data = (await res.json()) as { providers?: ProviderItem[] };
@@ -216,8 +218,9 @@ export default function RequestDetailsTab() {
 
       const cache = await fetchProviderNames();
       setProviderNameCache(cache.providerNameCache);
-    } catch (error) {
-      setError("Failed to fetch providers.");
+    } catch (err) {
+      console.error("Failed to fetch providers:", err);
+      setProviderError("Failed to fetch providers.");
     }
   }, []);
 
@@ -279,12 +282,27 @@ export default function RequestDetailsTab() {
       <section className="border-y border-border py-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex min-w-0 flex-col gap-2">
-            <label
-              htmlFor="provider-filter"
-              className="text-sm font-medium text-text-main"
-            >
-              Provider
-            </label>
+            <div className="flex items-center justify-between">
+              <label
+                htmlFor="provider-filter"
+                className="text-sm font-medium text-text-main"
+              >
+                Provider
+              </label>
+              {providerError && (
+                <span className="flex items-center gap-1.5 text-xs text-error">
+                  <span>{providerError}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={fetchProviders}
+                    className="h-auto p-0 text-xs font-normal underline hover:bg-transparent"
+                  >
+                    Retry
+                  </Button>
+                </span>
+              )}
+            </div>
             <select
               id="provider-filter"
               value={filters.provider}
