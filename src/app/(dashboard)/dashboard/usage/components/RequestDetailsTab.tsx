@@ -244,8 +244,8 @@ export default function RequestDetailsTab() {
       if (data.pagination) {
         setPagination((prev) => ({ ...prev, ...data.pagination }));
       }
-    } catch (err) {
-      console.error("Failed to fetch request details:", err);
+    } catch (error) {
+      console.error("Failed to fetch request details:", error);
       setError("Request details could not be loaded.");
     } finally {
       setLoading(false);
