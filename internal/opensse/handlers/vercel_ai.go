@@ -134,9 +134,14 @@ type captureWriter struct {
 	code   int
 }
 
-func (c *captureWriter) Header() http.Header         { return c.header }
+// Header returns the HTTP header map.
+func (c *captureWriter) Header() http.Header { return c.header }
+
+// Write captures response bytes into an internal buffer.
 func (c *captureWriter) Write(b []byte) (int, error) { return c.buf.Write(b) }
-func (c *captureWriter) WriteHeader(statusCode int)  { c.code = statusCode }
+
+// WriteHeader captures the HTTP status code.
+func (c *captureWriter) WriteHeader(statusCode int) { c.code = statusCode }
 
 func copyHeader(dst, src http.Header) {
 	for k, vs := range src {

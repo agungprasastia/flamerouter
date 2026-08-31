@@ -46,6 +46,7 @@ type refreshAdapter struct {
 	rm *tokenrefresh.RefreshManager
 }
 
+// Refresh adapts tokenrefresh.RefreshManager to oauth.CredManager's TokenRefresher interface.
 func (a *refreshAdapter) Refresh(ctx context.Context, provider, refreshToken string) (string, string, string, time.Time, error) {
 	res, err := a.rm.Refresh(ctx, provider, refreshToken)
 	if err != nil {
@@ -294,6 +295,7 @@ func (s *Server) routes() {
 	s.routesV1API()
 }
 
+// ServeHTTP implements http.Handler to route incoming HTTP requests.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		s.writeCORS(w, r)
@@ -619,6 +621,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 // usageBridge adapts usage.Tracker to handlers.UsageSink.
 type usageBridge struct{ t *usage.Tracker }
 
+// OnUsage tracks token usage by forwarding to the underlying usage.Tracker.
 func (u usageBridge) OnUsage(provider, model, connectionID string, prompt, completion, cached, statusCode int) {
 	if u.t == nil {
 		return

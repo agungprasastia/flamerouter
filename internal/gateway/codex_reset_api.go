@@ -231,6 +231,7 @@ func getCodexRateLimitResetCredits(accessToken string, psd map[string]any) (map[
 
 type simpleError string
 
+// Error returns the error string.
 func (e simpleError) Error() string { return string(e) }
 
 func consumeCodexRateLimitResetCredit(accessToken, redeemRequestID string) map[string]any {

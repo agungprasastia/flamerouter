@@ -316,8 +316,11 @@ type extraErr struct {
 	msg  string
 }
 
+// Error returns the error message.
 func (e *extraErr) Error() string { return e.msg }
-func (e *extraErr) Code() string  { return e.code }
+
+// Code returns the error code.
+func (e *extraErr) Code() string { return e.code }
 
 func filterExtras(in []string) []string {
 	allow := map[string]bool{"code": true, "ml": true}

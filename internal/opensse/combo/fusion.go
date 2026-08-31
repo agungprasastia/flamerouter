@@ -34,10 +34,13 @@ type captureWriter struct {
 	code   int
 }
 
+// Header returns the HTTP header map.
 func (c *captureWriter) Header() http.Header { return c.header }
 
+// Write captures response bytes into an internal buffer.
 func (c *captureWriter) Write(b []byte) (int, error) { return c.buf.Write(b) }
 
+// WriteHeader captures the HTTP status code.
 func (c *captureWriter) WriteHeader(statusCode int) { c.code = statusCode }
 
 // Execute runs the combo using fusion strategy.

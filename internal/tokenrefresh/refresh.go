@@ -178,6 +178,7 @@ type providerOAuthRefresher struct {
 	provider string
 }
 
+// Refresh exchanges a refresh token for a new access token using the provider's OAuth flow.
 func (p *providerOAuthRefresher) Refresh(ctx context.Context, refreshToken string) (*RefreshResult, error) {
 	handler := oauth.NewHandler()
 

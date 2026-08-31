@@ -176,6 +176,7 @@ func writeSSEPing(w http.ResponseWriter, flusher http.Flusher) {
 	flusher.Flush()
 }
 
+// ServeHTTP implements http.Handler to stream usage events via Server-Sent Events (SSE).
 func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
