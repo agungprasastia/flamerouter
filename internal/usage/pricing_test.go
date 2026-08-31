@@ -166,7 +166,7 @@ func TestCalculateCost(t *testing.T) {
 
 	t.Run("zero cached rate falls back to input rate", func(t *testing.T) {
 		const model = "test-zero-cached-rate"
-		modelPricingTable[model] = ModelPricing{Input: 2.00, Output: 4.00}
+		modelPricingTable[model] = ModelPricing{Input: 2.00, Output: 4.00, Cached: 0, Reasoning: 0, CacheCreation: 0}
 		t.Cleanup(func() {
 			delete(modelPricingTable, model)
 		})
